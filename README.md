@@ -111,11 +111,16 @@ IndexedDB / WASM 的限制。**它不存数据、不做同步**，与 GitHub Pag
 │   ├── markdown.js       # Markdown → HTML（先保护公式与代码，再渲染）
 │   ├── acl.js            # 权限模型：三级角色 + 房间角色 + 单用户授权
 │   ├── media.js          # 媒体存储（IndexedDB）+ 图片压缩 + 视频首帧封面
-│   ├── net.js            # 本地/后端双模式同步、WASM 加载、环境自检
+│   ├── sync.js           # 统一同步层（全项目唯一写入/广播出口）
+│   ├── net.js            # 环境自检 + 可选 WASM 加速（不参与业务分支）
 │   ├── ui.js             # Toast / 弹窗 / 确认框 / Lightbox 图片视频预览
-│   └── app.js            # 主逻辑：状态机、渲染、命令、管理面板
+│   ├── app.js            # 主逻辑：状态机、渲染、命令、管理面板
+│   └── sb.js             # Supabase 访问层（可选后端，默认未启用）
 ├── native/accel.cpp      # 可选 C++ / WASM 加速（SHA-256），可原生编译自测
-├── server.py             # 可选 Python 后端（标准库，零依赖）
+├── supabase/schema.sql   # 可选后端建库脚本（8 表 + 33 个 RPC）
+├── docs/Supabase配置指南.md  # 可选后端手把手配置
+├── server.py             # 静态服务器（仅托管文件，不存数据）
+├── deploy-pages.sh       # 一键部署脚本
 ├── .nojekyll             # 让 GitHub Pages 原样发布
 └── LICENSE               # MIT
 ```
