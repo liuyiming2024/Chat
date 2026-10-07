@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta name="description" content="微信风格的实名聊天室，支持 Markdown 与 LaTeX（$ 包裹）、图片视频预览、私聊、群聊、公屏大厅与多级管理员权限。纯前端运行，可直接部署到 GitHub Pages。">
+<title>洛谷 · 微信聊天室</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- ============ 门禁 / 登录 ============ -->
+<div id="gate" class="mask hidden"></div>
+
+<!-- ============ 主界面 ============ -->
+<div id="app" class="app hidden">
+
+  <!-- 左侧：会话列表 -->
+  <aside class="sidebar" id="sidebar">
+    <div class="side-top">
+      <div class="search-box">
+        <span class="search-ico">🔍</span>
+        <input id="searchInput" placeholder="搜索会话">
+      </div>
+      <button class="icon-btn green" id="btnNewRoom" title="创建群聊">＋</button>
+    </div>
+    <div class="me-card" id="meCard"></div>
+    <div class="room-list" id="roomList"></div>
+    <div class="side-foot">
+      <button class="mini-btn" id="btnAdmin">管理面板</button>
+      <button class="mini-btn" id="btnLogout">退出</button>
+    </div>
+  </aside>
+
+  <!-- 中间：聊天区 -->
+  <main class="main">
+    <header class="chat-head">
+      <button class="icon-btn only-narrow" id="btnMenu" title="会话列表">☰</button>
+      <div class="ch-info">
+        <div class="ch-title" id="roomTitle">公屏大厅</div>
+        <div class="ch-sub" id="roomSub">公屏大厅</div>
+      </div>
+      <div class="ch-actions">
+        <button class="icon-btn" id="btnRoomSet" title="会话设置">⚙</button>
+        <button class="icon-btn" id="btnMembers" title="成员面板">👥</button>
+      </div>
+    </header>
+
+    <div id="noticeBar" class="notice-bar hidden"></div>
+
+    <div id="mutedTip" class="muted-tip hidden"></div>
+
+    <div class="msg-scroll" id="msgScroll"></div>
+
+    <div class="composer">
+      <div id="replyBar" class="reply-bar hidden"></div>
+      <div class="composer-tools">
+        <button class="tool-btn" id="btnImg" title="发送图片">🖼</button>
+        <button class="tool-btn" id="btnVideo" title="发送视频">🎬</button>
+        <button class="tool-btn" id="btnEmoji" title="表情">😊</button>
+        <button class="tool-btn" id="btnHelp" title="Markdown / LaTeX / 命令帮助">?</button>
+        <span class="composer-hint">Enter 发送 · Shift+Enter 换行 · 支持 **Markdown**、`$x^2$` 公式、拖入图片视频</span>
+      </div>
+      <textarea id="input" rows="1" placeholder="说点什么…（/help 查看命令）"></textarea>
+      <div class="composer-foot">
+        <button class="btn primary" id="btnSend">发送(S)</button>
+      </div>
+    </div>
+  </main>
+
+  <!-- 右侧：成员与公告 -->
+  <aside class="side-panel" id="sidePanel">
+    <div class="sp-head">成员 <span id="memberCount" class="tag gray">0</span></div>
+    <div class="sp-body" id="memberList"></div>
+    <div class="sp-sec">
+      <div class="sec-title"><span>群公告</span><button class="mini-btn" id="btnEditNotice">编辑</button></div>
+      <div class="notice-text" id="noticeText">暂无公告</div>
+    </div>
+  </aside>
+</div>
+
+<input type="file" id="fileImg" accept="image/*" class="hidden">
+<input type="file" id="fileVideo" accept="video/*" class="hidden">
+
+<script src="js/sha256.js"></script>
+<script src="js/latex.js"></script>
+<script src="js/markdown.js"></script>
+<script src="js/acl.js"></script>
+<script src="js/media.js"></script>
+<script src="js/sync.js"></script>
+<script src="js/net.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
