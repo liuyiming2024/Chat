@@ -242,3 +242,21 @@ Chrome / Edge / Firefox / Safari 近两年版本均可。
 `file://` 直接打开时部分浏览器会限制 IndexedDB 与 WASM，
 此时媒体存内存、WASM 自动跳过，聊天功能照常；用 `python3 server.py`
 或 GitHub Pages 打开则全部功能可用。
+
+
+---
+
+## 站点层级：总发布页 → 项目发布页
+
+存在**两级主页**，别混淆：
+
+| 层级 | 仓库 | 网址 | 作用 |
+| --- | --- | --- | --- |
+| **总发布页** | `liuyiming2024/liuyiming2024.github.io` | `liuyiming2024.github.io/` | 汇总所有项目，未来新项目都挂这里 |
+| **项目发布页** | `liuyiming2024/Chat` | `liuyiming2024.github.io/Chat/` | 只讲聊天室这一个项目，给入口和三步开始 |
+
+本项目（Chat）的发布页**刻意保持精简**——只放入口卡片和三步开始，
+详细特性说明一律放进 `docs/` 使用手册，不在主页重复罗列。
+
+两个仓库都内置了 `tools/ghsync.py`，用法相同（改 `--repo` 参数即可切换）。
+新增项目时，在总发布页的 `#projects` 网格里加一张卡片即可。
