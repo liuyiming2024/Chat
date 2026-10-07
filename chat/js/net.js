@@ -58,6 +58,9 @@
             return s;
           } catch (err) { return orig(str); }
         };
+        /* 关键：把同一个 WASM 实现挂到 _wasmHex，慢哈希才会真正走加速路径。
+           只替换 hex 的话，slowHash 走的是内部 core，等于空转。 */
+        g.SHA256._wasmHex = g.SHA256.hex;
         g.__accel = true;
         return true;
       })
