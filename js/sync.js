@@ -37,7 +37,7 @@
         bc.onmessage = function (e) {
           var d = e.data || {};
           if (!d || d.from === selfId) return;      // 忽略自己发出的回声
-          if (d.t === 'state' && onStateCb) onStateCb(d.state);
+          else if (d.t === 'state' && onStateCb) onStateCb(d.state);
           else if (d.t === 'patch' && onPatchCb) onPatchCb(d);
         };
       } catch (e) { bc = null; }

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-洛谷 · 微信聊天室 —— 自带运行环境（纯静态服务器，Python 3 标准库，零依赖）
+聊天室 —— 自带运行环境（纯静态服务器，Python 3 标准库，零依赖）
 
 【定位】本文件只是一个**静态文件服务器**，用来规避 file:// 直开时浏览器对
         IndexedDB / WebAssembly / fetch 的限制。它不提供任何业务接口，
@@ -62,7 +62,7 @@ class Handler(SimpleHTTPRequestHandler):
 
 
 def main():
-    ap = argparse.ArgumentParser(description='洛谷·微信聊天室 静态运行环境')
+    ap = argparse.ArgumentParser(description='聊天室 静态运行环境')
     ap.add_argument('--host', default='0.0.0.0', help='监听地址，默认 0.0.0.0')
     ap.add_argument('--port', type=int, default=8000, help='端口，默认 8000')
     ap.add_argument('--dir', default=HERE, help='站点根目录，默认本文件所在目录')
@@ -79,7 +79,7 @@ def main():
     srv.daemon_threads = True
 
     print('=' * 60)
-    print(' 洛谷·微信聊天室 · 静态运行环境已启动')
+    print(' 聊天室 · 静态运行环境已启动')
     print(' 访问地址 : http://localhost:%d/' % args.port)
     print(' 站点目录 : %s' % root)
     print(' 说明     : 仅静态托管，不存数据、不做同步；')
