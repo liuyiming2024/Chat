@@ -10,6 +10,8 @@
 
   var S = null, me = null, cur = 'public';
   var unread = {}, replyTo = null, roomFilter = '';
+  var drafts = {};        /* 草稿：房间 id -> 输入内容 */
+  var typingAt = 0;       /* 正在输入：上次按键时间 */
 
   /* ================= 小工具 ================= */
   function $(id) { return document.getElementById(id); }
@@ -42,8 +44,8 @@
   /* ================= 状态存取 ================= */
   function fresh() {
     return {
-      version: 1, createdAt: now(), seq: 0, siteName: '洛谷·微信聊天室',
-      gate: null, allowRegister: true,
+      version: 1, createdAt: now(), seq: 0, siteName: '聊天室',
+      gate: null, allowRegister: true, needReview: true,
       users: [], rooms: [], messages: {}, logs: []
     };
   }
@@ -122,8 +124,8 @@
     var wrap = $('gate');
     wrap.innerHTML = '';
     var card = elc('div', 'gate-card');
-    card.innerHTML = '<div class="gate-title">洛谷 · 微信聊天室</div>' +
-      '<div class="gate-sub">实名社区 · 支持 Markdown 与 $LaTeX$ · 纯前端运行</div>';
+    card.innerHTML = '<div class="gate-title">聊天室</div>' +
+      '<div class="gate-sub">支持 Markdown 与 $LaTeX$ · 纯前端运行</div>';
     var box = elc('div', '');
     box.innerHTML = inner;
     card.appendChild(box);
@@ -142,8 +144,7 @@
       '<label class="field-label">站点保护密码</label><input class="field" id="gGate" type="password" placeholder="进入本聊天室需要的密码">' +
       '<label class="field-label">确认保护密码</label><input class="field" id="gGate2" type="password">' +
       '<div class="hr-line"></div>' +
-      '<label class="field-label">站长昵称</label><input class="field" id="gNick" placeholder="例如：洛谷站长">' +
-      '<label class="field-label">真实姓名（实名制）</label><input class="field" id="gReal" placeholder="例如：张三">' +
+      '<label class="field-label">站长昵称</label><input class="field" id="gNick" placeholder="例如：站长">' +
       '<label class="field-label">站长登录密码</label><input class="field" id="gPwd" type="password">' +
       '<button class="btn primary block" id="gOk">创建并进入</button>' +
       '<div class="form-note">保护密码与登录密码均经加盐慢哈希存储，不保存明文。</div>'
@@ -151,16 +152,15 @@
     card.querySelector('#gOk').onclick = function () {
       var gp = card.querySelector('#gGate').value, gp2 = card.querySelector('#gGate2').value;
       var nick = card.querySelector('#gNick').value.trim();
-      var real = card.querySelector('#gReal').value.trim();
       var pwd = card.querySelector('#gPwd').value;
       if (gp.length < 4) { g.UI.toast('保护密码至少 4 位'); return; }
       if (gp !== gp2) { g.UI.toast('两次保护密码不一致'); return; }
-      if (!nick || !real) { g.UI.toast('请填写昵称与真实姓名'); return; }
+      if (!nick) { g.UI.toast('请填写站长昵称'); return; }
       if (pwd.length < 4) { g.UI.toast('登录密码至少 4 位'); return; }
       var gs = g.SHA256.randomId(12), us = g.SHA256.randomId(12);
       S.gate = { hash: hashPwd(gp, gs), salt: gs };
       var u = {
-        id: uid('u'), nick: nick, realName: real, pwdHash: hashPwd(pwd, us), pwdSalt: us,
+        id: uid('u'), nick: nick, note: '站长', status: 'active', pwdHash: hashPwd(pwd, us), pwdSalt: us,
         role: 'owner', perms: [], banned: false, mutedUntil: 0, bio: '站长',
         createdAt: now(), updatedAt: now(), lastSeen: now()
       };
@@ -205,7 +205,7 @@
     wrap.innerHTML = '';
     var card = elc('div', 'gate-card');
     card.innerHTML =
-      '<div class="gate-title">登录</div><div class="gate-sub">' + g.UI.esc(S.siteName || '洛谷·微信聊天室') + '</div>' +
+      '<div class="gate-title">登录</div><div class="gate-sub">' + g.UI.esc(S.siteName || '聊天室') + '</div>' +
       '<div class="tabs"><button class="tab on" data-t="login">登录</button><button class="tab" data-t="reg">注册</button></div>' +
       '<div id="pane"></div>';
     wrap.appendChild(card);
@@ -224,6 +224,10 @@
           if (!u) { g.UI.toast('用户不存在', 'err'); return; }
           if (hashPwd(card.querySelector('#lPwd').value, u.pwdSalt) !== u.pwdHash) { g.UI.toast('密码错误', 'err'); return; }
           if (u.banned) { g.UI.toast('该账号已被封禁', 'err'); return; }
+          if (u.status === 'pending') { g.UI.toast('申请已提交，请等待站长通过', 'err'); return; }
+          if (u.status === 'rejected') {
+            g.UI.toast('申请未通过：' + (u.rejectReason || '站长未说明理由'), 'err'); return;
+          }
           sessionStorage.setItem(ME_KEY, u.id);
           me = u; touch(me); me.lastSeen = now(); save(true);
           enterApp();
@@ -237,31 +241,44 @@
         }
         p.innerHTML =
           '<label class="field-label">昵称（登录用）</label><input class="field" id="rNick" placeholder="字母/数字/中文均可">' +
-          '<label class="field-label">真实姓名（实名制，公开展示）</label><input class="field" id="rReal" placeholder="例如：李四">' +
+          (function () {
+            var old = S.users.filter(function (x) { return x.status === 'rejected'; })[0];
+            return old ? '<div class="form-tip warn">你上次提交的申请未通过：' +
+              g.UI.esc(old.rejectReason || '站长未说明理由') + '。可修改说明后重新提交。</div>' : '';
+          })() +
+          '<label class="field-label">申请说明（写给站长看，站长据此决定是否通过）</label>' +
+          '<textarea class="field" id="rNote" rows="3" placeholder="例如：我是高二3班的李明，想进来和同学讨论算法题"></textarea>' +
           '<label class="field-label">登录密码</label><input class="field" id="rPwd" type="password">' +
           '<label class="field-label">确认密码</label><input class="field" id="rPwd2" type="password">' +
-          '<button class="btn primary block" id="rOk">注册并进入</button>';
+          '<button class="btn primary block" id="rOk">提交申请</button>';
         var rok = function () {
           var n = card.querySelector('#rNick').value.trim();
-          var r = card.querySelector('#rReal').value.trim();
+          var note = card.querySelector('#rNote').value.trim();
           var a = card.querySelector('#rPwd').value, b = card.querySelector('#rPwd2').value;
-          if (!n || !r) { g.UI.toast('请填写昵称与真实姓名'); return; }
+          if (!n || !note) { g.UI.toast('请填写昵称与申请说明'); return; }
           if (byNick(n)) { g.UI.toast('昵称已被占用'); return; }
           if (a.length < 4) { g.UI.toast('密码至少 4 位'); return; }
           if (a !== b) { g.UI.toast('两次密码不一致'); return; }
           var salt = g.SHA256.randomId(12);
+          var needReview = S.needReview !== false;
           var u = {
-            id: uid('u'), nick: n, realName: r, pwdHash: hashPwd(a, salt), pwdSalt: salt,
-            role: 'member', perms: [], banned: false, mutedUntil: 0, bio: '',
+            id: uid('u'), nick: n, note: note, pwdHash: hashPwd(a, salt), pwdSalt: salt,
+            role: 'member', status: needReview ? 'pending' : 'active',
+            perms: [], banned: false, mutedUntil: 0, bio: '',
             createdAt: now(), updatedAt: now(), lastSeen: now()
           };
           S.users.push(u);
-          joinRoom('public', u, true);
-          log('reg', '注册账号 ' + n + '（' + r + '）');
+          log('reg', '提交申请 ' + n + '：' + note.slice(0, 50));
           save(true);
-          sessionStorage.setItem(ME_KEY, u.id);
-          me = u;
-          enterApp();
+          if (needReview) {
+            g.UI.toast('申请已提交，请等待站长通过', 'ok');
+            pane('login');
+          } else {
+            joinRoom('public', u, true);
+            sessionStorage.setItem(ME_KEY, u.id);
+            me = u;
+            enterApp();
+          }
         };
         card.querySelector('#rOk').onclick = rok;
       }
@@ -297,7 +314,21 @@
     bindEvents();
     renderAll();
     g.Net.loadAccel().then(function (ok) { if (ok) g.UI.toast('已启用 C++/WASM 哈希加速', 'ok'); });
+    startHeartbeat();
+    setMode(getMode(), true);
     scrollBottom();
+    /* 启动后检查：存储配额（所有人）+ 备份提醒（仅管理员） */
+    setTimeout(function () {
+      try { checkStorageQuota(); } catch (e) { }
+      if (me.role === 'owner' || me.role === 'admin') {
+        var last = S.lastBackup || 0;
+        var days = (Date.now() - last) / 86400000;
+        if (!last || days >= 7) {
+          g.UI.toast(last ? ('距上次备份已 ' + Math.floor(days) + ' 天，建议导出一份 JSON')
+            : '建议先导出一份 JSON 备份（管理面板 → 站点）', 'ok');
+        }
+      }
+    }, 1500);
     $('input').focus();
   }
 
@@ -320,7 +351,7 @@
     return (r.name || '群').slice(0, 1);
   }
   function membersOf(r) {
-    if (r.type === 'public') return S.users.slice();
+    if (r.type === 'public') return S.users.filter(function (u) { return u.status !== 'pending'; });
     return (r.members || []).map(findUser).filter(Boolean);
   }
   function joinRoom(rid, user, quiet) {
@@ -351,6 +382,53 @@
     g.Sync.ping();   /* 通知其他标签立即读取新快照 */
   }
 
+  /* 别人发来的消息：累计未读；若 @了我 则额外标记 */
+  function noteIncoming(m) {
+    if (!me || !m || m.from === me.id) return;
+    if (m.room !== cur) {
+      unread[m.room] = (unread[m.room] || 0) + 1;
+      if (isAtMe(m)) atMe[m.room] = (atMe[m.room] || 0) + 1;
+      renderRooms();
+    } else if (isAtMe(m)) {
+      g.UI.toast('有人 @ 了你', 'ok');
+    }
+  }
+
+  /* ============ 正在输入提示 ============
+   * 自己打字时通过 Sync 广播 typing，对方最多显示 3 秒。
+   * 不落库、不进消息流，纯瞬时状态。
+   */
+  var typingAt = 0, typingShown = null;
+  function markTyping() {
+    var now2 = Date.now();
+    if (now2 - typingAt < 1500) return;
+    typingAt = now2;
+    try {
+      var bc2 = g.__syncBc;
+      if (bc2) bc2.postMessage({ t: 'typing', from: me.id, room: cur, nick: me.nick, at: now2 });
+    } catch (e) { }
+  }
+  function showTyping(nick) {
+    var bar = $('typingBar');
+    if (!bar) return;
+    bar.textContent = nick + ' 正在输入…';
+    bar.classList.remove('hidden');
+    typingShown = nick;
+    clearTimeout(showTyping._t);
+    showTyping._t = setTimeout(function () { bar.classList.add('hidden'); typingShown = null; }, 3000);
+  }
+
+  /* 是否 @了我：@我的昵称 或 @全体成员 / @all */
+  function isAtMe(m) {
+    if (!me || !m) return false;
+    var t = (m.text || '');
+    if (!/@/.test(t)) return false;
+    if (new RegExp('@' + escapeRe(me.nick) + '(?![\\w\\u4e00-\\u9fa5])').test(t)) return true;
+    if (/@(全体成员|所有人|all)/.test(t)) return true;
+    return false;
+  }
+  function escapeRe(x) { return String(x).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
   function isBottom() {
     var s = $('msgScroll');
     return s.scrollHeight - s.scrollTop - s.clientHeight < 80;
@@ -372,7 +450,7 @@
     info.innerHTML = '<div class="me-nick">' + g.UI.esc(me.nick) +
       '<span class="tag ' + (me.role === 'owner' ? 'green' : me.role === 'admin' ? 'blue' : 'gray') + '">' +
       g.ACL.roleName(me) + '</span></div>' +
-      '<div class="me-sub">' + g.UI.esc(me.realName || '未实名') + (g.ACL.muted(me) ? ' · 禁言中' : '') + '</div>';
+      '<div class="me-sub">' + g.UI.esc(me.note || '未填写申请说明') + (g.ACL.muted(me) ? ' · 禁言中' : '') + '</div>';
     c.appendChild(info);
     var edit = elc('button', 'mini-btn', '资料');
     edit.onclick = openProfile;
@@ -391,8 +469,8 @@
       return tb - ta;
     });
     rooms.forEach(function (r) {
-      var m = msgs(r.id), last = m.length ? m[m.length - 1] : null;
-      var item = elc('div', 'room-item' + (r.id === cur ? ' on' : ''));
+      var m = msgs(r.id).filter(visibleToMe), last = m.length ? m[m.length - 1] : null;
+      var item = elc('div', 'room-item' + (r.id === cur ? ' on' : '') + ((unread[r.id] || 0) > 0 ? ' has-unread' : ''));
       var av = elc('div', 'avatar room-avatar', roomAvatarText(r));
       if (r.type === 'private') av.style.background = '#5b8ff9';
       item.appendChild(av);
@@ -420,6 +498,76 @@
     if (!rooms.length) list.appendChild(elc('div', 'empty-tip', '没有匹配的会话'));
   }
 
+  /* 在线判定：以心跳时间为准。ONLINE_MS 内有过心跳才算在线，
+     避免"关掉标签页但仍被计在线"的问题。 */
+  var HEARTBEAT_MS = 15000;   /* 心跳间隔 */
+  var ONLINE_MS = 45000;      /* 超过此时长无心跳视为离线 */
+
+  function isOnline(u) {
+    if (!u) return false;
+    return (u.lastSeen || 0) > (now() - ONLINE_MS);
+  }
+
+  var hbTimer = null;
+  function startHeartbeat() {
+    if (hbTimer) clearInterval(hbTimer);
+    var beat = function () {
+      if (!me) return;
+      me.lastSeen = now();
+      try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { }
+      /* 轻量广播，让其他标签刷新在线状态 */
+      g.Sync.ping();
+      /* 只刷新在线人数，不整屏重绘 */
+      refreshOnline();
+    };
+    beat();
+    hbTimer = setInterval(beat, HEARTBEAT_MS);
+  }
+
+  function refreshOnline() {
+    var r = findRoom(cur);
+    if (!r) return;
+    var mem = membersOf(r);
+    var onlineN = mem.filter(function (u) { return isOnline(u); }).length;
+    var sub = [];
+    sub.push(r.type === 'public' ? '公屏大厅 · ' + onlineN + ' 人在线（共 ' + mem.length + ' 人）' :
+      r.type === 'private' ? ('私聊 · ' + (isOnline(mem.find(function (u) { return u.id !== me.id; })) ? '对方在线' : '对方离线')) :
+        ('群聊 · ' + onlineN + ' 人在线 / 共 ' + mem.length + ' 人'));
+    if (r.pwd) sub.push('已加密');
+    var rs = $('roomSub');
+    if (rs) rs.textContent = sub.join(' · ');
+    /* 成员面板在线点 */
+    Array.prototype.forEach.call(document.querySelectorAll('#memberList .mem-dot'), function (d) {
+      var id = d.getAttribute('data-uid');
+      var u = id && findUser(id);
+      if (u) d.classList.toggle('on', isOnline(u));
+    });
+  }
+
+  /* ================= 极简模式 / 专业模式 =================
+   * simple：像微信，只留「+」和表情，隐藏语法工具条与命令提示
+   * pro：显示 Markdown / 公式工具条、语法帮助、代码语言标签、可看源码
+   */
+  var MODE_KEY = 'wxlg_mode';
+
+  function getMode() {
+    var m = null;
+    try { m = localStorage.getItem(MODE_KEY); } catch (e) { }
+    return (m === 'pro' || m === 'simple') ? m : 'pro';
+  }
+  function setMode(m, silent) {
+    try { localStorage.setItem(MODE_KEY, m); } catch (e) { }
+    document.body.classList.remove('mode-simple', 'mode-pro');
+    document.body.classList.add('mode-' + m);
+    var btn = $('btnMode');
+    if (btn) {
+      btn.textContent = m === 'simple' ? '极简' : '专业';
+      btn.title = m === 'simple' ? '当前：极简模式（点此切到专业）' : '当前：专业模式（点此切到极简）';
+    }
+    renderChat();
+    if (!silent) g.UI.toast(m === 'simple' ? '已切到极简模式' : '已切到专业模式', 'ok');
+  }
+
   function renderChat() {
     var r = findRoom(cur);
     if (!r) { cur = 'public'; r = findRoom('public'); }
@@ -427,10 +575,15 @@
     $('roomTitle').textContent = roomTitleOf(r);
     var mem = membersOf(r);
     var sub = [];
-    sub.push(r.type === 'public' ? '公屏大厅 · ' + mem.length + ' 人在线' :
-      r.type === 'private' ? '私聊' : '群聊 · ' + mem.length + ' 人');
+    var onlineN = mem.filter(function (u) { return isOnline(u); }).length;
+    sub.push(r.type === 'public' ? '公屏大厅 · ' + onlineN + ' 人在线（共 ' + mem.length + ' 人）' :
+      r.type === 'private' ? ('私聊 · ' + (isOnline(mem.find(function (u) { return u.id !== me.id; })) ? '对方在线' : '对方离线')) :
+        ('群聊 · ' + onlineN + ' 人在线 / 共 ' + mem.length + ' 人'));
     if (r.pwd) sub.push('已加密');
     $('roomSub').textContent = sub.join(' · ');
+
+    /* 置顶消息 */
+    renderPinned(r);
 
     /* 公告 */
     var nb = $('noticeBar');
@@ -448,7 +601,7 @@
     /* 消息 */
     var box = $('msgScroll');
     box.innerHTML = '';
-    var arr = msgs(r.id).slice(-300);
+    var arr = msgs(r.id).filter(visibleToMe).slice(-300);
     var lastDay = '';
     arr.forEach(function (m) {
       var d = new Date(m.ts);
@@ -473,8 +626,11 @@
       var line = elc('div', 'user-line');
       line.appendChild(g.UI.avatar(u, 'sm'));
       var t = elc('div', 'user-line-main');
-      t.innerHTML = '<div class="user-line-name">' + g.UI.esc(u.nick) + ' <span class="user-real">' + g.UI.esc(u.realName || '') + '</span></div>' +
-        '<div class="user-line-role">' + g.ACL.roleName(u) + ' · ' + g.ACL.roomRole(u, r) + '</div>';
+      t.innerHTML = '<div class="user-line-name">' + g.UI.esc(u.nick) +
+        '<span class="mem-dot' + (isOnline(u) ? ' on' : '') + '" data-uid="' + g.UI.esc(u.id) + '"></span>' +
+        '</div>' +
+        '<div class="user-line-role">' + g.ACL.roleName(u) + ' · ' + g.ACL.roomRole(u, r) +
+        (isOnline(u) ? ' · 在线' : ' · 离线') + '</div>';
       line.appendChild(t);
       if (u.banned) line.appendChild(elc('span', 'tag red', '封'));
       if (g.ACL.muted(u)) line.appendChild(elc('span', 'tag orange', '禁'));
@@ -507,7 +663,22 @@
     var bubble = elc('div', 'bubble');
     if (m.deleted) {
       bubble.classList.add('bubble-dead');
-      bubble.textContent = mine ? '你撤回了一条消息' : '该消息已被删除';
+      bubble.textContent = m.removedBy
+        ? ('该消息已被' + g.UI.esc(nick(findUser(m.removedBy)) || '管理员') + '移除')
+        : (mine ? '你撤回了一条消息' : '该消息已被撤回');
+      /* 管理员/站长可查看原文：撤回与移除都刻意保留内容，便于追溯 */
+      if (g.ACL.can(me, 'msg.viewRaw', r)) {
+        var see = elc('button', 'msg-act', '查看原文');
+        see.onclick = function () {
+          var d2 = elc('div', '');
+          d2.innerHTML = '<div class="form-tip">来自：' + g.UI.esc(nick(findUser(m.from)) || '未知') +
+            ' · ' + g.UI.fmtFull(m.ts) + '</div>' +
+            '<div class="raw-box">' + g.UI.esc(m.type === 'text' ? (m.text || '') : msgSnippet(m)) + '</div>';
+          g.UI.modal({ title: '被处置消息的原文', body: d2, okText: '关闭', cancelText: null });
+        };
+        bubble.appendChild(document.createElement('br'));
+        bubble.appendChild(see);
+      }
     } else {
       if (m.replyTo) {
         var q = elc('div', 'reply-quote');
@@ -537,15 +708,39 @@
         };
         acts.appendChild(bCopy);
       }
-      if (mine && g.ACL.can(me, 'msg.recall', r)) {
+      /* 撤回：作者本人，限时 RECALL_MS 内 */
+      if (mine && g.ACL.can(me, 'msg.recall', r) && (now() - (m.ts || 0)) < RECALL_MS) {
         var bR = elc('button', 'msg-act', '撤回');
-        bR.onclick = function () { doDelete(m, true); };
+        bR.onclick = function () { doRemove(m, 'recall'); };
         acts.appendChild(bR);
       }
-      if (g.ACL.can(me, 'msg.delete', r)) {
-        var bD = elc('button', 'msg-act danger', '删除');
-        bD.onclick = function () { doDelete(m, false); };
-        acts.appendChild(bD);
+      /* 移除：管理员处置他人消息（不限时） */
+      if (!mine && g.ACL.can(me, 'msg.remove', r)) {
+        var bM = elc('button', 'msg-act danger', '移除');
+        bM.onclick = function () { doRemove(m, 'remove'); };
+        acts.appendChild(bM);
+      }
+      /* 删除：任何人可用，只把自己这边隐藏掉，别人照常看到 */
+      var bDel = elc('button', 'msg-act danger', '删除');
+      bDel.title = '仅在我这里消失，其他人仍能看到';
+      bDel.onclick = function () { doRemove(m, 'hide'); };
+      acts.appendChild(bDel);
+      /* 置顶：需 msg.pin 权限 */
+      if (g.ACL.can(me, 'msg.pin', r)) {
+        var bPin = elc('button', 'msg-act', (r.pinned && r.pinned.indexOf(m.id) >= 0) ? '取消置顶' : '置顶');
+        bPin.onclick = function () { togglePin(m); };
+        acts.appendChild(bPin);
+      }
+      /* Delete：物理删除，释放空间，仅站长 */
+      if (me.role === 'owner') {
+        var bPurge = elc('button', 'msg-act danger', 'Delete');
+        bPurge.title = '物理删除：从数据里抹掉并释放媒体空间（不可恢复）';
+        bPurge.onclick = function () {
+          g.UI.confirm('Delete 这条消息？数据将被抹掉、媒体空间释放，不可恢复。', function () {
+            doRemove(m, 'purge');
+          });
+        };
+        acts.appendChild(bPurge);
       }
       body.appendChild(acts);
     }
@@ -573,7 +768,19 @@
       play.onclick = function () { g.UI.lightbox(v.src, 'video', m.name); };
       wrap.appendChild(play);
     }
+    if (m.type === 'voice') { wrap.appendChild(voiceNode(m)); }
     var cap = elc('div', 'media-cap', (m.name || '媒体') + (m.size ? ' · ' + g.Media.fmtSize(m.size) : ''));
+    if (m.type === 'file') {
+      var dl = elc('button', 'file-dl', '下载 ' + g.UI.esc(m.name || '文件'));
+      dl.onclick = function () {
+        g.Media.get(m.mediaId).then(function (u) {
+          if (!u) { g.UI.toast('文件数据已丢失'); return; }
+          var a = document.createElement('a');
+          a.href = u; a.download = m.name || 'file'; a.click();
+        });
+      };
+      wrap.appendChild(dl);
+    }
     wrap.appendChild(cap);
     /* 唯一的媒体读取路径：一律从 IndexedDB 取（任何部署形态都相同） */
     if (m.mediaId) {
@@ -620,18 +827,627 @@
     ta.style.height = 'auto';
   }
 
-  function doDelete(m, recall) {
+  var RECALL_MS = 5 * 60 * 1000;   /* 撤回时限：5 分钟 */
+
+  function doRemove(m, mode) {
     var r = findRoom(cur);
-    m.deleted = true;
-    log(recall ? 'recall' : 'delete', (recall ? '撤回' : '删除') + '消息 ' + m.id, r.id);
-    save();
+    if (!r) return;
+    /* mode: recall 本人撤回 / remove 管理员移除 / purge 站长物理删除 */
+    if (mode === 'recall') {
+      if (m.from !== me.id) { g.UI.toast('只能撤回自己的消息', 'err'); return; }
+      if ((now() - (m.ts || 0)) >= RECALL_MS) { g.UI.toast('超过 5 分钟，不能撤回了', 'err'); return; }
+      m.deleted = true; m.removedBy = null;
+      log('recall', '撤回自己的消息', r.id);
+      save(); g.UI.toast('已撤回', 'ok');
+    } else if (mode === 'remove') {
+      if (m.from === me.id) { g.UI.toast('自己的消息请点「撤回」', 'err'); return; }
+      m.deleted = true; m.removedBy = me.id;
+      log('remove', '移除「' + nick(findUser(m.from)) + '」的消息', r.id);
+      save(); g.UI.toast('已移除该消息', 'ok');
+    } else if (mode === 'hide') {
+      /* 删除：只把当前账号加入隐藏名单，消息对别人仍然可见 */
+      m.hiddenFor = m.hiddenFor || [];
+      if (m.hiddenFor.indexOf(me.id) < 0) m.hiddenFor.push(me.id);
+      save();
+      g.UI.toast('已删除（仅你这里不再显示）', 'ok');
+      renderChat();
+    } else {
+      /* delete：原有的删除，全站生效——所有人都不再看到内容 */
+      m.deleted = true;
+      log('delete', 'delete 消息（来自「' + nick(findUser(m.from)) + '」）', r.id);
+      save();
+      g.UI.toast('已 delete', 'ok');
+    }
+  }
+
+  /* 该消息对「我」是否可见：被隐藏或已被撤回/移除都算不可见 */
+  function visibleToMe(m) {
+    if (!m) return false;
+    if (m.hiddenFor && me && m.hiddenFor.indexOf(me.id) >= 0) return false;
+    return true;
+  }
+
+  /* 我隐藏了多少条消息（用于「恢复已删除」） */
+  /* 消息摘要（进日志用，便于后台追溯被撤回/移除/Delete 的内容） */
+  /* ================= 消息置顶 ================= */
+  function togglePin(m) {
+    var r = findRoom(cur);
+    if (!r) return;
+    r.pinned = r.pinned || [];
+    var i = r.pinned.indexOf(m.id);
+    if (i >= 0) {
+      r.pinned.splice(i, 1);
+      log('unpin', '取消置顶消息', r.id);
+      g.UI.toast('已取消置顶', 'ok');
+    } else {
+      r.pinned.push(m.id);
+      log('pin', '置顶消息（' + msgSnippet(m) + '）', r.id);
+      g.UI.toast('已置顶', 'ok');
+    }
+    save(); renderChat();
+  }
+
+  /* 置顶栏：显示在本会话顶部 */
+  function renderPinned(r) {
+    var host = $('pinnedBar');
+    if (!host) return;
+    host.innerHTML = '';
+    if (!r.pinned || !r.pinned.length) { host.classList.add('hidden'); return; }
+    var arr = msgs(r.id);
+    var items = r.pinned.map(function (id) {
+      return arr.filter(function (x) { return x.id === id; })[0];
+    }).filter(function (x) { return x && visibleToMe(x) && !x.deleted; });
+    if (!items.length) { host.classList.add('hidden'); return; }
+    host.classList.remove('hidden');
+    host.appendChild(elc('div', 'pinned-head', '📌 置顶 ' + items.length + ' 条'));
+    items.forEach(function (m) {
+      var row = elc('div', 'pinned-row');
+      var txt = m.type === 'text' ? g.MD.plain(m.text || '') : msgSnippet(m);
+      var lab = elc('span', 'pinned-txt');
+      lab.innerHTML = '<b>' + g.UI.esc(nick(findUser(m.from)) || '未知') + '</b>：' +
+        g.UI.esc(txt.length > 60 ? txt.slice(0, 60) + '…' : txt);
+      row.appendChild(lab);
+      row.onclick = function () {
+        var nd = document.querySelector('[data-mid="' + m.id + '"]');
+        if (nd) { nd.scrollIntoView({ block: 'center' }); nd.classList.add('flash'); setTimeout(function () { nd.classList.remove('flash'); }, 1200); }
+      };
+      if (g.ACL.can(me, 'msg.pin', r)) {
+        var x = elc('button', 'pinned-x', '✕');
+        x.title = '取消置顶';
+        x.onclick = function (e) { e.stopPropagation(); togglePin(m); };
+        row.appendChild(x);
+      }
+      host.appendChild(row);
+    });
+  }
+
+  function msgSnippet(m) {
+    var t = '';
+    if (m.type === 'text') t = g.MD.plain(m.text || '');
+    else if (m.type === 'image') t = '[图片]';
+    else if (m.type === 'video') t = '[视频]';
+    else if (m.type === 'voice') t = '[语音 ' + (m.dur || 0) + '秒]';
+    else if (m.type === 'file') t = '[文件 ' + (m.name || '') + ']';
+    else t = '[' + (m.type || '消息') + ']';
+    return t.length > 120 ? t.slice(0, 120) + '…' : t;
+  }
+
+  function hiddenCount() {
+    var c = 0;
+    Object.keys(S.messages).forEach(function (rid) {
+      (S.messages[rid] || []).forEach(function (m) {
+        if (m.hiddenFor && me && m.hiddenFor.indexOf(me.id) >= 0) c++;
+      });
+    });
+    return c;
+  }
+
+  /* 恢复：把我隐藏的消息全部重新显示 */
+  function restoreHidden() {
+    var c = 0;
+    Object.keys(S.messages).forEach(function (rid) {
+      (S.messages[rid] || []).forEach(function (m) {
+        if (m.hiddenFor && me && m.hiddenFor.indexOf(me.id) >= 0) {
+          m.hiddenFor = m.hiddenFor.filter(function (x) { return x !== me.id; });
+          c++;
+        }
+      });
+    });
+    save(); renderChat();
+    g.UI.toast('已恢复 ' + c + ' 条消息', 'ok');
+  }
+
+  /* ================= 语音消息 =================
+   * 用浏览器原生 MediaRecorder 录制，不联网、不依赖第三方服务。
+   * 注意：录音需要麦克风权限，且仅在 https / localhost 下可用，
+   *      file:// 直接打开时浏览器会拒绝，界面会给出提示。
+   */
+  var rec = null, recChunks = [], recTimer = null, recStart = 0;
+  var VOICE_MAX_MS = 60000;
+
+  function canRecord() {
+    var okProto = location.protocol === 'https:' ||
+      location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+    return okProto && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) &&
+      typeof g.MediaRecorder !== 'undefined';
+  }
+
+  function startRecord() {
+    var r = findRoom(cur);
+    if (!r) return;
+    var sp = g.ACL.canSpeak(me, r);
+    if (!sp.ok) { g.UI.toast(sp.why, 'err'); return; }
+    if (!g.ACL.can(me, 'media.voice', r)) { g.UI.toast('没有发送语音的权限', 'err'); return; }
+    if (!canRecord()) {
+      g.UI.toast('当前环境不支持录音。请用 https 访问或 python3 server.py 打开', 'err');
+      return;
+    }
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+      recChunks = [];
+      var mime = '';
+      var cands = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
+      for (var i = 0; i < cands.length; i++) {
+        if (g.MediaRecorder.isTypeSupported && g.MediaRecorder.isTypeSupported(cands[i])) { mime = cands[i]; break; }
+      }
+      try { rec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream); }
+      catch (e) { rec = new MediaRecorder(stream); }
+      recStream(stream);
+      rec.ondataavailable = function (e) { if (e.data && e.data.size) recChunks.push(e.data); };
+      rec.onstop = function () { finishRecord(stream); };
+      rec.start();
+      recStart = now();
+      var tip = $('recTip'), sec = $('recSec');
+      if (tip) tip.classList.remove('hidden');
+      recTimer = setInterval(function () {
+        var el = (now() - recStart) / 1000;
+        if (sec) sec.textContent = Math.floor(el);
+        if (now() - recStart >= VOICE_MAX_MS) stopRecord(true);
+      }, 200);
+      var bv = $('btnVoice');
+      if (bv) { bv.classList.add('recording'); bv.textContent = '⏹'; }
+    }).catch(function (e) {
+      g.UI.toast('无法访问麦克风：' + (e && e.name ? e.name : '未知原因'), 'err');
+    });
+  }
+
+  var recStreamRef = null;
+  function recStream(s) { recStreamRef = s; }
+
+  function stopRecord(auto) {
+    if (!rec) return;
+    if (recTimer) { clearInterval(recTimer); recTimer = null; }
+    try { rec.stop(); } catch (e) { finishRecord(recStreamRef); }
+  }
+
+  function finishRecord(stream) {
+    if (stream) { try { stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) { } }
+    var tip = $('recTip');
+    if (tip) tip.classList.add('hidden');
+    var bv = $('btnVoice');
+    if (bv) { bv.classList.remove('recording'); bv.textContent = '🎙'; }
+    var dur = Math.max(1, Math.round((now() - recStart) / 1000));
+    if (!recChunks.length) return;
+    var blob = new Blob(recChunks, { type: recChunks[0].type || 'audio/webm' });
+    recChunks = [];
+    rec = null;
+    g.Media.readFile(blob).then(function (dataUrl) {
+      var id = uid('v');
+      return g.Media.put(id, dataUrl).then(function () {
+        pushMsg({
+          id: uid('msg'), room: cur, from: me.id, type: 'voice',
+          mediaId: id, name: '语音消息', size: g.Media.dataUrlSize(dataUrl),
+          dur: dur, ts: now()
+        });
+        g.UI.toast('已发送语音（' + dur + '秒）', 'ok');
+      });
+    });
+  }
+
+  function cancelRecord() {
+    if (!rec) return;
+    recChunks = [];
+    if (recTimer) { clearInterval(recTimer); recTimer = null; }
+    try { rec.stop(); } catch (e) { }
+    rec = null;
+    var tip = $('recTip'); if (tip) tip.classList.add('hidden');
+    var bv = $('btnVoice'); if (bv) { bv.classList.remove('recording'); bv.textContent = '🎙'; }
+    g.UI.toast('已取消');
+  }
+
+  /* 语音气泡 */
+  function voiceNode(m) {
+    var wrap = elc('div', 'voice-msg');
+    var play = elc('button', 'voice-play', '▶');
+    var bars = elc('div', 'voice-bars');
+    var n = Math.max(6, Math.min(28, Math.round((m.dur || 1) * 1.6) + 6));
+    for (var i = 0; i < n; i++) {
+      var b = elc('span', 'vbar');
+      b.style.height = (4 + Math.abs(Math.sin(i * 1.7)) * 14) + 'px';
+      bars.appendChild(b);
+    }
+    var dur = elc('span', 'voice-dur', (m.dur || 1) + '"');
+    wrap.appendChild(play);
+    wrap.appendChild(bars);
+    wrap.appendChild(dur);
+    var audio = null;
+    play.onclick = function () {
+      if (audio && !audio.paused) { audio.pause(); audio.currentTime = 0; play.textContent = '▶'; bars.classList.remove('playing'); return; }
+      g.Media.get(m.mediaId).then(function (u) {
+        if (!u) { g.UI.toast('语音数据已丢失'); return; }
+        if (!audio) audio = new Audio(u);
+        play.textContent = '⏸';
+        bars.classList.add('playing');
+        audio.onended = function () { play.textContent = '▶'; bars.classList.remove('playing'); };
+        audio.play().catch(function () { g.UI.toast('播放失败'); play.textContent = '▶'; bars.classList.remove('playing'); });
+      });
+    };
+    return wrap;
+  }
+
+  /* ================= 深色模式 ================= */
+  var THEME_KEY = 'wxlg_theme';
+  var ENTER_KEY = 'wxlg_enter';
+  function enterSends() {
+    try { return (localStorage.getItem(ENTER_KEY) || 'send') === 'send'; } catch (e) { return true; }
+  }
+  function applyTheme(t) {
+    var b = document.body;
+    if (!t || t === 'auto') {
+      var dark = g.matchMedia && g.matchMedia('(prefers-color-scheme: dark)').matches;
+      b.classList.toggle('dark', !!dark);
+    } else {
+      b.classList.toggle('dark', t === 'dark');
+    }
+  }
+  function initTheme() {
+    var t = 'auto';
+    try { t = localStorage.getItem(THEME_KEY) || 'auto'; } catch (e) { }
+    applyTheme(t);
+    if (g.matchMedia) {
+      var mq = g.matchMedia('(prefers-color-scheme: dark)');
+      var h = function () { if ((localStorage.getItem(THEME_KEY) || 'auto') === 'auto') applyTheme('auto'); };
+      if (mq.addEventListener) mq.addEventListener('change', h);
+      else if (mq.addListener) mq.addListener(h);
+    }
+  }
+  function setTheme(t) {
+    try { localStorage.setItem(THEME_KEY, t); } catch (e) { }
+    applyTheme(t);
+  }
+
+  /* ================= 导出聊天记录 ================= */
+  function exportChat(fmt) {
+    var r = findRoom(cur);
+    var list = (msgs(cur) || []).filter(function (m) { return !m.deleted; }).filter(visibleToMe);
+    if (!list.length) { g.UI.toast('当前会话没有消息'); return; }
+    var nameOf = function (id) { var u = findUser(id); return u ? u.nick : '未知'; };
+    var head = '# ' + (r ? r.name : cur) + '\n\n导出时间：' + new Date().toLocaleString('zh-CN') +
+      '\n共 ' + list.length + ' 条消息\n\n';
+    var typeText = function (m) {
+      if (m.type === 'image') return '[图片]';
+      if (m.type === 'video') return '[视频]';
+      if (m.type === 'voice') return '[语音 ' + (m.dur || 0) + '秒]';
+      if (m.type === 'file') return '[文件 ' + (m.name || '') + ']';
+      return m.text || '';
+    };
+    var body;
+    if (fmt === 'md') {
+      body = list.map(function (m) {
+        return '**' + nameOf(m.from) + '**（' + g.UI.fmtFull(m.ts) + '）\n\n' + typeText(m) + '\n';
+      }).join('\n---\n\n');
+    } else {
+      body = list.map(function (m) {
+        var t = m.type === 'text' ? g.MD.plain(m.text || '') : typeText(m);
+        return '[' + g.UI.fmtFull(m.ts) + '] ' + nameOf(m.from) + '：' + t;
+      }).join('\n');
+    }
+    var blob = new Blob([head + body], { type: 'text/plain;charset=utf-8' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = (r ? r.name : cur).replace(/[\/:*?"<>|]/g, '_') + '-' +
+      new Date().toISOString().slice(0, 10) + '.' + (fmt === 'md' ? 'md' : 'txt');
+    a.click();
+    g.UI.toast('已导出', 'ok');
+  }
+
+  function markBackup() { S.lastBackup = Date.now(); save(true); }
+
+  function exportDialog() {
+    var rn = findRoom(cur) ? findRoom(cur).name : cur;
+    var d = elc('div', '');
+    d.innerHTML = '<div class="form-tip">导出当前会话「' + g.UI.esc(rn) + '」的全部消息。</div>' +
+      '<div class="field-hint">Markdown 保留代码块、表格与公式源码；文本格式为纯文字便于阅读。</div>';
+    g.UI.modal({
+      title: '导出聊天记录', body: d, okText: '导出 Markdown', cancelText: '导出文本',
+      onOk: function () { exportChat('md'); },
+      onCancel: function () { exportChat('txt'); }
+    });
+  }
+
+  /* ================= 存储配额 ================= */
+  function storageInfo() {
+    var used = 0;
+    try { used = (localStorage.getItem(KEY) || '').length; } catch (e) { }
+    var mediaCount = 0;
+    Object.keys(S.messages).forEach(function (rid) {
+      (S.messages[rid] || []).forEach(function (m) { if (m.mediaId && !m.deleted) mediaCount++; });
+    });
+    return { stateKB: Math.round(used / 1024), mediaCount: mediaCount, quotaKB: 5120 };
+  }
+
+  function checkStorageQuota() {
+    var st = storageInfo();
+    if (st.stateKB > st.quotaKB * 0.8) {
+      g.UI.toast('本地存储已用 ' + st.stateKB + ' KB（约 5 MB 上限），建议到「站点」导出备份后清理', 'err', 6000);
+    }
+  }
+
+  /* ================= 旧媒体清理（先备份再问站长） ================= */
+  function mediaCleanDialog() {
+    if (!(g.ACL.can(me, 'site.clean') || me.role === 'owner')) {
+      g.UI.toast('仅站长 / 管理员可清理媒体'); return;
+    }
+    var st = storageInfo();
+    var d = elc('div', '');
+    d.innerHTML =
+      '<div class="form-tip">当前有 <b>' + st.mediaCount + '</b> 个媒体文件（图片 / 视频 / 语音 / 附件），' +
+      '状态数据约 ' + st.stateKB + ' KB。</div>' +
+      '<label class="field-label">清理早于多少天的媒体</label><select class="field" id="mcDays">' +
+      '<option value="7">7 天前</option><option value="30" selected>30 天前</option>' +
+      '<option value="90">90 天前</option></select>' +
+      '<div class="form-tip danger">⚠️ 必须先导出备份。清理后这些消息的媒体无法显示（消息本身保留）。</div>' +
+      '<button class="btn ghost" id="mcBackup">第一步：导出 JSON 备份</button>' +
+      '<div id="mcTip" class="field-hint"></div>';
+    var backed = false;
+    g.UI.modal({
+      title: '清理旧媒体', body: d, okText: '第二步：确认清理', danger: true,
+      onOk: function (body) {
+        if (!backed) {
+          body.querySelector('#mcTip').textContent = '请先点「导出 JSON 备份」完成备份，再执行清理。';
+          return false;
+        }
+        var days = parseInt(body.querySelector('#mcDays').value, 10);
+        var cut = Date.now() - days * 86400000;
+        var cnt = 0;
+        Object.keys(S.messages).forEach(function (rid) {
+          (S.messages[rid] || []).forEach(function (m) {
+            if (m.mediaId && (m.ts || 0) < cut) {
+              try { g.Media.del(m.mediaId); } catch (e) { }
+              m.mediaId = null; m.cleared = true; cnt++;
+            }
+          });
+        });
+        save();
+        log('clean', '清理 ' + days + ' 天前的媒体，共 ' + cnt + ' 个');
+        g.UI.toast('已清理 ' + cnt + ' 个媒体文件', 'ok');
+        renderChat();
+      }
+    });
+    d.querySelector('#mcBackup').onclick = function () {
+      var blob = new Blob([JSON.stringify(S, null, 2)], { type: 'application/json' });
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'chat-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+      a.click();
+      backed = true;
+      d.querySelector('#mcTip').textContent = '✓ 备份已下载，现在可以执行清理了。';
+      log('backup', '清理前导出备份');
+    };
+  }
+
+  /* ================= 邀请口令 =================
+   * 群主/管理员生成一次性口令（可设有效期与使用次数），
+   * 别人在房间列表输入口令即可入群，无需逐个邀请。
+   */
+  function genCode() {
+    var cs = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+    var r = '';
+    for (var i = 0; i < 6; i++) r += cs.charAt(Math.floor(Math.random() * cs.length));
+    return r;
+  }
+
+  function inviteCodeDialog(r) {
+    var d = elc('div', '');
+    d.innerHTML =
+      '<div class="form-tip">生成的口令发给对方，对方在「加入房间」里输入即可入群。</div>' +
+      '<label class="field-label">有效时长</label><select class="field" id="icHour">' +
+      '<option value="1">1 小时</option><option value="24" selected>1 天</option>' +
+      '<option value="168">7 天</option><option value="0">长期有效</option></select>' +
+      '<label class="field-label">可用次数</label><select class="field" id="icUse">' +
+      '<option value="1">1 次</option><option value="5" selected>5 次</option>' +
+      '<option value="0">不限次数</option></select>' +
+      '<div id="icOut" class="invite-out"></div>';
+    g.UI.modal({
+      title: '生成邀请口令 · ' + r.name, body: d, okText: '生成', onOk: function (body) {
+        var h = parseInt(body.querySelector('#icHour').value, 10);
+        var u = parseInt(body.querySelector('#icUse').value, 10);
+        var code = genCode();
+        S.invites = S.invites || [];
+        S.invites.push({
+          code: code, room: r.id, by: me.id,
+          expireAt: h > 0 ? Date.now() + h * 3600000 : 0,
+          maxUse: u, used: 0, createdAt: Date.now()
+        });
+        save();
+        var out = body.querySelector('#icOut');
+        out.innerHTML = '<div class="invite-code">' + code + '</div>' +
+          '<div class="field-hint">有效期：' + (h > 0 ? h + ' 小时' : '长期') +
+          ' · 可用 ' + (u > 0 ? u + ' 次' : '不限次数') + '</div>' +
+          '<button class="btn ghost" id="icCopy">复制口令</button>';
+        body.querySelector('#icCopy').onclick = function () {
+          try { navigator.clipboard.writeText(code); g.UI.toast('已复制', 'ok'); }
+          catch (e) { g.UI.toast('复制失败，请手动记下：' + code); }
+        };
+        log('invite', '为「' + r.name + '」生成邀请口令');
+        return false;   /* 保持弹窗打开，便于看到口令 */
+      }
+    });
+  }
+
+  /* 用口令加入房间 */
+  function joinByCode() {
+    var d = elc('div', '');
+    d.innerHTML =
+      '<label class="field-label">邀请口令</label><input class="field" id="jcCode" placeholder="6 位口令" maxlength="6">' +
+      '<div id="jcMsg" class="field-hint"></div>';
+    g.UI.modal({
+      title: '用口令加入房间', body: d, okText: '加入', onOk: function (body) {
+        var c = (body.querySelector('#jcCode').value || '').trim().toUpperCase();
+        if (!c) { g.UI.toast('请输入口令'); return false; }
+        var inv = (S.invites || []).filter(function (x) { return x.code === c; })[0];
+        var tip = body.querySelector('#jcMsg');
+        if (!inv) { tip.textContent = '口令不存在或已失效'; return false; }
+        if (inv.expireAt && inv.expireAt < Date.now()) { tip.textContent = '口令已过期'; return false; }
+        if (inv.maxUse > 0 && inv.used >= inv.maxUse) { tip.textContent = '口令使用次数已用完'; return false; }
+        var r = findRoom(inv.room);
+        if (!r) { tip.textContent = '目标房间已被解散'; return false; }
+        joinRoom(inv.room, me, true);
+        inv.used = (inv.used || 0) + 1;
+        save();
+        openRoom(inv.room);
+        g.UI.toast('已加入「' + r.name + '」', 'ok');
+      }
+    });
+  }
+
+  /* ================= 消息搜索 ================= */
+  function searchModal() {
+    var d = elc('div', '');
+    d.innerHTML =
+      '<label class="field-label">关键词</label><input class="field" id="swK" placeholder="搜索聊天内容">' +
+      '<label class="field-label">范围</label><select class="field" id="swScope">' +
+      '<option value="cur">当前会话</option><option value="all">全部房间</option></select>' +
+      '<label class="field-label">发送者（留空为全部）</label><input class="field" id="swWho" placeholder="昵称">' +
+      '<div id="swList" class="search-list"></div>';
+    var box = d.querySelector('#swList');
+    var run = function () {
+      var k = (d.querySelector('#swK').value || '').trim().toLowerCase();
+      varwho = (d.querySelector('#swWho').value || '').trim().toLowerCase();
+      var scope = d.querySelector('#swScope').value;
+      box.innerHTML = '';
+      if (!k) { box.appendChild(elc('div', 'empty-tip', '输入关键词开始搜索')); return; }
+      var hits = [];
+      Object.keys(S.messages).forEach(function (rid) {
+        if (scope === 'cur' && rid !== cur) return;
+        (S.messages[rid] || []).forEach(function (m) {
+          if (m.deleted) return;
+          var txt = (m.text || '');
+          if (m.type !== 'text' && !txt) txt = '[' + (m.type === 'image' ? '图片' : m.type === 'video' ? '视频' : m.type === 'voice' ? '语音' : m.type === 'file' ? '文件' : '消息') + ']';
+          if (txt.toLowerCase().indexOf(k) < 0) return;
+          if (varwho) {
+            var u = findUser(m.from);
+            if (!u || u.nick.toLowerCase().indexOf(varwho) < 0) return;
+          }
+          hits.push({ m: m, rid: rid, txt: txt });
+        });
+      });
+      if (!hits.length) { box.appendChild(elc('div', 'empty-tip', '没有找到相关消息')); return; }
+      hits.sort(function (a, b) { return (b.m.ts || 0) - (a.m.ts || 0); });
+      var tip = elc('div', 'field-hint', '共 ' + hits.length + ' 条，按时间倒序');
+      box.appendChild(tip);
+      hits.slice(0, 60).forEach(function (h) {
+        var it = elc('div', 'search-item');
+        var u = findUser(h.m.from);
+        var rn = findRoom(h.rid);
+        it.innerHTML = '<div class="search-meta">' + g.UI.esc(u ? u.nick : '未知') +
+          ' · ' + g.UI.esc(rn ? rn.name : h.rid) + ' · ' + g.UI.fmtFull(h.m.ts) + '</div>' +
+          '<div class="search-body">' + g.UI.esc(h.txt.slice(0, 120)) + '</div>';
+        it.onclick = function () {
+          openRoom(h.rid);
+          setTimeout(function () {
+            var nd = document.querySelector('[data-mid="' + h.m.id + '"]');
+            if (nd) { nd.scrollIntoView({ block: 'center' }); nd.classList.add('flash'); setTimeout(function () { nd.classList.remove('flash'); }, 1200); }
+          }, 200);
+        };
+        box.appendChild(it);
+      });
+    };
+    d.querySelector('#swK').oninput = run;
+    d.querySelector('#swWho').oninput = run;
+    d.querySelector('#swScope').onchange = run;
+    g.UI.modal({ title: '消息搜索', body: d, okText: '关闭', cancelText: null, wide: true });
+    run();
+  }
+
+  /* ================= 表情面板 ================= */
+  var EMOJI = [
+    { t: '常用', e: ['😀','😄','😁','😂','🤣','😊','😍','😘','😎','🤔','😅','😭','😉','🙃','😴','🤗'] },
+    { t: '手势', e: ['👍','👎','👌','✌','🤝','👏','🙏','💪','👋','🫡','🤙','👀'] },
+    { t: '心情', e: ['❤','💔','✨','🔥','🎉','💯','⭐','🌈','☀','🌙','⚡','❄'] },
+    { t: '学习', e: ['📚','✏','📝','💡','🧠','💻','⌨','🖥','📐','🔢','🧮','🎓'] },
+    { t: '其他', e: ['🐱','🐶','🌸','🍎','🍜','☕','⚽','🎮','🎵','🚀','⏰','📌'] }
+  ];
+
+  function emojiPanel() {
+    var d = elc('div', 'emoji-panel');
+    EMOJI.forEach(function (grp) {
+      var sec = elc('div', 'emoji-sec');
+      sec.appendChild(elc('div', 'emoji-title', grp.t));
+      var box = elc('div', 'emoji-grid');
+      grp.e.forEach(function (c) {
+        var b = elc('button', 'emoji-cell', c);
+        b.onclick = function () {
+          var ta = $('input');
+          if (ta) {
+            var st = ta.selectionStart || ta.value.length;
+            ta.value = ta.value.slice(0, st) + c + ta.value.slice(st);
+            ta.focus(); drafts[cur] = ta.value;
+          }
+        };
+        box.appendChild(b);
+      });
+      sec.appendChild(box);
+      d.appendChild(sec);
+    });
+    g.UI.modal({ title: '表情', body: d, okText: '关闭', cancelText: null });
+  }
+
+  /* ================= 公式符号面板 ================= */
+  var SYMS = [
+    { t: '基础', s: [['分数','\\frac{a}{b}'],['根号','\\sqrt{x}'],['n次根','\\sqrt[n]{x}'],['上下标','x^{2}_{1}'],['绝对值','|x|']] },
+    { t: '希腊', s: [['α','\\alpha'],['β','\\beta'],['γ','\\gamma'],['π','\\pi'],['θ','\\theta'],['λ','\\lambda'],['μ','\\mu'],['σ','\\sigma'],['Ω','\\Omega'],['Δ','\\Delta']] },
+    { t: '运算', s: [['求和','\\sum_{i=1}^{n}'],['积分','\\int_{0}^{1}'],['极限','\\lim_{x \\to 0}'],['连乘','\\prod_{i=1}^{n}'],['偏导','\\partial']] },
+    { t: '关系', s: [['≤','\\le'],['≥','\\ge'],['≠','\\ne'],['≈','\\approx'],['±','\\pm'],['×','\\times'],['÷','\\div'],['∈','\\in'],['∞','\\infty']] },
+    { t: '结构', s: [['矩阵','\\begin{pmatrix}a&b\\\\c&d\\end{pmatrix}'],['分段','\\begin{cases}1&x>0\\\\0&x\\le 0\\end{cases}'],['向量','\\vec{a}'],['文本','\\text{中文}']] }
+  ];
+
+  function symbolPanel() {
+    var d = elc('div', 'sym-panel');
+    SYMS.forEach(function (grp) {
+      var sec = elc('div', 'sym-sec');
+      sec.appendChild(elc('div', 'sym-title', grp.t));
+      var box = elc('div', 'sym-grid');
+      grp.s.forEach(function (it) {
+        var b = elc('button', 'sym-cell');
+        b.innerHTML = '<span class="sym-name">' + g.UI.esc(it[0]) + '</span>';
+        b.title = it[1];
+        b.onclick = function () {
+          var ta = $('input');
+          if (ta) {
+            var st = ta.selectionStart || ta.value.length;
+            ta.value = ta.value.slice(0, st) + it[1] + ta.value.slice(st);
+            ta.focus(); drafts[cur] = ta.value;
+          }
+        };
+        box.appendChild(b);
+      });
+      sec.appendChild(box);
+      d.appendChild(sec);
+    });
+    d.appendChild(elc('div', 'field-hint', '点击插入到光标处。公式需用 $ 或 $$ 包裹才会渲染。'));
+    g.UI.modal({ title: '公式符号', body: d, okText: '关闭', cancelText: null, wide: true });
   }
 
   function sendMediaFile(file, kind) {
     var r = findRoom(cur);
     var sp = g.ACL.canSpeak(me, r);
     if (!sp.ok) { g.UI.toast(sp.why, 'err'); return; }
-    if (!g.ACL.can(me, 'media.send', r)) { g.UI.toast('没有发送媒体的权限', 'err'); return; }
+    /* 按类型细分权限：图片 / 视频 / 语音 / 文件各自独立 */
+    var mediaPerm = { image: 'media.image', video: 'media.video', voice: 'media.voice', file: 'media.file' }[kind];
+    if (mediaPerm && !g.ACL.can(me, mediaPerm, r)) {
+      g.UI.toast('没有发送' + ({ image: '图片', video: '视频', voice: '语音', file: '文件' }[kind] || '该类型') + '的权限', 'err');
+      return;
+    }
     if (file.size > 60 * 1024 * 1024) { g.UI.toast('文件过大（上限 60MB）', 'err'); return; }
     g.UI.toast('处理中…');
     g.Media.readFile(file).then(function (dataUrl) {
@@ -669,7 +1485,7 @@
         me.nick = rest.trim(); touch(me);
         sysMsg(cur, '「' + me.nick + '」修改了昵称'); save(); return;
       case 'who':
-        var names = membersOf(r).map(function (u) { return u.nick + '(' + (u.realName || '?') + ')'; }).join('、');
+        var names = membersOf(r).map(function (u) { return u.nick; }).join('、');
         sysMsg(cur, '本会话成员：' + names); save(); return;
       case 'dm':
       case 'msg': {
@@ -717,7 +1533,7 @@
       }
       case 'kick': {
         var u4 = byNick(rest.split(/\s+/)[0] || '');
-        if (!u4 || !g.ACL.can(me, 'user.kick', r)) { g.UI.toast('用法：/kick @昵称（或权限不足）', 'err'); return; }
+        if (!u4 || !g.ACL.can(me, 'room.kick', r)) { g.UI.toast('用法：/kick @昵称（或权限不足）', 'err'); return; }
         if (r.type === 'public') { g.UI.toast('公屏大厅不能踢人', 'err'); return; }
         r.members = (r.members || []).filter(function (x) { return x !== u4.id; });
         touch(r); sysMsg(cur, '「' + u4.nick + '」已被移出群聊'); log('kick', u4.nick, r.id); save(); renderAll(); return;
@@ -763,7 +1579,7 @@
         return;
       }
       case 'clear': {
-        if (!g.ACL.can(me, 'msg.delete', r)) { g.UI.toast('没有清空权限', 'err'); return; }
+        if (!g.ACL.can(me, 'msg.remove', r)) { g.UI.toast('没有清空权限', 'err'); return; }
         g.UI.confirm('清空当前会话的全部消息？', function () {
           S.messages[r.id] = []; sysMsg(r.id, '消息已被管理员清空'); log('clear', '', r.id); save();
         });
@@ -820,7 +1636,7 @@
       return '<div class="cmd-row"><code>' + g.UI.esc(x[0]) + '</code><span>' + g.UI.esc(x[1]) + '</span></div>';
     }).join('') + '</div>' +
       '<div class="form-note">Markdown：**粗体**、*斜体*、~~删除线~~、`代码`、```代码块```、> 引用、- 列表、| 表格 |、[链接](url)、![图片](url)<br>' +
-      'LaTeX（仿洛谷，用 $ 包裹）：$x^2+y^2=z^2$、$$\\frac{-b\\pm\\sqrt{b^2-4ac}}{2a}$$、$$\\begin{pmatrix}a&b\\\\c&d\\end{pmatrix}$$</div>';
+      'LaTeX（用 $ 包裹）：$x^2+y^2=z^2$、$$\\frac{-b\\pm\\sqrt{b^2-4ac}}{2a}$$、$$\\begin{pmatrix}a&b\\\\c&d\\end{pmatrix}$$</div>';
     g.UI.modal({ title: '命令与语法帮助', body: d, okText: '知道了', cancelText: null, wide: true });
   }
 
@@ -854,6 +1670,29 @@
 
   /* ================= 房间操作 ================= */
   function openRoom(rid) {
+    /* 保存上一个会话的草稿 */
+    if (cur) {
+      var ta = $('input');
+      if (ta) {
+        if (ta.value.trim()) drafts[cur] = ta.value;
+        else delete drafts[cur];
+      }
+    }
+    var keep = cur;
+    doOpenRoom(rid);
+    /* 恢复目标会话的草稿 */
+    var tb = $('input');
+    if (tb) { tb.value = drafts[rid] || ''; autoGrow(tb); }
+    if (keep !== rid) g.Sync.ping();
+  }
+
+  function autoGrow(ta) {
+    if (!ta) return;
+    ta.style.height = 'auto';
+    ta.style.height = Math.min(ta.scrollHeight, 140) + 'px';
+  }
+
+  function doOpenRoom(rid) {
     var r = findRoom(rid);
     if (!r) return;
     if (r.pwd && r.members && r.members.indexOf(me.id) < 0) {
@@ -928,6 +1767,11 @@
         });
       }]);
     }
+    items.push(['用口令加入房间', function () { joinByCode(); }]);
+    if (g.ACL.can(me, 'room.manage', r)) {
+      items.push(['生成邀请口令', function () { inviteCodeDialog(r); }]);
+    }
+    if (g.ACL.can(me, 'room.manage', r)) items.push(['导出本群记录', function () { cur = r.id; exportDialog(); }]);
     if (g.ACL.can(me, 'room.manage', r)) items.push(['群设置', function () { roomSettings(r); }]);
     if (g.ACL.can(me, 'room.notice', r)) items.push(['编辑公告', function () { editNotice(r); }]);
     if (g.ACL.can(me, 'room.pwd', r)) items.push(['群密码', function () { editPwd(r); }]);
@@ -1019,7 +1863,7 @@
     d.innerHTML =
       '<div class="uc-head"><div id="ucAv"></div><div>' +
       '<div class="uc-nick">' + g.UI.esc(u.nick) + '</div>' +
-      '<div class="uc-real">实名：' + g.UI.esc(u.realName || '未填写') + '</div>' +
+      '<div class="uc-real">申请说明：' + g.UI.esc(u.note || '未填写') + '</div>' +
       '<div class="uc-role">' + g.ACL.roleName(u) + ' · 本群：' + rr + '</div></div></div>' +
       '<div class="uc-bio">' + g.UI.esc(u.bio || '这个人很懒，什么都没写。') + '</div>' +
       '<div class="uc-meta">注册：' + g.UI.fmtFull(u.createdAt) + ' · 最后活跃：' + g.UI.fmtFull(u.lastSeen || u.createdAt) + '</div>' +
@@ -1051,7 +1895,7 @@
         }
       });
     }
-    if (g.ACL.can(me, 'user.kick', r) && r.type !== 'public') {
+    if (g.ACL.can(me, 'room.kick', r) && r.type !== 'public') {
       btn('移出本群', '', function () {
         r.members = (r.members || []).filter(function (x) { return x !== u.id; });
         touch(r); sysMsg(r.id, '「' + u.nick + '」已被移出群聊'); log('kick', u.nick, r.id); save(); renderAll();
@@ -1085,27 +1929,88 @@
     }
   }
 
+  /* ============================================================
+   * 权限编辑器：逐项分化
+   *   每项三态 —— 继承 / 允许 / 禁止
+   *   站长恒为全部权限，不显示可改。
+   * ============================================================ */
   function permEditor(u) {
-    var d = elc('div', '');
-    d.innerHTML = '<div class="form-tip">为「' + g.UI.esc(u.nick) + '」单独授予/收回权限（不影响其角色基础权限）。</div><div class="perm-grid"></div>';
-    var grid = d.querySelector('.perm-grid');
-    g.ACL.all().forEach(function (p) {
-      var lab = elc('label', 'perm-item');
-      var cb = document.createElement('input');
-      cb.type = 'checkbox';
-      cb.checked = (u.perms || []).indexOf(p) >= 0;
-      cb.dataset.p = p;
-      lab.appendChild(cb);
-      lab.appendChild(elc('span', '', g.ACL.label(p) + '（' + p + '）'));
-      grid.appendChild(lab);
+    if (u.role === 'owner') { g.UI.toast('站长拥有全部权限，无需单独设置'); return; }
+    if (!g.ACL.can(me, 'user.perms')) { g.UI.toast('你没有分配权限的权限', 'err'); return; }
+
+    var d = elc('div', 'perm-editor');
+    var head = elc('div', 'form-tip');
+    head.innerHTML = '为「<b>' + g.UI.esc(u.nick) + '</b>」单独设置权限（角色：' +
+      g.UI.esc(g.ACL.roleName(u)) + '）。<br>' +
+      '<b>继承</b>=按角色默认走；<b>允许</b>=单独给他；<b>禁止</b>=单独收回（优先级最高）。<br>' +
+      '同为管理员，各人手里实际能做什么由这里的勾选决定。';
+    d.appendChild(head);
+
+    /* 角色模板快捷套用 */
+    var tpl = elc('div', 'perm-tpl');
+    tpl.innerHTML =
+      '<span class="tpl-label">快捷套用：</span>' +
+      '<button class="btn ghost sm" data-tpl="admin">管理员模板</button> ' +
+      '<button class="btn ghost sm" data-tpl="member">普通成员模板</button> ' +
+      '<button class="btn ghost sm" data-tpl="clear">全部恢复继承</button>';
+    d.appendChild(tpl);
+
+    var sels = [];
+    g.ACL.groups().forEach(function (grp) {
+      var sec = elc('div', 'perm-sec');
+      sec.appendChild(elc('div', 'perm-sec-title', grp.name));
+      grp.perms.forEach(function (p) {
+        var row = elc('div', 'perm-row');
+        var name = elc('div', 'perm-name');
+        name.innerHTML = g.UI.esc(p[1]) + '<span class="perm-code">' + g.UI.esc(p[0]) + '</span>';
+        var sel = document.createElement('select');
+        sel.className = 'field sm perm-sel';
+        sel.innerHTML =
+          '<option value="inherit">继承</option>' +
+          '<option value="allow">允许</option>' +
+          '<option value="deny">禁止</option>';
+        sel.value = g.ACL.stateOf(u, p[0]);
+        sel.dataset.p = p[0];
+        sels.push(sel);
+        row.appendChild(name);
+        row.appendChild(sel);
+        sec.appendChild(row);
+      });
+      d.appendChild(sec);
     });
-    g.UI.modal({
-      title: '权限微调', body: d, wide: true, okText: '保存', onOk: function (body) {
-        var sel = [];
-        Array.prototype.forEach.call(body.querySelectorAll('input[type=checkbox]'), function (c) {
-          if (c.checked) sel.push(c.dataset.p);
+
+    /* 快捷套用 */
+    Array.prototype.forEach.call(tpl.querySelectorAll('[data-tpl]'), function (btn) {
+      btn.onclick = function () {
+        var mode = btn.getAttribute('data-tpl');
+        sels.forEach(function (sel) {
+          var p = sel.dataset.p;
+          if (mode === 'clear') { sel.value = 'inherit'; return; }
+          var tplSet = (g.ACL.ROLE_PERMS[mode] || []);
+          var inRole = (g.ACL.ROLE_PERMS[u.role] || []).indexOf(p) >= 0;
+          /* 模板里有而角色默认没有 → 允许；模板里没有而角色默认有 → 禁止 */
+          if (tplSet.indexOf(p) >= 0 && !inRole) sel.value = 'allow';
+          else if (tplSet.indexOf(p) < 0 && inRole) sel.value = 'deny';
+          else sel.value = 'inherit';
         });
-        u.perms = sel; touch(u); log('perm', u.nick + ': ' + sel.join(',')); save();
+      };
+    });
+
+    g.UI.modal({
+      title: '权限分配 · ' + u.nick, body: d, wide: true, okText: '保存',
+      onOk: function (body) {
+        var allow = [], deny = [];
+        sels.forEach(function (sel) {
+          var v = sel.value, p = sel.dataset.p;
+          if (v === 'allow') allow.push(p);
+          else if (v === 'deny') deny.push(p);
+        });
+        u.perms = allow;
+        u.denied = deny;
+        touch(u);
+        log('perm', u.nick + ' 权限：允许[' + allow.join(',') + '] 禁止[' + deny.join(',') + ']');
+        save();
+        g.UI.toast('已保存：允许 ' + allow.length + ' 项，禁止 ' + deny.length + ' 项', 'ok');
       }
     });
   }
@@ -1114,10 +2019,45 @@
     var d = elc('div', '');
     d.innerHTML =
       '<label class="field-label">昵称</label><input class="field" id="pNick" value="' + g.UI.esc(me.nick) + '">' +
-      '<label class="field-label">真实姓名</label><input class="field" id="pReal" value="' + g.UI.esc(me.realName || '') + '">' +
+      '<label class="field-label">申请说明</label><textarea class="field" id="pNote" rows="3">' + g.UI.esc(me.note || '') + '</textarea>' +
+      '<label class="field-label">自定义头像</label>' +
+      '<div class="avatar-edit"><div id="pAvPrev" class="avatar-prev"></div>' +
+      '<div><button class="btn ghost" id="pAvPick" type="button">上传图片</button> ' +
+      '<button class="btn ghost" id="pAvClear" type="button">恢复默认</button>' +
+      '<input type="file" id="pAvFile" accept="image/*" class="hidden">' +
+      '<div class="field-hint">图片会自动压缩为正方形小图，存在本地。</div></div></div>' +
       '<label class="field-label">个性签名</label><input class="field" id="pBio" value="' + g.UI.esc(me.bio || '') + '">' +
       '<label class="field-label">修改登录密码（留空不改）</label><input class="field" id="pPwd" type="password">' +
-      '<div class="field-hint">头像由昵称首字母自动生成，配色取自昵称哈希。</div>';
+      '<div class="field-hint">默认头像由昵称首字母自动生成，配色取自昵称哈希；上传后改为自定义图片。</div>';
+
+    /* 预览与选择头像 */
+    var pickedAvatar = null;      // 本次选中的 dataURL（null=不改，''=恢复默认）
+    (function () {
+      var prev = d.querySelector('#pAvPrev');
+      var draw = function (url) {
+        prev.innerHTML = '';
+        if (url) { prev.style.backgroundImage = 'url(' + url + ')'; prev.style.backgroundSize = 'cover'; }
+        else { prev.style.backgroundImage = ''; g.UI.avatar(me, 'lg'); }
+      };
+      var showNow = function () {
+        if (me.avatarId && g.Media) {
+          g.Media.get(me.avatarId).then(function (u) { draw(u || null); }).catch(function () { draw(null); });
+        } else draw(null);
+      };
+      showNow();
+      d.querySelector('#pAvPick').onclick = function () { d.querySelector('#pAvFile').click(); };
+      d.querySelector('#pAvClear').onclick = function () { pickedAvatar = ''; draw(null); };
+      d.querySelector('#pAvFile').onchange = function (e) {
+        var f = e.target.files && e.target.files[0];
+        if (!f) return;
+        g.Media.readFile(f).then(function (u) {
+          return g.Media.compressImage(u, 240, 0.85);   // 压缩成小图，显示时按正方形裁切
+        }).then(function (u2) {
+          pickedAvatar = u2; draw(u2);
+        }).catch(function () { g.UI.toast('图片处理失败', 'err'); });
+      };
+    })();
+
     g.UI.modal({
       title: '我的资料', body: d, okText: '保存', onOk: function (body) {
         var n = body.querySelector('#pNick').value.trim();
@@ -1125,7 +2065,7 @@
         var dup = byNick(n);
         if (dup && dup.id !== me.id) { g.UI.toast('昵称已被占用'); return false; }
         me.nick = n;
-        me.realName = body.querySelector('#pReal').value.trim();
+        me.note = body.querySelector('#pNote').value.trim();
         me.bio = body.querySelector('#pBio').value.trim();
         var p = body.querySelector('#pPwd').value;
         if (p) {
@@ -1133,19 +2073,32 @@
           var s = g.SHA256.randomId(12);
           me.pwdSalt = s; me.pwdHash = hashPwd(p, s);
         }
+        /* 保存头像 */
+        if (pickedAvatar === '') {
+          if (me.avatarId && g.Media.del) g.Media.del(me.avatarId);
+          me.avatarId = null;
+          if (g.UI.setAvatarCache) g.UI.setAvatarCache(me.id, null);
+        } else if (pickedAvatar) {
+          var aid = 'av_' + uid('x');
+          g.Media.put(aid, pickedAvatar).then(function () {
+            me.avatarId = aid; touch(me); save();
+          });
+          me.avatarId = aid;
+          if (g.UI.setAvatarCache) g.UI.setAvatarCache(me.id, pickedAvatar);
+        }
         touch(me); log('profile', me.nick); save();
       }
     });
   }
 
   /* ================= 管理面板 ================= */
-  /* 站长 / 管理员手动开户（用于关闭公开注册、线下实名审核的场景） */
+  /* 站长 / 管理员手动开户（用于关闭公开注册、只放熟人进来的场景） */
   function newUserDialog() {
     var d = elc('div', '');
     d.innerHTML =
       '<div class="form-tip">手动开户后该账号可立即登录。请确认已线下核实对方真实身份。</div>' +
       '<label class="field-label">昵称（登录用）</label><input class="field" id="nuNick" placeholder="例如：小明">' +
-      '<label class="field-label">真实姓名</label><input class="field" id="nuReal" placeholder="例如：李小明">' +
+      '<label class="field-label">备注（选填，仅站长可见）</label><input class="field" id="nuReal" placeholder="例如：李明，高二3班">' +
       '<label class="field-label">初始密码</label><input class="field" id="nuPwd" type="password" placeholder="至少 4 位，可告知对方自行修改">' +
       '<label class="field-label">角色</label><select class="field" id="nuRole">' +
       '<option value="member">成员</option><option value="admin">管理员</option>' +
@@ -1157,19 +2110,19 @@
         var r = body.querySelector('#nuReal').value.trim();
         var p = body.querySelector('#nuPwd').value;
         var role = body.querySelector('#nuRole').value;
-        if (!n || !r) { g.UI.toast('请填写昵称与真实姓名'); return false; }
+        if (!n) { g.UI.toast('请填写昵称'); return false; }
         if (p.length < 4) { g.UI.toast('初始密码至少 4 位'); return false; }
         if (byNick(n)) { g.UI.toast('昵称已被占用'); return false; }
         var salt = g.SHA256.randomId(12);
         var u = {
-          id: uid('u'), nick: n, realName: r, pwdHash: hashPwd(p, salt), pwdSalt: salt,
+          id: uid('u'), nick: n, note: r || '站长开户', status: 'active', pwdHash: hashPwd(p, salt), pwdSalt: salt,
           role: role === 'owner' ? 'owner' : role, perms: [], banned: false,
           mutedUntil: 0, bio: '', createdAt: now(), updatedAt: now(), lastSeen: now()
         };
         if (role === 'owner' && me.role === 'owner') { me.role = 'admin'; touch(me); }
         S.users.push(u);
         joinRoom('public', u, true);
-        log('newuser', '手动开户 ' + n + '（' + r + '）');
+        log('newuser', '手动开户 ' + n + (r ? '（' + r + '）' : ''));
         save();
         g.UI.toast('已开户：' + n, 'ok');
       }
@@ -1177,11 +2130,12 @@
   }
 
   function adminPanel() {
-    if (!g.ACL.can(me, 'log.view')) { g.UI.toast('仅管理员可打开管理面板', 'err'); return; }
+    if (!g.ACL.can(me, 'audit.log') && !g.ACL.can(me, 'user.view')) { g.UI.toast('仅管理员可打开管理面板', 'err'); return; }
     var d = elc('div', '');
     d.innerHTML =
       '<div class="tabs">' +
       '<button class="tab on" data-t="users">用户</button>' +
+      '<button class="tab" data-t="audit">审核</button>' +
       '<button class="tab" data-t="rooms">房间</button>' +
       '<button class="tab" data-t="perms">权限</button>' +
       '<button class="tab" data-t="logs">日志</button>' +
@@ -1195,7 +2149,7 @@
       b.innerHTML = '';
       if (t === 'users') {
         /* 手动开户：关闭公开注册后，站长/管理员可线下核实身份再开号 */
-        if (g.ACL.can(me, 'user.ban')) {
+        if (g.ACL.can(me, 'user.create')) {
           var ubar = elc('div', 'chip-box');
           var addBtn = elc('button', 'btn primary', '＋ 手动开户');
           addBtn.onclick = function () { newUserDialog(); };
@@ -1209,8 +2163,10 @@
           var line = elc('div', 'user-line');
           line.appendChild(g.UI.avatar(u, 'sm'));
           var main = elc('div', 'user-line-main');
-          main.innerHTML = '<div class="user-line-name">' + g.UI.esc(u.nick) + ' <span class="user-real">' + g.UI.esc(u.realName || '') + '</span></div>' +
-            '<div class="user-line-role">' + g.ACL.roleName(u) + ' · ' + g.UI.fmtTime(u.lastSeen || u.createdAt) + '</div>';
+          main.innerHTML = '<div class="user-line-name">' + g.UI.esc(u.nick) +
+            (u.status === 'pending' ? ' <span class="tag orange">待审核</span>' : '') + '</div>' +
+            '<div class="user-line-role">' + g.ACL.roleName(u) + ' · ' + g.UI.fmtTime(u.lastSeen || u.createdAt) +
+            (u.note ? ' · ' + g.UI.esc(u.note.slice(0, 30)) : '') + '</div>';
           line.appendChild(main);
           if (u.banned) line.appendChild(elc('span', 'tag red', '封禁'));
           if (g.ACL.muted(u)) line.appendChild(elc('span', 'tag orange', '禁言'));
@@ -1233,6 +2189,61 @@
           line.appendChild(ops);
           b.appendChild(line);
         });
+      } else if (t === 'audit') {
+        /* 注册申请审核：站长/管理员看申请说明，决定通过或拒绝 */
+        var pend = S.users.filter(function (u) { return u.status === 'pending'; });
+        if (!pend.length) b.appendChild(elc('div', 'empty-tip', '暂无待审核申请'));
+        pend.forEach(function (u) {
+          var line = elc('div', 'audit-item');
+          line.appendChild(g.UI.avatar(u, 'sm'));
+          var main = elc('div', 'user-line-main');
+          main.innerHTML = '<div class="user-line-name">' + g.UI.esc(u.nick) + '</div>' +
+            '<div class="audit-note">“' + g.UI.esc(u.note || '（未填写说明）') + '”</div>' +
+            '<div class="user-line-role">申请时间：' + g.UI.fmtFull(u.createdAt) + '</div>';
+          line.appendChild(main);
+          var ops = elc('div', 'line-ops');
+          ops.appendChild(mkBtn('通过', function () {
+            u.status = 'active'; touch(u);
+            joinRoom('public', u, true);
+            sysMsg('public', '「' + u.nick + '」通过了审核，加入聊天室');
+            log('audit', '通过 ' + u.nick);
+            save(); adminPanelRefresh(mo, d, view, t);
+          }));
+          ops.appendChild(mkBtn('拒绝', function () {
+            var rd = elc('div', '');
+            rd.innerHTML =
+              '<div class="form-tip">拒绝理由会保留在此人的重新申请记录里；' +
+              '若你选择「删除申请」，对方可用同一昵称重新提交。</div>' +
+              '<label class="field-label">拒绝理由（选填，会记入日志）</label>' +
+              '<input class="field" id="rjWhy" placeholder="例如：看不出是我们班的同学，请补充说明">' +
+              '<label class="field-label">处理方式</label><select class="field" id="rjMode">' +
+              '<option value="delete">删除申请（对方可重新提交）</option>' +
+              '<option value="reject">保留为已拒绝（不再出现在待审核）</option></select>';
+            g.UI.modal({
+              title: '拒绝「' + g.UI.esc(u.nick) + '」的申请', body: rd, okText: '确认拒绝', danger: true,
+              onOk: function (body) {
+                var why = (body.querySelector('#rjWhy').value || '').trim();
+                var mode = body.querySelector('#rjMode').value;
+                if (mode === 'reject') {
+                  u.status = 'rejected';
+                  u.rejectReason = why || '未说明理由';
+                  touch(u);
+                }
+                log('audit', '拒绝 ' + u.nick + (why ? '：' + why : ''));
+                if (mode === 'delete') {
+                  S.users = S.users.filter(function (x) { return x.id !== u.id; });
+                }
+                save(); adminPanelRefresh(mo, d, view, t);
+                g.UI.toast('已拒绝', 'ok');
+              }
+            });
+          }));
+          line.appendChild(ops);
+          b.appendChild(line);
+        });
+        b.appendChild(elc('div', 'field-hint',
+          '通过：对方即可用注册时填的密码登录；拒绝：删除该申请，对方可用同一昵称重新申请。' +
+          '若想完全不让陌生人注册，请到「站点」页签关闭开放注册。'));
       } else if (t === 'rooms') {
         S.rooms.forEach(function (r) {
           var line = elc('div', 'user-line');
@@ -1256,44 +2267,102 @@
           b.appendChild(line);
         });
       } else if (t === 'perms') {
+        /* 权限矩阵：用户 × 权限，逐项可点，站长行锁定 */
         var tip = elc('div', 'form-tip');
-        tip.textContent = '角色基础权限（owner 拥有全部；admin 为全局管理；member 为普通成员）。站长可对任意用户做单独微调（用户资料 → 权限微调）。';
+        tip.innerHTML = '点某个成员可逐项分配权限。<b>管理员只是称号</b>，' +
+          '实际能做什么由这里的勾选决定。<br>站长恒为全部权限，不可剥夺。';
         b.appendChild(tip);
+
+        var canGrant = g.ACL.can(me, 'user.perms');
+        var list = S.users.slice().sort(function (x, y) {
+          var oa = { owner: 0, admin: 1, member: 2 };
+          return (oa[x.role] == null ? 9 : oa[x.role]) - (oa[y.role] == null ? 9 : oa[y.role]);
+        });
+        list.forEach(function (u) {
+          var line = elc('div', 'user-line');
+          line.appendChild(g.UI.avatar(u, 'sm'));
+          var main = elc('div', 'user-line-main');
+          var cc = g.ACL.customCount(u);
+          var allowN = (u.perms || []).length, denyN = (u.denied || []).length;
+          main.innerHTML = '<div class="user-line-name">' + g.UI.esc(u.nick) +
+            ' <span class="tag ' + (u.role === 'owner' ? 'red' : u.role === 'admin' ? 'orange' : 'gray') + '">' +
+            g.UI.esc(g.ACL.roleName(u)) + '</span></div>' +
+            '<div class="user-line-role">' +
+            (u.role === 'owner' ? '全部权限（不可剥夺）' :
+              (cc ? '自定义 ' + cc + ' 项：允许 ' + allowN + ' · 禁止 ' + denyN : '按角色默认继承')) +
+            '</div>';
+          line.appendChild(main);
+          if (u.role === 'owner') {
+            line.appendChild(elc('span', 'tag gray', '全部权限'));
+          } else if (canGrant) {
+            line.appendChild(mkBtn('分配权限', function () { mo.close(); permEditor(u); }));
+          }
+          b.appendChild(line);
+        });
+
+        /* 角色默认对照表（只读，用于说明"继承"是什么） */
+        b.appendChild(elc('div', 'sec-title', '角色默认权限（继承时按此判定）'));
         var wrap = elc('div', 'perm-table-wrap');
-        var html = '<table class="md-table"><thead><tr><th>权限</th><th>owner</th><th>admin</th><th>member</th></tr></thead><tbody>';
+        var html = '<table class="md-table"><thead><tr><th>权限</th><th>站长</th><th>管理员</th><th>成员</th></tr></thead><tbody>';
         g.ACL.all().forEach(function (p) {
           html += '<tr><td>' + g.UI.esc(g.ACL.label(p)) + ' <code>' + p + '</code></td>' +
-            '<td>' + (g.ACL.ROLE_PERMS.owner.indexOf(p) >= 0 ? '✓' : '—') + '</td>' +
+            '<td>✓</td>' +
             '<td>' + (g.ACL.ROLE_PERMS.admin.indexOf(p) >= 0 ? '✓' : '—') + '</td>' +
             '<td>' + (g.ACL.ROLE_PERMS.member.indexOf(p) >= 0 ? '✓' : '—') + '</td></tr>';
         });
         html += '</tbody></table>';
         wrap.innerHTML = html;
         b.appendChild(wrap);
-        var extras = elc('div', 'sec-title', '特殊授权用户');
-        b.appendChild(extras);
-        S.users.filter(function (u) { return (u.perms || []).length; }).forEach(function (u) {
-          var line = elc('div', 'user-line');
-          line.appendChild(g.UI.avatar(u, 'sm'));
-          var main = elc('div', 'user-line-main');
-          main.innerHTML = '<div class="user-line-name">' + g.UI.esc(u.nick) + '</div>' +
-            '<div class="user-line-role">' + g.UI.esc((u.perms || []).map(g.ACL.label).join('、')) + '</div>';
-          line.appendChild(main);
-          if (me.role === 'owner') line.appendChild(mkBtn('编辑', function () { mo.close(); permEditor(u); }));
-          b.appendChild(line);
-        });
       } else if (t === 'logs') {
+        /* 筛选条：按人、按类型、按关键词 */
+        var fbox = elc('div', 'log-filter');
+        var acts = [];
+        S.logs.forEach(function (x) { if (x.act && acts.indexOf(x.act) < 0) acts.push(x.act); });
+        fbox.innerHTML =
+          '<select class="field sm" id="lgWho"><option value="">全部人</option>' +
+          S.users.map(function (u) { return '<option value="' + u.id + '">' + g.UI.esc(u.nick) + '</option>'; }).join('') +
+          '</select>' +
+          '<select class="field sm" id="lgAct"><option value="">全部操作</option>' +
+          acts.map(function (a) { return '<option value="' + g.UI.esc(a) + '">' + g.UI.esc(a) + '</option>'; }).join('') +
+          '</select>' +
+          '<input class="field sm" id="lgKw" placeholder="关键词">' +
+          '<button class="btn ghost sm" id="lgGo">筛选</button> ' +
+          '<button class="btn ghost sm" id="lgAll">重置</button>';
+        b.appendChild(fbox);
+
         var l = elc('div', 'log-list');
-        if (!S.logs.length) l.appendChild(elc('div', 'empty-tip', '暂无日志'));
-        S.logs.slice(0, 120).forEach(function (x) {
-          var who = findUser(x.who);
-          var row = elc('div', 'log-row');
-          row.innerHTML = '<span class="log-t">' + g.UI.fmtFull(x.ts) + '</span>' +
-            '<span class="log-w">' + g.UI.esc(who ? who.nick : '系统') + '</span>' +
-            '<span class="log-a">' + g.UI.esc(x.act) + '</span>' +
-            '<span class="log-d">' + g.UI.esc(x.detail || '') + '</span>';
-          l.appendChild(row);
-        });
+        var drawLogs = function () {
+          l.innerHTML = '';
+          var w = fbox.querySelector('#lgWho').value;
+          var a = fbox.querySelector('#lgAct').value;
+          var k = (fbox.querySelector('#lgKw').value || '').trim().toLowerCase();
+          var arr = S.logs.filter(function (x) {
+            if (w && x.who !== w) return false;
+            if (a && x.act !== a) return false;
+            if (k && ((x.detail || '') + (x.act || '')).toLowerCase().indexOf(k) < 0) return false;
+            return true;
+          });
+          if (!arr.length) l.appendChild(elc('div', 'empty-tip', '没有符合条件的记录'));
+          arr.slice(0, 200).forEach(function (x) {
+            var who = findUser(x.who);
+            var row = elc('div', 'log-row');
+            row.innerHTML = '<span class="log-t">' + g.UI.fmtFull(x.ts) + '</span>' +
+              '<span class="log-w">' + g.UI.esc(who ? who.nick : '系统') + '</span>' +
+              '<span class="log-a">' + g.UI.esc(x.act) + '</span>' +
+              '<span class="log-d">' + g.UI.esc(x.detail || '') + '</span>';
+            l.appendChild(row);
+          });
+          var cnt = elc('div', 'field-hint', '共 ' + arr.length + ' 条' + (arr.length > 200 ? '（仅显示最新 200 条）' : ''));
+          l.appendChild(cnt);
+        };
+        fbox.querySelector('#lgGo').onclick = drawLogs;
+        fbox.querySelector('#lgAll').onclick = function () {
+          fbox.querySelector('#lgWho').value = '';
+          fbox.querySelector('#lgAct').value = '';
+          fbox.querySelector('#lgKw').value = '';
+          drawLogs();
+        };
+        drawLogs();
         b.appendChild(l);
       } else {
         var sd = elc('div', '');
@@ -1303,13 +2372,38 @@
           '<label class="field-label">开放注册</label><select class="field" id="stReg">' +
           '<option value="1"' + (S.allowRegister ? ' selected' : '') + '>允许任何人注册</option>' +
           '<option value="0"' + (!S.allowRegister ? ' selected' : '') + '>关闭公开注册</option></select>' +
+          '<label class="field-label">外观</label><select class="field" id="stTheme">' +
+          '<option value="auto">跟随系统</option>' +
+          '<option value="light">浅色</option>' +
+          '<option value="dark">深色</option></select>' +
+          '<div class="field-hint">深色模式会记住你的选择，每个访客可各自设置，不影响其他人。</div>' +
+          '<label class="field-label">发送键</label><select class="field" id="stEnter">' +
+          '<option value="send">Enter 发送 / Shift+Enter 换行</option>' +
+          '<option value="newline">Enter 换行 / Ctrl+Enter 发送</option></select>' +
+          '<label class="field-label">注册审核</label><select class="field" id="stReview">' +
+          '<option value="1"' + (S.needReview !== false ? ' selected' : '') + '>需站长审核通过后才能登录</option>' +
+          '<option value="0"' + (S.needReview === false ? ' selected' : '') + '>注册后直接可用（免审核）</option></select>' +
+          (function () {
+            var th = 'auto', en = 'send';
+            try { th = localStorage.getItem(THEME_KEY) || 'auto'; en = localStorage.getItem(ENTER_KEY) || 'send'; } catch (e) { }
+            setTimeout(function () {
+              var a = sd.querySelector('#stTheme'), b2 = sd.querySelector('#stEnter');
+              if (a) a.value = th;
+              if (b2) b2.value = en;
+            }, 0);
+            return '';
+          })() +
           '<div class="field-hint">数据全部保存在本机浏览器（localStorage + IndexedDB），不上传任何服务器。' +
           '需要换设备或备份时，用下面的「导出 / 导入 JSON」搬运，本地版与上线版操作完全相同。</div>' +
           '<div class="sec-title">数据</div>' +
           '<button class="btn ghost" id="stExport">导出 JSON</button> ' +
           '<button class="btn ghost" id="stImport">导入 JSON</button> ' +
           '<button class="btn ghost" id="stEnv">运行环境</button> ' +
-          '<button class="btn danger" id="stReset">重置站点</button>' +
+          '<button class="btn danger" id="stReset">重置站点</button> ' +
+          '<button class="btn ghost" id="stExportChat">导出聊天记录</button> ' +
+          '<button class="btn ghost" id="stClean">清理旧媒体</button> ' +
+          '<button class="btn ghost" id="stUnhide">恢复已删除</button> ' +
+          '<button class="btn ghost" id="stQuota">存储用量</button> ' +
           '<input type="file" id="stFile" accept="application/json" class="hidden">';
         b.appendChild(sd);
         sd.querySelector('#stExport').onclick = function () {
@@ -1318,6 +2412,8 @@
           a.href = URL.createObjectURL(blob);
           a.download = 'chat-state-' + new Date().toISOString().slice(0, 10) + '.json';
           a.click();
+          markBackup();
+          g.UI.toast('已导出备份', 'ok');
         };
         sd.querySelector('#stFile').onchange = function (e) {
           var f = e.target.files[0]; if (!f) return;
@@ -1333,12 +2429,37 @@
         };
         sd.querySelector('#stImport').onclick = function () { sd.querySelector('#stFile').click(); };
         sd.querySelector('#stEnv').onclick = function () { envModal(); };
+        sd.querySelector('#stExportChat').onclick = function () { exportDialog(); };
+        sd.querySelector('#stClean').onclick = function () { mediaCleanDialog(); };
+        sd.querySelector('#stUnhide').onclick = function () {
+          var c = hiddenCount();
+          if (!c) { g.UI.toast('你没有删除过消息'); return; }
+          g.UI.confirm('你删除了 ' + c + ' 条消息（仅你自己不可见）。要恢复显示吗？',
+            function () { restoreHidden(); });
+        };
+        sd.querySelector('#stQuota').onclick = function () {
+          var st = storageInfo();
+          g.UI.modal({
+            title: '存储用量', okText: '关闭', cancelText: null,
+            body: (function () {
+              var d2 = elc('div', 'env-grid');
+              var kv = [['状态快照', st.stateKB + ' KB'], ['上限（约）', st.quotaKB + ' KB'],
+                ['媒体文件数', st.mediaCount + ' 个'],
+                ['使用率', Math.round(st.stateKB / st.quotaKB * 100) + '%']];
+              d2.innerHTML = kv.map(function (x) {
+                return '<div class="env-item"><div class="env-k">' + g.UI.esc(x[0]) +
+                  '</div><div class="env-v">' + g.UI.esc(x[1]) + '</div></div>';
+              }).join('');
+              return d2;
+            })()
+          });
+        };
         sd.querySelector('#stReset').onclick = function () {
           g.UI.confirm('将清空全部用户、房间与消息（媒体仍在 IndexedDB）。确定？', function () {
             S = fresh(); ensurePublic();
             var s = g.SHA256.randomId(12);
             me = {
-              id: uid('u'), nick: '站长', realName: '站长', pwdHash: hashPwd('admin', s), pwdSalt: s,
+              id: uid('u'), nick: '站长', note: '站长', status: 'active', pwdHash: hashPwd('admin', s), pwdSalt: s,
               role: 'owner', perms: [], banned: false, mutedUntil: 0, bio: '', createdAt: now(), updatedAt: now(), lastSeen: now()
             };
             S.users.push(me);
@@ -1358,6 +2479,9 @@
             log('gate', '修改保护密码');
           }
           S.allowRegister = sd.querySelector('#stReg').value === '1';
+          S.needReview = sd.querySelector('#stReview').value === '1';
+          setTheme(sd.querySelector('#stTheme').value);
+          try { localStorage.setItem(ENTER_KEY, sd.querySelector('#stEnter').value); } catch (e) { }
           save(); g.UI.toast('已保存', 'ok');
         };
         b.appendChild(saveBtn);
@@ -1381,7 +2505,13 @@
     $('btnSend').onclick = send;
     var ta = $('input');
     ta.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+      markTyping();
+      /* Enter 行为按设置：默认 Enter 发送、Shift+Enter 换行；
+         也可改为 Enter 换行、Ctrl+Enter 发送 */
+      if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+        if (enterSends()) { e.preventDefault(); send(); }
+      }
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); }
     });
     ta.addEventListener('input', function () {
       ta.style.height = 'auto';
@@ -1398,6 +2528,7 @@
       e.target.value = '';
     };
     $('btnEmoji').onclick = toggleEmoji;
+    if ($('btnAt')) $('btnAt').onclick = toggleAtPanel;
     $('btnHelp').onclick = helpModal;
     $('btnNewRoom').onclick = function () { createRoom(''); };
     $('btnAdmin').onclick = adminPanel;
@@ -1410,6 +2541,70 @@
         loginView();
       });
     };
+    var bm = $('btnMode');
+    if (bm) bm.onclick = function () {
+      setMode(getMode() === 'simple' ? 'pro' : 'simple');
+    };
+    /* 草稿：输入即记录 */
+    var ta = $('input');
+    if (ta) {
+      ta.addEventListener('input', function () {
+        drafts[cur] = ta.value;
+        autoGrow(ta);
+        typingAt = now();
+      });
+    }
+    /* 语音：点一下开始，再点一下发送；或按住说话 */
+    var bv = $('btnVoice');
+    if (bv) {
+      bv.onclick = function () {
+        if (rec) { stopRecord(false); } else { startRecord(); }
+      };
+    }
+    /* 文件附件 */
+    var bf = $('btnFile');
+    if (bf) bf.onclick = function () { $('fileDoc').click(); };
+    var fd = $('fileDoc');
+    if (fd) fd.onchange = function (e) {
+      var f = e.target.files && e.target.files[0];
+      if (f) sendMediaFile(f, 'file');
+      fd.value = '';
+    };
+    /* 多图连发 */
+    var fi = $('fileImg');
+    if (fi) fi.addEventListener('change', function (e) {
+      var fs = Array.prototype.slice.call(e.target.files || []);
+      fi.value = '';
+      if (!fs.length) return;
+      if (fs.length === 1) { sendMediaFile(fs[0], 'image'); return; }
+      g.UI.confirm('发送这 ' + fs.length + ' 张图片？', function () {
+        fs.forEach(function (f, i) { setTimeout(function () { sendMediaFile(f, 'image'); }, i * 350); });
+      });
+    });
+    /* Markdown 工具条：插入语法 */
+    Array.prototype.forEach.call(document.querySelectorAll('.md-btn[data-ins]'), function (b) {
+      b.onclick = function () {
+        var ta = $('input');
+        if (!ta) return;
+        var a = b.getAttribute('data-ins').replace(/\\n/g, '\n');
+        var c = b.getAttribute('data-ins2').replace(/\\n/g, '\n');
+        var st = ta.selectionStart || 0, en = ta.selectionEnd || 0;
+        var sel = ta.value.slice(st, en);
+        ta.value = ta.value.slice(0, st) + a + sel + c + ta.value.slice(en);
+        ta.focus();
+        var pos = st + a.length + sel.length;
+        ta.setSelectionRange(pos, pos);
+        drafts[cur] = ta.value;
+      };
+    });
+    var sbtn = $('btnSearchMsg');
+    if (sbtn) sbtn.onclick = function () { searchModal(); };
+    /* 表情面板 */
+    var be = $('btnEmoji');
+    if (be) be.onclick = function () { emojiPanel(); };
+    /* 公式符号面板（专业模式） */
+    var bs = $('btnSym');
+    if (bs) bs.onclick = function () { symbolPanel(); };
     $('btnMembers').onclick = function () {
       var p = $('sidePanel');
       p.classList.toggle('hidden');
@@ -1436,6 +2631,33 @@
     });
   }
 
+  /* @ 提及面板：列出本会话成员，点一下插入 @昵称；管理员另有 @全体成员 */
+  function toggleAtPanel() {
+    var r = findRoom(cur);
+    var list = membersOf(r).filter(function (u) { return u.id !== me.id && u.status !== 'pending'; });
+    var d = elc('div', '');
+    var box = elc('div', 'chip-box');
+    var canAll = (r.owner === me.id || (r.admins || []).indexOf(me.id) >= 0 ||
+      me.role === 'owner' || me.role === 'admin');
+    var mk = function (text, val) {
+      var b = elc('button', 'btn ghost sm', text);
+      b.onclick = function () { insertAtCursor(val); g.UI.closeModal && g.UI.closeModal(); closeTop(); };
+      return b;
+    };
+    if (canAll && r.type !== 'private') box.appendChild(mk('@全体成员', '@全体成员 '));
+    if (!list.length && !canAll) box.appendChild(elc('div', 'empty-tip', '本会话没有其他成员'));
+    list.forEach(function (u) { box.appendChild(mk('@' + u.nick, '@' + u.nick + ' ')); });
+    d.appendChild(box);
+    d.appendChild(elc('div', 'field-hint',
+      '被 @ 的人会在侧栏看到红色提醒；' + (canAll ? '管理员可用「@全体成员」通知所有人。' : '')));
+    g.UI.modal({ title: '提及某人', body: d, okText: '关闭', cancelText: null });
+  }
+
+  function closeTop() {
+    var ms = document.querySelectorAll('.modal-mask');
+    for (var i = ms.length - 1; i >= 0; i--) { ms[i].remove(); break; }
+  }
+
   function toggleEmoji() {
     var old = document.querySelector('.emoji-panel');
     if (old) { old.remove(); return; }
@@ -1458,6 +2680,7 @@
 
   /* ================= 启动 ================= */
   function boot() {
+    initTheme();
     S = load();
     if (!S) { S = fresh(); ensurePublic(); save(true); }
     initSync();
@@ -1473,6 +2696,7 @@
     state: function () { return S; },
     me: function () { return me; },
     openRoom: openRoom,
+    render: function () { try { renderAll(); } catch (e) { } },
     debugReset: function () { localStorage.removeItem(KEY); location.reload(); }
   };
 })(window);

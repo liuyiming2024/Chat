@@ -9,6 +9,69 @@
 
   var SEP = '\uE000';
 
+  /* @提及：把 @昵称 渲染成高亮标签。渲染前已完成 HTML 转义，
+     这里只处理纯文本层，不会产生注入。 */
+  function atHighlight(html) {
+    return html.replace(/@([^\s@<]{1,16})/g, function (m0, name) {
+      return '<span class="at-mention" data-at="' + esc(name) + '">@' + esc(name) + '</span>';
+    });
+  }
+
+  /* 极简代码高亮：仅对关键字/字符串/注释/数字着色，不引入任何第三方库 */
+  var KEYWORDS = ('auto break case char const continue default do double else enum extern float for goto if inline int long '
+    + 'register return short signed sizeof static struct switch typedef union unsigned void volatile while class public private '
+    + 'protected template typename namespace new delete this try catch throw using virtual bool true false null nullptr '
+    + 'def lambda import from None True False and or not in is elif pass raise with as global nonlocal yield async await '
+    + 'function var let const return').split(' ');
+  var KWSET = {};
+  KEYWORDS.forEach(function (k) { KWSET[k] = 1; });
+
+  function highlight(code, lang) {
+    var out = '', i = 0, L = code.length;
+    var isStr = function (c) { return c === '"' || c === "'" || c === '`'; };
+    while (i < L) {
+      var c = code[i];
+      /* 行注释 */
+      if (c === '/' && code[i + 1] === '/') {
+        var e = code.indexOf('\n', i); if (e < 0) e = L;
+        out += '<span class="tk-c">' + esc(code.slice(i, e)) + '</span>'; i = e; continue;
+      }
+      /* 井号注释（python/shell） */
+      if (c === '#') {
+        var e2 = code.indexOf('\n', i); if (e2 < 0) e2 = L;
+        out += '<span class="tk-c">' + esc(code.slice(i, e2)) + '</span>'; i = e2; continue;
+      }
+      /* 块注释 */
+      if (c === '/' && code[i + 1] === '*') {
+        var e3 = code.indexOf('*/', i + 2); e3 = e3 < 0 ? L : e3 + 2;
+        out += '<span class="tk-c">' + esc(code.slice(i, e3)) + '</span>'; i = e3; continue;
+      }
+      /* 字符串 */
+      if (isStr(c)) {
+        var j = i + 1;
+        while (j < L && code[j] !== c) { if (code[j] === '\\') j++; j++; }
+        j = Math.min(j + 1, L);
+        out += '<span class="tk-s">' + esc(code.slice(i, j)) + '</span>'; i = j; continue;
+      }
+      /* 数字 */
+      if (/[0-9]/.test(c) && !/[A-Za-z_$]/.test(code[i - 1] || '')) {
+        var k = i;
+        while (k < L && /[0-9a-fA-FxX._]/.test(code[k])) k++;
+        out += '<span class="tk-n">' + esc(code.slice(i, k)) + '</span>'; i = k; continue;
+      }
+      /* 标识符 / 关键字 */
+      if (/[A-Za-z_$]/.test(c)) {
+        var m = i;
+        while (m < L && /[A-Za-z0-9_$]/.test(code[m])) m++;
+        var w = code.slice(i, m);
+        out += KWSET[w] ? '<span class="tk-k">' + esc(w) + '</span>' : esc(w);
+        i = m; continue;
+      }
+      out += esc(c); i++;
+    }
+    return out;
+  }
+
   function esc(s) {
     return String(s)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -127,7 +190,8 @@
         i++;
         html += '<div class="md-code-block"><div class="md-code-head"><span class="md-code-lang">' +
           esc(lang || 'text') + '</span><button type="button" class="md-copy" data-code="' +
-          esc(buf.join('\n')) + '">复制</button></div><pre><code>' + esc(buf.join('\n')) + '</code></pre></div>';
+          esc(buf.join('\n')) + '">复制</button></div><pre><code>' +
+          highlight(buf.join('\n'), lang) + '</code></pre></div>';
         continue;
       }
 
@@ -228,7 +292,38 @@
     });
 
     hydrate(box, slots);
+    /* 对用户昵称做 @ 高亮：只作用于文本节点，不动标签与属性 */
+    atWalk(box);
     return box;
+  }
+
+  /* 遍历文本节点，把 @xxx 替换成高亮 span */
+  function atWalk(root) {
+    var skip = { CODE: 1, PRE: 1, A: 1, SCRIPT: 1, STYLE: 1 };
+    var tw = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: function (nd) {
+        var pn = nd.parentNode && nd.parentNode.nodeName;
+        if (skip[pn]) return NodeFilter.FILTER_REJECT;
+        return /@/.test(nd.nodeValue) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+      }
+    });
+    var list = [], nd;
+    while ((nd = tw.nextNode())) list.push(nd);
+    list.forEach(function (t) {
+      var frag = document.createDocumentFragment();
+      var txt = t.nodeValue, re = /@([^\s@]{1,16})/g, last = 0, m;
+      while ((m = re.exec(txt))) {
+        if (m.index > last) frag.appendChild(document.createTextNode(txt.slice(last, m.index)));
+        var sp = document.createElement('span');
+        sp.className = 'at-mention';
+        sp.setAttribute('data-at', m[1]);
+        sp.appendChild(document.createTextNode('@' + m[1]));
+        frag.appendChild(sp);
+        last = m.index + m[0].length;
+      }
+      if (last < txt.length) frag.appendChild(document.createTextNode(txt.slice(last)));
+      t.parentNode.replaceChild(frag, t);
+    });
   }
 
   /* 纯文本预览（列表页摘要用） */

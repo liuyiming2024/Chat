@@ -130,6 +130,10 @@
       pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
   }
 
+  var avCache = {};   // 自定义头像：userId -> dataURL
+
+  function setAvatarCache(uid, url) { if (url) avCache[uid] = url; else delete avCache[uid]; }
+
   function avatar(user, size) {
     var name = (user && user.nick) ? user.nick : '?';
     var ch = name.trim().slice(0, 1).toUpperCase();
@@ -141,12 +145,30 @@
     d.textContent = ch;
     if (user && user.role === 'owner') d.classList.add('avatar-owner');
     if (user && user.role === 'admin') d.classList.add('avatar-admin');
+
+    /* 自定义头像：优先用已加载的缓存图 */
+    var cid = user && user.avatarId;
+    if (cid && avCache[cid]) {
+      d.style.backgroundImage = 'url(' + avCache[cid] + ')';
+      d.style.backgroundSize = 'cover';
+      d.textContent = '';
+      d.classList.add('avatar-img');
+    } else if (cid && g.Media && g.Media.get) {
+      g.Media.get(cid).then(function (u) {
+        if (!u) return;
+        avCache[cid] = u;
+        d.style.backgroundImage = 'url(' + u + ')';
+        d.style.backgroundSize = 'cover';
+        d.textContent = '';
+        d.classList.add('avatar-img');
+      }).catch(function () { });
+    }
     return d;
   }
 
   g.UI = {
     esc: esc, toast: toast, modal: modal, confirm: confirm, prompt: prompt,
     lightbox: lightbox, closeLightbox: closeLightbox,
-    fmtTime: fmtTime, fmtFull: fmtFull, avatar: avatar
+    fmtTime: fmtTime, fmtFull: fmtFull, avatar: avatar, setAvatarCache: setAvatarCache
   };
 })(window);

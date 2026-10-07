@@ -1,5 +1,5 @@
 -- ==================================================================
--- 洛谷 · 微信聊天室 —— Supabase 建库脚本
+-- 聊天室 —— Supabase 建库脚本
 -- 在 Supabase Dashboard → SQL Editor → New query 里整段粘贴执行
 --
 -- 安全设计（重要）：
@@ -15,7 +15,7 @@ create extension if not exists pgcrypto;
 -- ---------- 站点配置（单行） ----------
 create table if not exists site (
   id            boolean primary key default true check (id),
-  site_name     text not null default '洛谷·微信聊天室',
+  site_name     text not null default '聊天室',
   gate_hash     text,                       -- 站点保护密码（bcrypt），为空表示未初始化
   allow_register boolean not null default true,
   created_at    timestamptz not null default now()
