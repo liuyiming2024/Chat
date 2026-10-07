@@ -128,7 +128,9 @@
     box.innerHTML = inner;
     card.appendChild(box);
     wrap.appendChild(card);
+    /* 同时用内联样式控制显示：即使 CSS 未加载也不会出现门禁与主界面重叠 */
     wrap.classList.remove('hidden');
+    wrap.style.display = 'flex';
     var f = card.querySelector('input');
     if (f) setTimeout(function () { f.focus(); }, 50);
     return card;
@@ -208,7 +210,7 @@
       '<div id="pane"></div>';
     wrap.appendChild(card);
     wrap.classList.remove('hidden');
-
+    wrap.style.display = 'flex';
     function pane(t) {
       var p = card.querySelector('#pane');
       Array.prototype.forEach.call(card.querySelectorAll('.tab'), function (b) { b.classList.toggle('on', b.dataset.t === t); });
@@ -285,7 +287,9 @@
   function enterApp() {
     $('gate').classList.add('hidden');
     $('gate').innerHTML = '';
+    $('gate').style.display = 'none';
     $('app').classList.remove('hidden');
+    $('app').style.display = '';
     ensurePublic();
     if (me.role === 'member' && !findRoom('public')) { }
     joinRoom('public', me, true);
@@ -1135,6 +1139,43 @@
   }
 
   /* ================= 管理面板 ================= */
+  /* 站长 / 管理员手动开户（用于关闭公开注册、线下实名审核的场景） */
+  function newUserDialog() {
+    var d = elc('div', '');
+    d.innerHTML =
+      '<div class="form-tip">手动开户后该账号可立即登录。请确认已线下核实对方真实身份。</div>' +
+      '<label class="field-label">昵称（登录用）</label><input class="field" id="nuNick" placeholder="例如：小明">' +
+      '<label class="field-label">真实姓名</label><input class="field" id="nuReal" placeholder="例如：李小明">' +
+      '<label class="field-label">初始密码</label><input class="field" id="nuPwd" type="password" placeholder="至少 4 位，可告知对方自行修改">' +
+      '<label class="field-label">角色</label><select class="field" id="nuRole">' +
+      '<option value="member">成员</option><option value="admin">管理员</option>' +
+      (me.role === 'owner' ? '<option value="owner">站长（会把站长转让给 TA）</option>' : '') +
+      '</select>';
+    g.UI.modal({
+      title: '手动开户', body: d, okText: '创建', onOk: function (body) {
+        var n = body.querySelector('#nuNick').value.trim();
+        var r = body.querySelector('#nuReal').value.trim();
+        var p = body.querySelector('#nuPwd').value;
+        var role = body.querySelector('#nuRole').value;
+        if (!n || !r) { g.UI.toast('请填写昵称与真实姓名'); return false; }
+        if (p.length < 4) { g.UI.toast('初始密码至少 4 位'); return false; }
+        if (byNick(n)) { g.UI.toast('昵称已被占用'); return false; }
+        var salt = g.SHA256.randomId(12);
+        var u = {
+          id: uid('u'), nick: n, realName: r, pwdHash: hashPwd(p, salt), pwdSalt: salt,
+          role: role === 'owner' ? 'owner' : role, perms: [], banned: false,
+          mutedUntil: 0, bio: '', createdAt: now(), updatedAt: now(), lastSeen: now()
+        };
+        if (role === 'owner' && me.role === 'owner') { me.role = 'admin'; touch(me); }
+        S.users.push(u);
+        joinRoom('public', u, true);
+        log('newuser', '手动开户 ' + n + '（' + r + '）');
+        save();
+        g.UI.toast('已开户：' + n, 'ok');
+      }
+    });
+  }
+
   function adminPanel() {
     if (!g.ACL.can(me, 'log.view')) { g.UI.toast('仅管理员可打开管理面板', 'err'); return; }
     var d = elc('div', '');
@@ -1153,6 +1194,17 @@
       var b = d.querySelector('#apBody');
       b.innerHTML = '';
       if (t === 'users') {
+        /* 手动开户：关闭公开注册后，站长/管理员可线下核实身份再开号 */
+        if (g.ACL.can(me, 'user.ban')) {
+          var ubar = elc('div', 'chip-box');
+          var addBtn = elc('button', 'btn primary', '＋ 手动开户');
+          addBtn.onclick = function () { newUserDialog(); };
+          ubar.appendChild(addBtn);
+          var utip = elc('div', 'field-hint',
+            '关闭公开注册后，新人只能由你在开户。开户前请先线下核实对方真实身份。');
+          b.appendChild(ubar);
+          b.appendChild(utip);
+        }
         S.users.slice().sort(function (x, y) { return (y.lastSeen || 0) - (x.lastSeen || 0); }).forEach(function (u) {
           var line = elc('div', 'user-line');
           line.appendChild(g.UI.avatar(u, 'sm'));
@@ -1354,6 +1406,7 @@
         sessionStorage.removeItem(ME_KEY);
         me = null; cur = 'public';
         $('app').classList.add('hidden');
+        $('app').style.display = 'none';
         loginView();
       });
     };
