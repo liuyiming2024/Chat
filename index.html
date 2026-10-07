@@ -84,68 +84,6 @@
     </div>
   </div>
 
-  <h2 class="section-title">主要特性</h2>
-  <div class="grid">
-    <div class="card">
-      <span class="card-icon">🔐</span>
-      <h3>注册审核制</h3>
-      <p>新人提交申请说明，站长在管理面板逐条通过或拒绝，可填拒绝理由。
-         也可关闭注册、只由站长手动开户。</p>
-    </div>
-    <div class="card">
-      <span class="card-icon">⚙️</span>
-      <h3>38 项细粒度权限</h3>
-      <p>每项可设继承 / 允许 / 禁止。管理员只是称号，
-         各人实际能做什么由逐项勾选决定。站长恒为全部权限。</p>
-    </div>
-    <div class="card">
-      <span class="card-icon">🧮</span>
-      <h3>LaTeX 公式</h3>
-      <p>行内 <code>$x^2+y^2=z^2$</code>，块级 <code>$$\frac{a}{b}$$</code>，
-         支持矩阵、求和、积分等，内置公式符号面板。</p>
-    </div>
-    <div class="card">
-      <span class="card-icon">🎙</span>
-      <h3>语音与文件</h3>
-      <p>原生录制语音消息，波形气泡可播放；图片、视频、附件都能发，
-         自动压缩后存本地。</p>
-    </div>
-    <div class="card">
-      <span class="card-icon">🛡</span>
-      <h3>消息四档处置</h3>
-      <p>删除（仅自己）/ 撤回（自己的）/ 移除（管理员撤他人）/
-         Delete（站长物理删除）。撤回与移除都保留原文，管理员可追溯。</p>
-    </div>
-    <div class="card">
-      <span class="card-icon">🌙</span>
-      <h3>深色模式与搜索</h3>
-      <p>跟随系统或手动切换深/浅色；消息支持关键词搜索，
-         点击结果直接跳转到原文位置。</p>
-    </div>
-  </div>
-
-  <h2 class="section-title">技术说明</h2>
-  <div class="panel">
-    <p>全站为纯前端静态站点，部署在 GitHub Pages 免费版，具有以下特点：</p>
-    <ul>
-      <li><b>零依赖</b>：不引入任何第三方库、CDN 与外部字体，双击 HTML 文件即可运行。</li>
-      <li><b>无版权争议</b>：Markdown 解析、LaTeX 渲染、SHA-256、媒体压缩、代码高亮均为独立手写实现，MIT 协议。</li>
-      <li><b>本地与线上一致</b>：不存在"本地模式 / 线上模式"的代码分支，两种环境跑同一套架构。</li>
-    </ul>
-    <div class="tip warn">
-      <b>关于数据：</b>聊天室的聊天记录存在各人浏览器本地，换设备看不到历史。
-      如需跨设备同步，可接数据库后端，详见
-      <a href="docs/deploy.html">部署与数据指南</a>。贴吧内容存在数据库中，跨设备可见。
-    </div>
-  </div>
-
 </div>
 
 <div class="foot">
-  <div>聊天室 · 纯前端零依赖 · <a href="https://github.com/liuyiming2024/Chat">GitHub 仓库</a></div>
-  <div style="margin-top:4px">代码采用 MIT License，可自由使用、修改与二次分发</div>
-</div>
-
-<script src="assets/site.js"></script>
-</body>
-</html>
