@@ -2,114 +2,150 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
-<meta name="description" content="微信风格的注册审核制聊天室，支持 Markdown 与 LaTeX（$ 包裹）、图片视频预览、私聊、群聊、公屏大厅与多级管理员权限。纯前端运行，可直接部署到 GitHub Pages。">
-<title>聊天室</title>
-<link rel="stylesheet" href="css/style.css">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>聊天室 · 首页</title>
+<meta name="description" content="支持 LaTeX 公式的网页聊天室、贴吧与使用手册，纯前端零依赖，部署于 GitHub Pages。">
+<link rel="stylesheet" href="assets/site.css">
 </head>
 <body>
 
-<!-- ============ 门禁 / 登录 ============ -->
-<div id="gate" class="mask hidden"></div>
-
-<!-- ============ 主界面 ============ -->
-<div id="app" class="app hidden">
-
-  <!-- 左侧：会话列表 -->
-  <aside class="sidebar" id="sidebar">
-    <div class="side-top">
-      <div class="search-box">
-        <span class="search-ico">🔍</span>
-        <input id="searchInput" placeholder="搜索会话">
-      </div>
-      <button class="icon-btn green" id="btnNewRoom" title="创建群聊">＋</button>
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="logo" href="index.html"><span class="logo-mark">聊</span>聊天室</a>
+    <div class="nav-links">
+      <a href="index.html" data-nav="home">首页</a>
+      <a href="chat/index.html" data-nav="chat">聊天室</a>
+      <a href="tieba/index.html" data-nav="tieba">贴吧</a>
+      <a href="docs/index.html" data-nav="docs">使用手册</a>
     </div>
-    <div class="me-card" id="meCard"></div>
-    <div class="room-list" id="roomList"></div>
-    <div class="side-foot">
-      <button class="mini-btn" id="btnAdmin">管理面板</button>
-      <button class="mini-btn" id="btnLogout">退出</button>
+    <div class="nav-tools">
+      <button class="icon-btn" id="btnTheme" title="切换深色 / 浅色">🌙</button>
+      <a class="icon-btn" href="https://github.com/liuyiming2024/Chat" title="GitHub 仓库" target="_blank" rel="noopener">↗</a>
     </div>
-  </aside>
+  </div>
+</nav>
 
-  <!-- 中间：聊天区 -->
-  <main class="main">
-    <header class="chat-head">
-      <button class="icon-btn only-narrow" id="btnMenu" title="会话列表">☰</button>
-      <div class="ch-info">
-        <div class="ch-title" id="roomTitle">公屏大厅</div>
-        <div class="ch-sub" id="roomSub">公屏大厅</div>
-      </div>
-      <div class="ch-actions">
-        <button class="icon-btn mode-btn" id="btnMode" title="切换极简 / 专业模式">专业</button>
-        <button class="icon-btn" id="btnRoomSet" title="会话设置">⚙</button>
-        <button class="icon-btn" id="btnMembers" title="成员面板">👥</button>
-      </div>
-    </header>
+<div class="wrap">
 
-    <div id="pinnedBar" class="pinned-bar hidden"></div>
-
-    <div id="noticeBar" class="notice-bar hidden"></div>
-
-    <div id="mutedTip" class="muted-tip hidden"></div>
-
-    <div class="msg-scroll" id="msgScroll"></div>
-
-    <div class="composer">
-      <div id="replyBar" class="reply-bar hidden"></div>
-      <div class="composer-tools">
-        <button class="tool-btn" id="btnImg" title="发送图片">🖼</button>
-        <button class="tool-btn" id="btnVideo" title="发送视频">🎬</button>
-        <button class="tool-btn" id="btnFile" title="发送文件（zip/pdf 等）">📎</button>
-        <button class="tool-btn" id="btnVoice" title="按住说话 / 点一下开始录音">🎙</button>
-        <button class="tool-btn" id="btnEmoji" title="表情">😊</button>
-        <button class="tool-btn" id="btnAt" title="提及某人">@</button>
-        <button class="tool-btn pro-only" id="btnHelp" title="Markdown / LaTeX / 命令帮助">?</button>
-        <span class="rec-tip hidden" id="recTip">● 录音中 <span id="recSec">0</span>s · 松开发送，点 ✕ 取消</span>
-        <span class="composer-hint">Enter 发送 · Shift+Enter 换行 · 支持 **Markdown**、`$x^2$` 公式、拖入图片视频</span>
-      </div>
-      <div class="md-bar pro-only" id="mdBar">
-        <button class="md-btn" data-ins="**" data-ins2="**" title="粗体"><b>B</b></button>
-        <button class="md-btn" data-ins="*" data-ins2="*" title="斜体"><i>I</i></button>
-        <button class="md-btn" data-ins="~~" data-ins2="~~" title="删除线"><s>S</s></button>
-        <button class="md-btn" data-ins="`" data-ins2="`" title="行内代码">&lt;/&gt;</button>
-        <button class="md-btn" data-ins="```cpp\n" data-ins2="\n```" title="代码块">```</button>
-        <button class="md-btn" data-ins="$" data-ins2="$" title="行内公式">$x$</button>
-        <button class="md-btn" data-ins="$$\n" data-ins2="\n$$" title="块级公式">$$</button>
-        <button class="md-btn" data-ins="> " data-ins2="" title="引用">❝</button>
-        <button class="md-btn" data-ins="- " data-ins2="" title="列表">•</button>
-        <button class="md-btn" id="btnSym" title="公式符号面板">√</button>
-      </div>
-      <textarea id="input" rows="1" placeholder="说点什么…（/help 查看命令）"></textarea>
-      <div class="composer-foot">
-        <button class="btn primary" id="btnSend">发送(S)</button>
-      </div>
+  <div class="hero">
+    <h1>聊天室</h1>
+    <p>微信的外观，洛谷的公式体验。支持 Markdown 与 <code style="background:rgba(255,255,255,.2)">$LaTeX$</code>，
+       内置贴吧与使用手册，纯前端零依赖，打开就能用。</p>
+    <div class="hero-btns">
+      <a class="btn btn-primary" href="chat/index.html">进入聊天室 →</a>
+      <a class="btn btn-ghost" href="docs/index.html">先看使用手册</a>
+      <a class="btn btn-ghost" href="tieba/index.html">逛逛贴吧</a>
     </div>
-  </main>
+  </div>
 
-  <!-- 右侧：成员与公告 -->
-  <aside class="side-panel" id="sidePanel">
-    <div class="sp-head">成员 <span id="memberCount" class="tag gray">0</span></div>
-    <div class="sp-body" id="memberList"></div>
-    <div class="sp-sec">
-      <div class="sec-title"><span>群公告</span><button class="mini-btn" id="btnEditNotice">编辑</button></div>
-      <div class="notice-text" id="noticeText">暂无公告</div>
+  <div class="tip">
+    <b>提示：</b>聊天室的网址已调整为 <code>/Chat/chat/</code>。
+    你之前的数据不会丢失——数据保存在浏览器本地，与网址路径无关，直接访问下面的入口即可继续。
+  </div>
+
+  <h2 class="section-title">三大板块</h2>
+  <div class="grid">
+    <a class="card" href="chat/index.html" style="color:inherit">
+      <span class="card-icon">💬</span>
+      <h3>聊天室</h3>
+      <p>公屏大厅、私聊、自建群。支持文本、图片、视频、语音、文件，
+         Markdown 与 LaTeX 公式，极简 / 专业双模式。</p>
+    </a>
+    <a class="card" href="tieba/index.html" style="color:inherit">
+      <span class="card-icon">📋</span>
+      <h3>贴吧</h3>
+      <p>发主题帖、盖楼回复，适合讨论算法题、贴代码、发长文。
+         内容存在数据库里，跨设备可见。</p>
+    </a>
+    <a class="card" href="docs/index.html" style="color:inherit">
+      <span class="card-icon">📖</span>
+      <h3>使用手册</h3>
+      <p>新手入门、权限与命令、管理员手册、Markdown 与公式语法、
+         部署与数据指南，五个分册随时查阅。</p>
+    </a>
+  </div>
+
+  <h2 class="section-title">三步开始</h2>
+  <div class="steps">
+    <div class="step">
+      <div class="step-no">1</div>
+      <h4>设置保护密码</h4>
+      <p>第一次打开时设置整站门禁密码，所有人进入都要先过这一道。</p>
     </div>
-  </aside>
+    <div class="step">
+      <div class="step-no">2</div>
+      <h4>创建站长账号</h4>
+      <p>填昵称和密码，自动成为站长，拥有全部权限。</p>
+    </div>
+    <div class="step">
+      <div class="step-no">3</div>
+      <h4>邀请好友</h4>
+      <p>生成邀请口令发给对方，或在管理面板手动开户，审核通过后即可开聊。</p>
+    </div>
+  </div>
+
+  <h2 class="section-title">主要特性</h2>
+  <div class="grid">
+    <div class="card">
+      <span class="card-icon">🔐</span>
+      <h3>注册审核制</h3>
+      <p>新人提交申请说明，站长在管理面板逐条通过或拒绝，可填拒绝理由。
+         也可关闭注册、只由站长手动开户。</p>
+    </div>
+    <div class="card">
+      <span class="card-icon">⚙️</span>
+      <h3>38 项细粒度权限</h3>
+      <p>每项可设继承 / 允许 / 禁止。管理员只是称号，
+         各人实际能做什么由逐项勾选决定。站长恒为全部权限。</p>
+    </div>
+    <div class="card">
+      <span class="card-icon">🧮</span>
+      <h3>LaTeX 公式</h3>
+      <p>行内 <code>$x^2+y^2=z^2$</code>，块级 <code>$$\frac{a}{b}$$</code>，
+         支持矩阵、求和、积分等，内置公式符号面板。</p>
+    </div>
+    <div class="card">
+      <span class="card-icon">🎙</span>
+      <h3>语音与文件</h3>
+      <p>原生录制语音消息，波形气泡可播放；图片、视频、附件都能发，
+         自动压缩后存本地。</p>
+    </div>
+    <div class="card">
+      <span class="card-icon">🛡</span>
+      <h3>消息四档处置</h3>
+      <p>删除（仅自己）/ 撤回（自己的）/ 移除（管理员撤他人）/
+         Delete（站长物理删除）。撤回与移除都保留原文，管理员可追溯。</p>
+    </div>
+    <div class="card">
+      <span class="card-icon">🌙</span>
+      <h3>深色模式与搜索</h3>
+      <p>跟随系统或手动切换深/浅色；消息支持关键词搜索，
+         点击结果直接跳转到原文位置。</p>
+    </div>
+  </div>
+
+  <h2 class="section-title">技术说明</h2>
+  <div class="panel">
+    <p>全站为纯前端静态站点，部署在 GitHub Pages 免费版，具有以下特点：</p>
+    <ul>
+      <li><b>零依赖</b>：不引入任何第三方库、CDN 与外部字体，双击 HTML 文件即可运行。</li>
+      <li><b>无版权争议</b>：Markdown 解析、LaTeX 渲染、SHA-256、媒体压缩、代码高亮均为独立手写实现，MIT 协议。</li>
+      <li><b>本地与线上一致</b>：不存在"本地模式 / 线上模式"的代码分支，两种环境跑同一套架构。</li>
+    </ul>
+    <div class="tip warn">
+      <b>关于数据：</b>聊天室的聊天记录存在各人浏览器本地，换设备看不到历史。
+      如需跨设备同步，可接数据库后端，详见
+      <a href="docs/deploy.html">部署与数据指南</a>。贴吧内容存在数据库中，跨设备可见。
+    </div>
+  </div>
+
 </div>
 
-<input type="file" id="fileImg" accept="image/*" multiple class="hidden">
-<input type="file" id="fileVideo" accept="video/*" class="hidden">
-<input type="file" id="fileDoc" class="hidden">
+<div class="foot">
+  <div>聊天室 · 纯前端零依赖 · <a href="https://github.com/liuyiming2024/Chat">GitHub 仓库</a></div>
+  <div style="margin-top:4px">代码采用 MIT License，可自由使用、修改与二次分发</div>
+</div>
 
-<script src="js/sha256.js"></script>
-<script src="js/latex.js"></script>
-<script src="js/markdown.js"></script>
-<script src="js/acl.js"></script>
-<script src="js/media.js"></script>
-<script src="js/sync.js"></script>
-<script src="js/net.js"></script>
-<script src="js/ui.js"></script>
-<script src="js/app.js"></script>
+<script src="assets/site.js"></script>
 </body>
 </html>

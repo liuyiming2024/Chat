@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>贴吧 · 聊天室</title>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="logo" href="../index.html"><span class="logo-mark">聊</span>聊天室</a>
+    <div class="nav-links">
+      <a href="../index.html" data-nav="home">首页</a>
+      <a href="../chat/index.html" data-nav="chat">聊天室</a>
+      <a href="../tieba/index.html" data-nav="tieba">贴吧</a>
+      <a href="../docs/index.html" data-nav="docs">使用手册</a>
+    </div>
+    <div class="nav-tools">
+      <button class="icon-btn" id="btnTheme" title="切换深色 / 浅色">🌙</button>
+    </div>
+  </div>
+</nav>
+
+<div class="wrap">
+
+  <div id="cfgTip" class="tip warn" style="display:none"></div>
+
+  <!-- 列表视图 -->
+  <div id="viewList">
+    <div class="forum-bar">
+      <input class="field" id="searchKey" placeholder="搜索帖子标题或内容">
+      <input class="field" id="nickInput" placeholder="你的昵称" style="max-width:150px">
+      <button class="btn-sm primary" id="btnNew">＋ 发新帖</button>
+      <button class="btn-sm" id="btnCfg">后端设置</button>
+    </div>
+    <div id="postList"></div>
+  </div>
+
+  <!-- 详情视图 -->
+  <div id="viewPost" style="display:none">
+    <div class="forum-bar">
+      <button class="btn-sm" id="btnBack">← 返回列表</button>
+    </div>
+    <div id="postDetail"></div>
+  </div>
+
+</div>
+
+<div class="foot">
+  <div>贴吧 · 当前模式：<span id="modeTag">本地</span></div>
+</div>
+
+<script src="../assets/site.js"></script>
+<script src="js/forum.js"></script>
+</body>
+</html>

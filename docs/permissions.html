@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>权限与命令 · 使用手册</title>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="logo" href="../index.html"><span class="logo-mark">聊</span>聊天室</a>
+    <div class="nav-links">
+      <a href="../index.html" data-nav="home">首页</a>
+      <a href="../chat/index.html" data-nav="chat">聊天室</a>
+      <a href="../tieba/index.html" data-nav="tieba">贴吧</a>
+      <a href="../docs/index.html" data-nav="docs">使用手册</a>
+    </div>
+    <div class="nav-tools"><button class="icon-btn" id="btnTheme" title="切换深色 / 浅色">🌙</button></div>
+  </div>
+</nav>
+<div class="wrap">
+  <div class="doc-layout">
+    <nav class="doc-side">
+      <a href="index.html" data-doc="index">手册首页</a>
+      <a href="getting-started.html" data-doc="getting-started">新手入门</a>
+      <a href="markdown.html" data-doc="markdown">Markdown 与公式</a>
+      <a href="permissions.html" data-doc="permissions">权限与命令</a>
+      <a href="admin.html" data-doc="admin">管理员手册</a>
+      <a href="deploy.html" data-doc="deploy">部署与数据</a>
+    </nav>
+    <main class="doc-main">
+      <div class="panel">
+<h2>权限与命令</h2>
+
+<h3>一、权限三态</h3>
+<p>每项权限对每个人有三种状态：</p>
+<table>
+  <tr><th>状态</th><th>含义</th><th>优先级</th></tr>
+  <tr><td><b>继承</b></td><td>按角色默认走（有管理员模板和成员模板）</td><td>最低</td></tr>
+  <tr><td><b>允许</b></td><td>单独授予，覆盖角色默认</td><td>中</td></tr>
+  <tr><td><b>禁止</b></td><td>单独收回，压过角色默认</td><td>最高（站长除外）</td></tr>
+</table>
+<p>判定顺序：封禁 → <b>站长恒为全部权限</b> → 显式禁止 → 显式允许 → 角色默认 → 群主/群管理员。</p>
+
+<div class="tip">
+  <b>管理员只是称号。</b>同样是管理员，各人手里实际能做什么可以完全不同——
+  这正是由逐项勾选决定的。想给某人特殊权力，不必提拔他，直接勾那一项就行。
+</div>
+
+<h3>二、38 项权限（7 组）</h3>
+<table>
+  <tr><th>组</th><th>权限项</th></tr>
+  <tr><td><b>消息</b></td><td>发言 · 撤回自己的消息 · 移除他人消息 · Delete 物理删除 · 查看被处置原文 · 置顶消息</td></tr>
+  <tr><td><b>媒体</b></td><td>发图片 · 发视频 · 发语音 · 发文件附件（<b>各自独立</b>）</td></tr>
+  <tr><td><b>房间</b></td><td>建群 · 改群名 · 改公告 · 改简介 · 改群密码 · 邀请/生成口令 · 移出成员 · 设群管理员 · 解散群 · 导出群记录</td></tr>
+  <tr><td><b>用户管理</b></td><td>查看成员 · 禁言 · 封禁 · 手动开户 · 删除用户 · 授予管理员 · <b>分配他人权限</b> · 转让站长</td></tr>
+  <tr><td><b>审核日志</b></td><td>审核注册申请 · 查看操作日志</td></tr>
+  <tr><td><b>站点</b></td><td>改站名 · 改保护密码 · 开关注册审核 · 清理旧媒体 · 导出数据 · 重置站点</td></tr>
+  <tr><td><b>系统</b></td><td>发布全站公告 · 查看运行环境</td></tr>
+</table>
+
+<h3>三、怎么设置</h3>
+<p>管理面板 → <b>权限</b> 页签 → 点某人「分配权限」→ 逐项改成 继承 / 允许 / 禁止。</p>
+<p>有三个快捷套用：</p>
+<ul>
+  <li><b>管理员模板</b>——一次性给全套常用管理权；</li>
+  <li><b>普通成员模板</b>——收回管理权，退回普通成员；</li>
+  <li><b>全部恢复继承</b>——清空自定义，全部按角色走。</li>
+</ul>
+<p>页面底部有一张只读的「角色默认权限」对照表，说明"继承"到底继承的是什么。</p>
+
+<div class="tip warn">
+  <b>站长不可剥夺。</b>站长恒为全部权限，不参与勾选，界面上显示为「全部权限（不可剥夺）」。
+  想改只能先转让站长给别人，自己变成管理员后再由新站长调整。
+</div>
+
+<h3>四、斜杠命令一览</h3>
+<table>
+  <tr><th>命令</th><th>说明</th><th>命令</th><th>说明</th></tr>
+  <tr><td><code>/help</code></td><td>帮助</td><td><code>/dm 昵称 内容</code></td><td>发起私聊</td></tr>
+  <tr><td><code>/me 内容</code></td><td>系统动作</td><td><code>/create 群名</code></td><td>建群</td></tr>
+  <tr><td><code>/nick 新昵称</code></td><td>改昵称</td><td><code>/join 群名</code></td><td>加群（有密码会提示）</td></tr>
+  <tr><td><code>/who</code></td><td>查看在线成员</td><td><code>/notice 内容</code></td><td>改本群公告</td></tr>
+  <tr><td><code>/mute 昵称 分钟</code></td><td>禁言</td><td><code>/unmute 昵称</code></td><td>解禁</td></tr>
+  <tr><td><code>/kick 昵称</code></td><td>移出本群</td><td><code>/ban 昵称</code> · <code>/unban</code></td><td>封禁 · 解封账号</td></tr>
+  <tr><td><code>/admin 昵称</code></td><td>授予管理员</td><td><code>/unadmin 昵称</code></td><td>回收管理员</td></tr>
+  <tr><td><code>/invite 昵称</code></td><td>邀请进群</td><td><code>/transfer 昵称</code></td><td>转让站长（仅站长）</td></tr>
+  <tr><td><code>/clear</code></td><td>清空本会话</td><td><code>/pwd 密码</code></td><td>设群密码（留空取消）</td></tr>
+  <tr><td><code>/env</code></td><td>运行环境自检</td><td><code>/sys 内容</code></td><td>全站系统公告（管理）</td></tr>
+  <tr><td><code>/mode simple</code></td><td>切极简模式</td><td><code>/mode pro</code></td><td>切专业模式</td></tr>
+</table>
+<p style="color:var(--dim);font-size:13.5px">
+  管理员也可以完全不用命令：右键会话、点头像、开管理面板，全是图形化操作。</p>
+      </div>
+    </main>
+  </div>
+</div>
+<div class="foot"><div>使用手册 · <a href="../index.html">返回首页</a></div></div>
+<script src="../assets/site.js"></script>
+<script>
+(function () {
+  var m = /\/([a-z-]+)\.html$/.exec(location.pathname);
+  var k = m ? m[1] : 'index';
+  var links = document.querySelectorAll('.doc-side a');
+  for (var i = 0; i < links.length; i++) {
+    if (links[i].getAttribute('data-doc') === k) links[i].classList.add('on');
+  }
+})();
+</script>
+</body>
+</html>
