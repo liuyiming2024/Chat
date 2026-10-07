@@ -12,8 +12,8 @@
   /* @提及：把 @昵称 渲染成高亮标签。渲染前已完成 HTML 转义，
      这里只处理纯文本层，不会产生注入。 */
   function atHighlight(html) {
-    return html.replace(/@([^\s@<]{1,16})/g, function (m0, name) {
-      return '<span class="at-mention" data-at="' + esc(name) + '">@' + esc(name) + '</span>';
+    return html.replace(/(^|[\s(（\[，,。.；;：:！!？?])@([^\s@<]{1,16})/g, function (m0, pre, name) {
+      return pre + '<span class="at-mention" data-at="' + esc(name) + '">@' + esc(name) + '</span>';
     });
   }
 
@@ -78,9 +78,16 @@
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
+  /* 链接白名单：收紧到导航类协议，不放行 data: / blob: */
   function safeUrl(u) {
     u = String(u || '').trim();
-    if (/^(https?:|mailto:|data:image\/|blob:|#|\/)/i.test(u)) return u;
+    if (/^(https?:|mailto:|#|\/)/i.test(u)) return u;
+    return '#';
+  }
+  /* 图片白名单：只有 <img src> 需要 data:image/ 与 blob: */
+  function safeImgUrl(u) {
+    u = String(u || '').trim();
+    if (/^(https?:|data:image\/|blob:|#|\/)/i.test(u)) return u;
     return '#';
   }
 
@@ -115,7 +122,7 @@
     s = s.replace(/\uE000ESC\uE000/g, '&#36;');
 
     s = s.replace(R.img, function (m, alt, url, title) {
-      return '<img class="md-img" src="' + esc(safeUrl(url)) + '" alt="' + esc(alt) + '"' +
+      return '<img class="md-img" src="' + esc(safeImgUrl(url)) + '" alt="' + esc(alt) + '"' +
         (title ? ' title="' + esc(title) + '"' : '') + ' loading="lazy">';
     });
     s = s.replace(R.link, function (m, txt, url, title) {
@@ -311,13 +318,14 @@
     while ((nd = tw.nextNode())) list.push(nd);
     list.forEach(function (t) {
       var frag = document.createDocumentFragment();
-      var txt = t.nodeValue, re = /@([^\s@]{1,16})/g, last = 0, m;
+      var txt = t.nodeValue, re = /(^|[\s(（\[，,。.；;：:！!？?])@([^\s@]{1,16})/g, last = 0, m;
       while ((m = re.exec(txt))) {
         if (m.index > last) frag.appendChild(document.createTextNode(txt.slice(last, m.index)));
+        if (m[1]) frag.appendChild(document.createTextNode(m[1]));   /* 前导字符原样保留 */
         var sp = document.createElement('span');
         sp.className = 'at-mention';
-        sp.setAttribute('data-at', m[1]);
-        sp.appendChild(document.createTextNode('@' + m[1]));
+        sp.setAttribute('data-at', m[2]);
+        sp.appendChild(document.createTextNode('@' + m[2]));
         frag.appendChild(sp);
         last = m.index + m[0].length;
       }
@@ -339,5 +347,5 @@
       .trim();
   }
 
-  g.MD = { render: render, plain: plain, esc: esc, safeUrl: safeUrl };
+  g.MD = { render: render, plain: plain, esc: esc, safeUrl: safeUrl, safeImgUrl: safeImgUrl };
 })(window);
