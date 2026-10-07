@@ -36,6 +36,21 @@
   function touch(o) { if (o) o.updatedAt = now(); return o; }
   function hashPwd(p, salt) { return g.SHA256.slowHash(p, salt, 4000); }
 
+  /* ------------------------------------------------------------------
+   * 口令校验（含历史哈希迁移）
+   *   历史版本的 SHA-256 常数有误，产出的哈希不是标准值。
+   *   这里先按标准算法比对；不中则回退遗留算法。
+   *   遗留算法命中时返回 legacy:true，调用处会用标准算法静默重写，
+   *   用户无感知，旧哈希随登录逐条升级。
+   * ------------------------------------------------------------------ */
+  function verifyPwd(p, salt, hash) {
+    if (hashPwd(p, salt) === hash) return { ok: true, legacy: false };
+    if (g.SHA256.slowHashLegacy && g.SHA256.slowHashLegacy(p, salt, 4000) === hash) {
+      return { ok: true, legacy: true };
+    }
+    return { ok: false, legacy: false };
+  }
+
   function log(act, detail, target) {
     S.logs.unshift({ id: uid('l'), ts: now(), who: me ? me.id : 'system', act: act, detail: detail || '', target: target || '' });
     if (S.logs.length > 400) S.logs.length = 400;
@@ -187,7 +202,9 @@
     function ok() {
       var p = card.querySelector('#gP').value;
       if (!p) { g.UI.toast('请输入密码'); return; }
-      if (hashPwd(p, S.gate.salt) !== S.gate.hash) { g.UI.toast('密码错误', 'err'); return; }
+      var gv = verifyPwd(p, S.gate.salt, S.gate.hash);
+      if (!gv.ok) { g.UI.toast('密码错误', 'err'); return; }
+      if (gv.legacy) { S.gate.hash = hashPwd(p, S.gate.salt); save(); }
       sessionStorage.setItem(GATE_KEY, '1');
       afterGate();
     }
@@ -224,7 +241,9 @@
         var ok = function () {
           var u = byNick(card.querySelector('#lNick').value);
           if (!u) { g.UI.toast('用户不存在', 'err'); return; }
-          if (hashPwd(card.querySelector('#lPwd').value, u.pwdSalt) !== u.pwdHash) { g.UI.toast('密码错误', 'err'); return; }
+          var lv = verifyPwd(card.querySelector('#lPwd').value, u.pwdSalt, u.pwdHash);
+          if (!lv.ok) { g.UI.toast('密码错误', 'err'); return; }
+          if (lv.legacy) { u.pwdHash = hashPwd(card.querySelector('#lPwd').value, u.pwdSalt); save(); }
           if (u.banned) { g.UI.toast('该账号已被封禁', 'err'); return; }
           if (u.status === 'pending') { g.UI.toast('申请已提交，请等待站长通过', 'err'); return; }
           if (u.status === 'rejected') {
@@ -1751,7 +1770,9 @@
     if (!r) return;
     if (r.pwd && r.members && r.members.indexOf(me.id) < 0) {
       g.UI.prompt('需要群密码', '请输入「' + r.name + '」的进入密码', '', function (v) {
-        if (hashPwd(v, r.pwd.salt) !== r.pwd.hash) { g.UI.toast('密码错误', 'err'); return; }
+        var rv = verifyPwd(v, r.pwd.salt, r.pwd.hash);
+        if (!rv.ok) { g.UI.toast('密码错误', 'err'); return; }
+        if (rv.legacy) { r.pwd.hash = hashPwd(v, r.pwd.salt); save(); }
         joinRoom(rid, me); save(); cur = rid; unread[rid] = 0; renderAll(); scrollBottom();
       }, { password: true });
       return;
