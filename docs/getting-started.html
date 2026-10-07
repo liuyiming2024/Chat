@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>新手入门 · 使用手册</title>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="logo" href="../index.html"><span class="logo-mark">聊</span>聊天室</a>
+    <div class="nav-links">
+      <a href="../index.html" data-nav="home">首页</a>
+      <a href="../chat/index.html" data-nav="chat">聊天室</a>
+      <a href="../tieba/index.html" data-nav="tieba">贴吧</a>
+      <a href="../docs/index.html" data-nav="docs">使用手册</a>
+    </div>
+    <div class="nav-tools"><button class="icon-btn" id="btnTheme" title="切换深色 / 浅色">🌙</button></div>
+  </div>
+</nav>
+<div class="wrap">
+  <div class="doc-layout">
+    <nav class="doc-side">
+      <a href="index.html" data-doc="index">手册首页</a>
+      <a href="getting-started.html" data-doc="getting-started">新手入门</a>
+      <a href="markdown.html" data-doc="markdown">Markdown 与公式</a>
+      <a href="permissions.html" data-doc="permissions">权限与命令</a>
+      <a href="admin.html" data-doc="admin">管理员手册</a>
+      <a href="deploy.html" data-doc="deploy">部署与数据</a>
+    </nav>
+    <main class="doc-main">
+      <div class="panel">
+<h2>新手入门</h2>
+
+<h3>一、三步初始化</h3>
+<div class="steps" style="margin:12px 0">
+  <div class="step"><div class="step-no">1</div><h4>站点保护密码</h4>
+    <p>所有人进入站点都要先输这道密码（≥4 位），输错进不去。它是"整站的门禁"，<b>不等于</b>你的登录密码。</p></div>
+  <div class="step"><div class="step-no">2</div><h4>站长账号</h4>
+    <p>填昵称和登录密码（≥4 位），自动成为站长，拥有全部权限。</p></div>
+  <div class="step"><div class="step-no">3</div><h4>成员加入</h4>
+    <p>成员在登录页点「注册」，写一段<b>申请说明</b>，等站长通过后即可登录。</p></div>
+</div>
+
+<h3>二、发消息</h3>
+<ul>
+  <li>输入框打字，按 <code>Enter</code> 发送，<code>Shift+Enter</code> 换行。
+      这个行为可以在「管理面板 → 站点 → 发送键」里改。</li>
+  <li>输入框上方的按钮：🖼 图片、🎬 视频、📎 文件、🎙 语音、😊 表情、@ 提及某人、? 语法帮助。</li>
+  <li>也可以直接把图片或视频<b>拖进窗口</b>发送。</li>
+  <li>点消息上的「引用」可以带原文回复。</li>
+  <li>右上角 <b>专业 / 极简</b> 按钮切换模式：极简像微信一样干净，专业显示语法工具条。</li>
+</ul>
+
+<h3>三、会话：公屏、私聊、群</h3>
+<table>
+  <tr><th>类型</th><th>怎么进</th><th>说明</th></tr>
+  <tr><td>公屏大厅</td><td>默认就在</td><td>所有人都能说话的大厅，可设公告</td></tr>
+  <tr><td>私聊</td><td>点头像选「私聊」，或 <code>/dm 昵称 内容</code></td><td>一对一，自动建会话</td></tr>
+  <tr><td>自建群</td><td><code>/create 群名</code>，或侧栏「＋」</td><td>可设群密码、公告、简介</td></tr>
+  <tr><td>加密群</td><td>输入群密码加入</td><td>群主可在群设置里设或取消密码</td></tr>
+</table>
+<p>想让别人进你的群：群菜单里「生成邀请口令」，把 6 位口令发给对方，
+   对方在「用口令加入房间」里输入即可。</p>
+
+<h3>四、常用操作</h3>
+<table>
+  <tr><th>想做什么</th><th>怎么做</th></tr>
+  <tr><td>改昵称、头像、密码</td><td>点头像 →「我的资料」</td></tr>
+  <tr><td>查看群成员</td><td>右上角 👥 按钮</td></tr>
+  <tr><td>找历史消息</td><td>消息搜索（管理面板入口或搜索按钮）</td></tr>
+  <tr><td>导出聊天记录</td><td>管理面板 → 站点 → 导出聊天记录（md 或 txt）</td></tr>
+  <tr><td>切换深色模式</td><td>右上角 🌙 按钮，或管理面板 → 站点 → 外观</td></tr>
+  <tr><td>把某条消息藏起来</td><td>消息操作条 →「删除」</td></tr>
+</table>
+
+<h3>五、语音消息的注意点</h3>
+<div class="tip warn">
+  录音需要麦克风权限，且<b>只在 https 或 localhost 下可用</b>。
+  通过 GitHub Pages 访问没问题；但如果你把文件下载下来直接双击打开（file:// 协议），
+  浏览器会拒绝录音，此时要用 <code>python3 chat/server.py</code> 起个本地服务再打开。
+</div>
+      </div>
+    </main>
+  </div>
+</div>
+<div class="foot"><div>使用手册 · <a href="../index.html">返回首页</a></div></div>
+<script src="../assets/site.js"></script>
+<script>
+(function () {
+  var m = /\/([a-z-]+)\.html$/.exec(location.pathname);
+  var k = m ? m[1] : 'index';
+  var links = document.querySelectorAll('.doc-side a');
+  for (var i = 0; i < links.length; i++) {
+    if (links[i].getAttribute('data-doc') === k) links[i].classList.add('on');
+  }
+})();
+</script>
+</body>
+</html>
