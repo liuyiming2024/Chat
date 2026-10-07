@@ -147,7 +147,9 @@
       '<label class="field-label">站长昵称</label><input class="field" id="gNick" placeholder="例如：站长">' +
       '<label class="field-label">站长登录密码</label><input class="field" id="gPwd" type="password">' +
       '<button class="btn primary block" id="gOk">创建并进入</button>' +
-      '<div class="form-note">保护密码与登录密码均经加盐慢哈希存储，不保存明文。</div>'
+      '<div class="form-note">保护密码与登录密码均经加盐慢哈希存储，不保存明文。</div>' +
+      '<div class="form-note demo-note">提示：本聊天室默认「单机演示」——聊天记录存在你自己的浏览器里，' +
+      '换设备或换浏览器看不到别人的消息（可开多个标签页自测）。需要跨设备可在「管理面板 → 站点」配置后端。</div>'
     );
     card.querySelector('#gOk').onclick = function () {
       var gp = card.querySelector('#gGate').value, gp2 = card.querySelector('#gGate2').value;
@@ -598,10 +600,16 @@
     if (!sp.ok) { mt.textContent = sp.why + '，暂时无法发言'; mt.classList.remove('hidden'); $('input').disabled = true; $('btnSend').disabled = true; }
     else { mt.classList.add('hidden'); $('input').disabled = false; $('btnSend').disabled = false; }
 
-    /* 消息 */
+    /* 消息
+     * 性能：每条消息的渲染结果按「id + 内容指纹」缓存。
+     * 切房间或新消息到达时，未变化的消息直接复用缓存的 DOM 片段，
+     * 不再重跑一遍 Markdown + LaTeX 分词。指纹里带上 ts/deleted/pinned，
+     * 保证内容或状态一变就自动失效。 */
     var box = $('msgScroll');
     box.innerHTML = '';
-    var arr = msgs(r.id).filter(visibleToMe).slice(-300);
+    var full = msgs(r.id).filter(visibleToMe);
+    var shown = Math.min(full.length, MSG_PAGE);
+    var arr = full.slice(-shown);
     var lastDay = '';
     arr.forEach(function (m) {
       var d = new Date(m.ts);
@@ -610,8 +618,19 @@
         lastDay = day;
         box.appendChild(elc('div', 'time-sep', g.UI.fmtTime(m.ts)));
       }
-      box.appendChild(renderMsg(m, r));
+      box.appendChild(cachedMsgNode(m, r));
     });
+    /* 还有更早的消息时，顶部放一个「加载更早」 */
+    if (full.length > shown) {
+      var more = elc('button', 'load-more', '▲ 加载更早的 ' + (full.length - shown) + ' 条');
+      more.onclick = function () {
+        MSG_PAGE += 300;
+        renderChat();
+        var sc = $('msgScroll');
+        if (sc) sc.scrollTop = 0;
+      };
+      box.insertBefore(more, box.firstChild);
+    }
 
     /* 成员面板 */
     $('memberCount').textContent = String(mem.length);
@@ -870,6 +889,41 @@
   /* 我隐藏了多少条消息（用于「恢复已删除」） */
   /* 消息摘要（进日志用，便于后台追溯被撤回/移除/Delete 的内容） */
   /* ================= 消息置顶 ================= */
+  /* ---------- 消息渲染缓存 ---------- */
+  var MSG_PAGE = 300;                 /* 当前渲染条数，点「加载更早」会增大 */
+  var msgCache = Object.create(null); /* key -> { fp: 指纹, node: DOM 片段 } */
+  var msgCacheOrder = [];
+  var MSG_CACHE_MAX = 600;
+
+  function msgFingerprint(m, r) {
+    return [
+      m.id, m.ts, m.type, m.text || '', m.mediaId || '', m.dur || 0, m.name || '',
+      m.deleted ? 1 : 0, m.removedBy || '', m.quote ? (m.quote.id || m.quote.text || '') : '',
+      (m.hiddenFor && m.hiddenFor.indexOf(me && me.id) >= 0) ? 1 : 0,
+      (r.pinned && r.pinned.indexOf(m.id) >= 0) ? 1 : 0
+    ].join('\u0001');
+  }
+
+  /* 说明：缓存的是「已渲染好的 DOM 片段」本身，不是克隆。
+     外层包一个 .msg-cache-wrap（display:contents，不产生盒子），
+     每次 renderChat 清空列表后它会回到游离状态，下次可原样复用——
+     事件监听器一并保留，所以消息上的按钮照样能点。 */
+  function cachedMsgNode(m, r) {
+    var fp = msgFingerprint(m, r);
+    var hit = msgCache[m.id];
+    if (hit && hit.fp === fp && hit.node && !hit.node.parentNode) return hit.node;
+    var wrap = document.createElement('div');
+    wrap.className = 'msg-cache-wrap';
+    wrap.appendChild(renderMsg(m, r));
+    msgCache[m.id] = { fp: fp, node: wrap };
+    msgCacheOrder.push(m.id);
+    if (msgCacheOrder.length > MSG_CACHE_MAX) {
+      var drop = msgCacheOrder.splice(0, msgCacheOrder.length - MSG_CACHE_MAX);
+      drop.forEach(function (id) { delete msgCache[id]; });
+    }
+    return wrap;
+  }
+
   function togglePin(m) {
     var r = findRoom(cur);
     if (!r) return;
@@ -2516,6 +2570,16 @@
     ta.addEventListener('input', function () {
       ta.style.height = 'auto';
       ta.style.height = Math.min(160, ta.scrollHeight) + 'px';
+    });
+    var ariaMap = { btnImg: '发送图片', btnVideo: '发送视频', btnFile: '发送文件附件',
+                    btnVoice: '按住录制语音', btnEmoji: '表情面板', btnAt: '提及某人',
+                    btnHelp: '语法帮助', btnTheme: '切换深色模式', btnMode: '切换极简或专业模式' };
+    Object.keys(ariaMap).forEach(function (id) {
+      var el = $(id);
+      if (el && !el.getAttribute('aria-label')) {
+        el.setAttribute('aria-label', ariaMap[id]);
+        el.setAttribute('title', ariaMap[id]);
+      }
     });
     $('btnImg').onclick = function () { $('fileImg').click(); };
     $('fileImg').onchange = function (e) {
