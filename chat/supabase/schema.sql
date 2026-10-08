@@ -404,14 +404,18 @@ begin
         'members', coalesce((select json_agg(mm.user_id) from room_members mm where mm.room_id = rm.id), '[]'::json),
         'admins', coalesce((select json_agg(aa.user_id) from room_admins aa where aa.room_id = rm.id), '[]'::json)
       ) as r from rooms rm) x), '[]'::json),
+    /* order by 必须写在 json_agg(...) 内部。
+       写成 json_agg(x) ... order by m.created_at 会让整句变成聚合查询，
+       报 "column must appear in the GROUP BY clause" —— 本地测试没跑到
+       state_get 所以没暴露，真连上才炸。 */
     'messages', coalesce((select json_agg(json_build_object(
         'id', m.id, 'room', m.room_id, 'from', m.from_id, 'type', m.type,
         'text', m.body, 'mediaId', m.media_path, 'name', m.media_name,
         'size', m.media_size, 'replyTo', m.reply_to,
         'deleted', m.deleted,
         'ts', (extract(epoch from m.created_at) * 1000)::bigint
-      )) from messages m where m.created_at > now() - interval '30 days'
-        order by m.created_at), '[]'::json),
+      ) order by m.created_at) from messages m
+      where m.created_at > now() - interval '30 days'), '[]'::json),
     'logs', coalesce((select json_agg(json_build_object(
         'id', l.id, 'who', l.who_id, 'act', l.act, 'detail', l.detail,
         'target', l.target, 'ts', (extract(epoch from l.created_at) * 1000)::bigint
