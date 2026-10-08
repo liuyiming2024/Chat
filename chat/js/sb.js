@@ -29,13 +29,28 @@
     return null;
   }
 
-  /* ---------------- 配置 ---------------- */
+  /* ---------------- 配置 ----------------
+   * 内置默认后端：打开即用，无需手动填写。
+   *
+   * 为什么可以硬编码 —— publishable key（sb_publishable_...）按设计就是公开的：
+   * 任何前端项目的 JS 包里都躺着一个，用 DevTools 谁都能翻出来。
+   * 它本身不是凭证，真正的边界是站点保护密码 + 服务端函数内的鉴权。
+   * Supabase 官方文档也是这么用的（等价于 NEXT_PUBLIC_SUPABASE_ANON_KEY）。
+   *
+   * ⚠ 绝对不要在这里放 service_role / secret key（sb_secret_...），
+   *   那个绕过一切权限，放进前端等于把数据库交出去。
+   */
+  var DEFAULT_URL = 'https://pimryrsxkwyafmponegp.supabase.co';
+  var DEFAULT_KEY = 'sb_publishable_jPrK6j5l9NGbnLKcytTegg_di1njO8t';
+
   function loadCfg() {
     try {
       var c = JSON.parse(ls(CFG_KEY) || 'null');
       if (c && c.url && c.key) { url = c.url.replace(/\/+$/, ''); key = c.key; return true; }
     } catch (e) { }
-    return false;
+    /* 没手动配过 → 用内置的。用户仍可在设置里改（改了就存 localStorage，优先用手动值） */
+    url = DEFAULT_URL; key = DEFAULT_KEY;
+    return true;
   }
   function configure(u, k) {
     url = String(u || '').replace(/\/+$/, '');
