@@ -1,0 +1,76 @@
+name: 数据库诊断
+
+# 只做连通性检查，不改任何数据。用来区分「连不上」和「SQL 有错」。
+# 全程不打印密码。
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 1. 密钥是否存在
+        env:
+          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          if [ -z "${DB_URL:-}" ]; then
+            echo "::error::未配置 SUPABASE_DB_URL"
+            exit 1
+          fi
+          echo "已配置，长度 ${#DB_URL} 字符"
+          # 只打印结构，不打印密码
+          echo "$DB_URL" | sed -E 's#(postgres://[^:]+:)[^@]+(@.*)#\1********\2#'
+
+      - name: 2. 解析各部分
+        env:
+          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          python3 - <<'PY'
+          import os, re
+          from urllib.parse import urlparse
+          u = os.environ.get('DB_URL','')
+          try:
+              p = urlparse(u)
+              print('协议 :', p.scheme)
+              print('主机 :', p.hostname)
+              print('端口 :', p.port)
+              print('用户 :', p.username)
+              print('密码 :', '*' * len(p.password or ''), f'({len(p.password or "")} 位)')
+              print('库名 :', p.path.lstrip('/'))
+              # 常见错误提示
+              if p.port == 5432:
+                  print('\n⚠ 用的是 5432 直连端口。Actions 里建议改 6543（连接池）。')
+              if not p.hostname or 'pooler' not in (p.hostname or ''):
+                  print('\n⚠ 主机名里没有 pooler，可能不是连接池地址。')
+              if p.password and any(c in p.password for c in '@:/?#[]'):
+                  print('\n⚠ 密码含特殊字符，需做 URL 编码，否则解析会错。')
+          except Exception as e:
+              print('解析失败:', e)
+          PY
+
+      - name: 3. 尝试连接
+        env:
+          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -uo pipefail
+          echo "psql 版本: $(psql --version 2>&1)"
+          echo "--- 连接测试 ---"
+          if timeout 40 psql "$DB_URL" -tAc "select version()" 2>&1 | head -5; then
+            echo "✅ 能连上"
+          else
+            echo "❌ 连不上（上面是原始错误信息）"
+            exit 1
+          fi
+
+      - name: 4. 现状
+        env:
+          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -uo pipefail
+          echo "--- 已有表 ---"
+          psql "$DB_URL" -tAc "select coalesce(string_agg(table_name,', ' order by table_name),'（空）') from information_schema.tables where table_schema='public'" 2>&1 | head -3
+          echo "--- 已有函数 ---"
+          psql "$DB_URL" -tAc "select count(*) from information_schema.routines where routine_schema='public'" 2>&1 | head -3
+          echo "--- pgcrypto 是否可用 ---"
+          psql "$DB_URL" -tAc "select extname from pg_extension where extname='pgcrypto'" 2>&1 | head -3
