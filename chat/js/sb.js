@@ -44,7 +44,7 @@
     return !!url && !!key;
   }
   function isOn() { return !!url && !!key; }
-  function clearCfg() { url = key = null; ls(CFG_KEY, null); ss(TOK_KEY, null); ss(UID_KEY, null); }
+  function clearCfg() { url = key = null; ls(CFG_KEY, null); dropSession(); }
 
   /* ---------------- HTTP ----------------
    * 新版 publishable key（sb_publishable_...）不是 JWT，
@@ -77,10 +77,21 @@
   }
 
   /* ---------------- 会话 ---------------- */
-  function setSession(token, uid) { ss(TOK_KEY, token || null); ss(UID_KEY, uid || null); }
-  function token() { return ss(TOK_KEY); }
-  function uid() { return ss(UID_KEY); }
-  function dropSession() { ss(TOK_KEY, null); ss(UID_KEY, null); }
+  /* 会话存储：同时写 localStorage 与 sessionStorage。
+     为什么改用 localStorage —— 统一身份要求跨页面可见。
+     贴吧、聊天室是两个独立页面，sessionStorage 按标签页隔离，
+     从聊天室登录后在贴吧页面读不到 token，统一身份就不成立。
+     代价：关闭浏览器不会自动登出，靠服务端的 expires_at 兜底（14 天）。 */
+  function setSession(token, uid) {
+    ss(TOK_KEY, token || null); ss(UID_KEY, uid || null);
+    ls(TOK_KEY, token || null); ls(UID_KEY, uid || null);
+  }
+  function token() { return ss(TOK_KEY) || ls(TOK_KEY) || null; }
+  function uid() { return ss(UID_KEY) || ls(UID_KEY) || null; }
+  function dropSession() {
+    ss(TOK_KEY, null); ss(UID_KEY, null);
+    ls(TOK_KEY, null); ls(UID_KEY, null);
+  }
 
   /* ---------------- 站点与账号 ---------------- */
   function ping() { return rpc('state_seq', {}).then(function () { return true; }); }
@@ -130,7 +141,7 @@
     var path = id + '.' + (mime === 'jpeg' ? 'jpg' : mime);
     return dataUrlToBlob(dataUrl).then(function (blob) {
       var h = { apikey: key, 'Content-Type': blob.type, 'x-upsert': 'true' };
-      var t = ss(TOK_KEY);
+      var t = token();
       if (t) h['x-session'] = t;
       return fetch(url + '/storage/v1/object/media/' + path, {
         method: 'POST', headers: h, body: blob
