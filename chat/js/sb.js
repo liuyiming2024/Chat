@@ -58,7 +58,12 @@
     ls(CFG_KEY, JSON.stringify({ url: url, key: key }));
     return !!url && !!key;
   }
-  function isOn() { return !!url && !!key; }
+  /* isOn 不能只看模块变量：loadCfg() 从没被自动调用过，
+     所以 url/key 一直是 null → isOn() 恒 false → 在线模式永远不生效。
+     这里惰性加载一次。 */
+  var cfgLoaded = false;
+  function ensureCfg() { if (!cfgLoaded) { cfgLoaded = true; loadCfg(); } return !!url && !!key; }
+  function isOn() { ensureCfg(); return !!url && !!key; }
   function clearCfg() { url = key = null; ls(CFG_KEY, null); dropSession(); }
 
   /* ---------------- HTTP ----------------
@@ -68,7 +73,9 @@
    */
   function headers(json) {
     var h = { apikey: key };
-    var t = ss(TOK_KEY);
+    /* 用 token() 而不是 ss(TOK_KEY)：会话同时写在 localStorage（跨页面共享），
+       只读 sessionStorage 会在新标签页里丢掉会话。 */
+    var t = token();
     if (t) h['x-session'] = t;
     if (json) h['Content-Type'] = 'application/json';
     return h;
