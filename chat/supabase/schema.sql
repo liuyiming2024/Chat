@@ -3,6 +3,12 @@
 -- 在 Supabase Dashboard → SQL Editor → New query 里整段粘贴执行
 --
 -- 安全设计（重要）：
+--   0. ⚠ search_path 必须写成 public, extensions, pg_temp —— 别忘了 extensions！
+--      Supabase 把 pgcrypto（gen_salt / crypt / digest / gen_random_uuid）
+--      装在 extensions schema 里，不是 public。只写 public,pg_temp 会让
+--      这些函数全部找不到，注册和登录直接报 "function gen_salt does not exist"。
+--      （这个坑踩过：本地测试用 public 里的 stub 函数，掩盖了真实环境差异。）
+--
 --   1. 所有表都不直接开放给 anon，只暴露 SECURITY DEFINER 的 RPC 函数。
 --      即使 publishable key 公开，没有站点保护密码也拿不到任何数据。
 --   2. 密码一律用 pgcrypto 的 bcrypt 在数据库内处理，
@@ -254,7 +260,7 @@ $$;
 -- 若用 $$ 会被词法器当成函数体结束，整段脚本执行失败。
 create or replace function site_init(p_gate text, p_nick text, p_real text, p_pwd text)
 returns json language plpgsql volatile security definer
-set search_path = public, pg_temp as $fn$
+set search_path = public, extensions, pg_temp as $fn$
 declare uid uuid; tk text;
 begin
   if exists (select 1 from site where gate_hash is not null) then
@@ -283,7 +289,7 @@ $fn$;
 -- 校验保护密码（通过后会话可读取站点公开信息）
 create or replace function gate_check(p text)
 returns text language plpgsql volatile security definer
-set search_path = public, pg_temp as $$
+set search_path = public, extensions, pg_temp as $$
 declare tk text; st record;
 begin
   select * into st from site where id = true;
@@ -304,7 +310,7 @@ $$;
 -- 注册（默认 pending，需站长线下审核通过）
 create or replace function user_register(p_nick text, p_pwd text, p_real text default null)
 returns json language plpgsql volatile security definer
-set search_path = public, pg_temp as $$
+set search_path = public, extensions, pg_temp as $$
 declare uid uuid; cnt int;
 begin
   if not gate_passed() then raise exception '请先通过站点保护密码'; end if;
@@ -331,7 +337,7 @@ $$;
 -- 登录
 create or replace function user_login(p_nick text, p_pwd text)
 returns json language plpgsql volatile security definer
-set search_path = public, pg_temp as $$
+set search_path = public, extensions, pg_temp as $$
 declare u record; tk text;
 begin
   if not gate_passed() then raise exception '请先通过站点保护密码'; end if;
@@ -358,7 +364,7 @@ $$;
 -- 拉取全量状态（需已通过保护密码）
 create or replace function state_get()
 returns json language plpgsql stable security definer
-set search_path = public, pg_temp as $$
+set search_path = public, extensions, pg_temp as $$
 declare me uuid;
 begin
   if not gate_passed() then raise exception '请先通过站点保护密码'; end if;
@@ -405,7 +411,7 @@ create or replace function msg_send(
   p_media text default null, p_name text default '', p_size bigint default 0,
   p_reply uuid default null
 ) returns json language plpgsql volatile security definer
-set search_path = public, pg_temp as $$
+set search_path = public, extensions, pg_temp as $$
 declare uid uuid; mid uuid; st text;
 begin
   uid := cur_user();
@@ -431,7 +437,7 @@ $$;
 -- 撤回 / 删除消息
 create or replace function msg_delete(p_id uuid)
 returns boolean language plpgsql volatile security definer
-set search_path = public, pg_temp as $$
+set search_path = public, extensions, pg_temp as $$
 declare uid uuid; r record;
 begin
   uid := cur_user();
@@ -456,7 +462,7 @@ $$;
 -- 建群
 create or replace function room_create(p_name text, p_desc text default '', p_pwd text default null)
 returns text language plpgsql volatile security definer
-set search_path = public, pg_temp as $$
+set search_path = public, extensions, pg_temp as $$
 declare uid uuid; rid text;
 begin
   uid := cur_user();
@@ -475,7 +481,7 @@ $$;
 -- 私聊房间（不存在则创建）
 create or replace function room_dm(p_other uuid)
 returns text language plpgsql volatile security definer
-set search_path = public, pg_temp as $$
+set search_path = public, extensions, pg_temp as $$
 declare uid uuid; rid text;
 begin
   uid := cur_user();
@@ -493,7 +499,7 @@ $$;
 -- 加入房间（带密码校验）
 create or replace function room_join(p_room text, p_pwd text default null)
 returns boolean language plpgsql volatile security definer
-set search_path = public, pg_temp as $$
+set search_path = public, extensions, pg_temp as $$
 declare uid uuid; r record;
 begin
   uid := cur_user();
@@ -514,7 +520,7 @@ $$;
 -- 退出房间
 create or replace function room_leave(p_room text)
 returns boolean language plpgsql volatile security definer
-set search_path = public, pg_temp as $$
+set search_path = public, extensions, pg_temp as $$
 declare uid uuid;
 begin
   uid := cur_user();
@@ -531,7 +537,7 @@ create or replace function room_update(
   p_room text, p_name text default null, p_notice text default null,
   p_desc text default null, p_pwd text default null
 ) returns boolean language plpgsql volatile security definer
-set search_path = public, pg_temp as $$
+set search_path = public, extensions, pg_temp as $$
 declare uid uuid;
 begin
   uid := cur_user();
@@ -559,7 +565,7 @@ $$;
 -- 解散房间
 create or replace function room_delete(p_room text)
 returns boolean language plpgsql volatile security definer
-set search_path = public, pg_temp as $$
+set search_path = public, extensions, pg_temp as $$
 declare uid uuid;
 begin
   uid := cur_user();
@@ -579,7 +585,7 @@ $$;
 -- 成员管理：邀请 / 移出 / 设管理员 / 取消管理员
 create or replace function member_add(p_room text, p_user uuid)
 returns boolean language plpgsql volatile security definer
-set search_path = public, pg_temp as $$
+set search_path = public, extensions, pg_temp as $$
 declare uid uuid;
 begin
   uid := cur_user();
@@ -598,7 +604,7 @@ $$;
 
 create or replace function member_remove(p_room text, p_user uuid)
 returns boolean language plpgsql volatile security definer
-set search_path = public, pg_temp as $$
+set search_path = public, extensions, pg_temp as $$
 declare uid uuid;
 begin
   uid := cur_user();
@@ -618,7 +624,7 @@ $$;
 
 create or replace function member_admin(p_room text, p_user uuid, p_on boolean)
 returns boolean language plpgsql volatile security definer
-set search_path = public, pg_temp as $$
+set search_path = public, extensions, pg_temp as $$
 declare uid uuid;
 begin
   uid := cur_user();
@@ -642,7 +648,7 @@ $$;
 -- 用户管理：审核 / 封禁 / 禁言 / 改角色 / 改权限
 create or replace function user_review(p_user uuid, p_status text)
 returns boolean language plpgsql volatile security definer
-set search_path = public, pg_temp as $$
+set search_path = public, extensions, pg_temp as $$
 declare uid uuid;
 begin
   uid := cur_user();
@@ -660,7 +666,7 @@ $$;
 
 create or replace function user_mute(p_user uuid, p_minutes int)
 returns boolean language plpgsql volatile security definer
-set search_path = public, pg_temp as $$
+set search_path = public, extensions, pg_temp as $$
 declare uid uuid;
 begin
   uid := cur_user();
@@ -679,7 +685,7 @@ $$;
 
 create or replace function user_role_set(p_user uuid, p_role text)
 returns boolean language plpgsql volatile security definer
-set search_path = public, pg_temp as $$
+set search_path = public, extensions, pg_temp as $$
 declare uid uuid;
 begin
   uid := cur_user();
@@ -701,7 +707,7 @@ $$;
 
 create or replace function user_perms_set(p_user uuid, p_perms text[])
 returns boolean language plpgsql volatile security definer
-set search_path = public, pg_temp as $$
+set search_path = public, extensions, pg_temp as $$
 declare uid uuid;
 begin
   uid := cur_user();
@@ -718,7 +724,7 @@ $$;
 
 create or replace function user_delete(p_user uuid)
 returns boolean language plpgsql volatile security definer
-set search_path = public, pg_temp as $$
+set search_path = public, extensions, pg_temp as $$
 declare uid uuid;
 begin
   uid := cur_user();
@@ -737,7 +743,7 @@ $$;
 create or replace function profile_update(p_nick text default null, p_real text default null,
                                           p_bio text default null)
 returns boolean language plpgsql volatile security definer
-set search_path = public, pg_temp as $$
+set search_path = public, extensions, pg_temp as $$
 declare uid uuid;
 begin
   uid := cur_user();
@@ -757,7 +763,7 @@ $$;
 
 create or replace function user_password(p_old text, p_new text)
 returns boolean language plpgsql volatile security definer
-set search_path = public, pg_temp as $$
+set search_path = public, extensions, pg_temp as $$
 declare uid uuid; u record;
 begin
   uid := cur_user();
@@ -772,7 +778,7 @@ $$;
 
 create or replace function gate_set(p_old text, p_new text)
 returns boolean language plpgsql volatile security definer
-set search_path = public, pg_temp as $$
+set search_path = public, extensions, pg_temp as $$
 declare uid uuid;
 begin
   uid := cur_user();
@@ -792,7 +798,7 @@ $$;
 
 create or replace function site_set(p_name text default null, p_allow_register boolean default null)
 returns boolean language plpgsql volatile security definer
-set search_path = public, pg_temp as $$
+set search_path = public, extensions, pg_temp as $$
 declare uid uuid;
 begin
   uid := cur_user();
@@ -812,7 +818,7 @@ $$;
 -- 退出登录
 create or replace function logout()
 returns boolean language plpgsql volatile security definer
-set search_path = public, pg_temp as $$
+set search_path = public, extensions, pg_temp as $$
 begin
   delete from sessions where token_hash = cur_token_hash();
   return true;
@@ -826,7 +832,7 @@ $$;
 -- 未登录也可调用（它只删自己那条已过期的记录，不泄露任何信息）。
 create or replace function session_cleanup()
 returns int language plpgsql volatile security definer
-set search_path = public, pg_temp as $$
+set search_path = public, extensions, pg_temp as $$
 declare n int;
 begin
   delete from sessions where expires_at < now();

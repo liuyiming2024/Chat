@@ -64,7 +64,7 @@ returns table (
   created_at timestamptz, replies json
 )
 language sql stable security definer
-set search_path = public, pg_temp as $$
+set search_path = public, extensions, pg_temp as $$
   select p.id, p.title, p.body, p.author, p.created_at,
          coalesce((
            select json_agg(json_build_object(
@@ -80,7 +80,7 @@ $$;
 -- 发新帖（必须登录）
 create or replace function forum_post(p_title text, p_body text, p_author text)
 returns uuid language plpgsql volatile security definer
-set search_path = public, pg_temp as $$
+set search_path = public, extensions, pg_temp as $$
 declare newid uuid; uid uuid; nick text;
 begin
   uid := auth_require();                       -- 未登录直接抛错
@@ -101,7 +101,7 @@ $$;
 -- 回复（必须登录）
 create or replace function forum_reply(p_post uuid, p_body text, p_author text)
 returns uuid language plpgsql volatile security definer
-set search_path = public, pg_temp as $$
+set search_path = public, extensions, pg_temp as $$
 declare newid uuid; uid uuid; nick text;
 begin
   uid := auth_require();
@@ -124,7 +124,7 @@ $$;
 -- 不再用「作者名字符串」校验 —— 那个名字是公开的，等于没有校验。
 create or replace function forum_del(p_post uuid)
 returns boolean language plpgsql volatile security definer
-set search_path = public, pg_temp as $$
+set search_path = public, extensions, pg_temp as $$
 declare uid uuid;
 begin
   uid := auth_require();
@@ -139,7 +139,7 @@ $$;
 -- 删回复：本人或管理员
 create or replace function forum_del_reply(p_reply uuid)
 returns boolean language plpgsql volatile security definer
-set search_path = public, pg_temp as $$
+set search_path = public, extensions, pg_temp as $$
 declare uid uuid;
 begin
   uid := auth_require();
