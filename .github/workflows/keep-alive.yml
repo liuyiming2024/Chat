@@ -1,0 +1,31 @@
+name: 数据库保活
+
+# Supabase 免费版：项目 7 天无数据库活动会被自动暂停。
+# 这个 workflow 每天定时执行一次轻量查询，保持项目活跃。
+#
+# 前置：需要先跑过「数据库迁移」，且已配置 SUPABASE_DB_URL。
+# 也可以停用：Actions 页面左侧选本 workflow → 右上角 ⋯ → Disable workflow。
+
+on:
+  schedule:
+    # 每天 UTC 03:00（北京时间 11:00）。GitHub 定时有延迟，属正常。
+    - cron: '0 3 * * *'
+  workflow_dispatch:     # 也允许手动点一次，方便验证
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 轻量查询
+        env:
+          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DB_URL:-}" ]; then
+            echo "::warning::未配置 SUPABASE_DB_URL，跳过"
+            exit 0
+          fi
+          # session_cleanup 顺带清理过期会话，一举两得
+          psql "$DB_URL" -tAc "select session_cleanup()" 2>/dev/null \
+            || psql "$DB_URL" -tAc "select 1"
+          echo "保活完成 $(date -u)"

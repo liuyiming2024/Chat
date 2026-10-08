@@ -1,0 +1,67 @@
+name: 数据库迁移
+
+# 手动触发：Actions → 数据库迁移 → Run workflow
+# 可指定要执行的脚本，默认按 schema.sql → forum.sql 顺序全跑。
+#
+# 为什么用它：
+#   Supabase SQL Editor 需要手动粘贴，长脚本容易截断、报错不好定位。
+#   把 SQL 放进仓库版本化，这里一键执行，日志可回看、可重跑。
+#
+# 配置：Settings → Secrets and variables → Actions → New repository secret
+#   名称：SUPABASE_DB_URL
+#   值  ：Supabase Dashboard → Connect → URI（postgres://postgres.xxx:密码@aws-0-xx.pooler.supabase.com:6543/postgres）
+#         注意用 6543（连接池端口），5432 直连在 Actions 里容易被限。
+
+on:
+  workflow_dispatch:
+    inputs:
+      script:
+        description: '要执行的脚本'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - schema.sql
+          - forum.sql
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 执行 SQL
+        env:
+          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DB_URL:-}" ]; then
+            echo "::error::未配置 SUPABASE_DB_URL，请先在仓库 Settings → Secrets 里添加"
+            exit 1
+          fi
+
+          case "${{ inputs.script }}" in
+            all)        FILES="chat/supabase/schema.sql chat/supabase/forum.sql" ;;
+            schema.sql) FILES="chat/supabase/schema.sql" ;;
+            forum.sql)  FILES="chat/supabase/forum.sql" ;;
+          esac
+
+          for f in $FILES; do
+            echo "==================== $f ===================="
+            if [ ! -f "$f" ]; then echo "::error::找不到 $f"; exit 1; fi
+            psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+      - name: 校验
+        env:
+          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          echo "--- 函数 ---"
+          psql "$DB_URL" -tAc "select count(*) from information_schema.routines where routine_schema='public'"
+          echo "--- 表 ---"
+          psql "$DB_URL" -tAc "select string_agg(table_name,', ' order by table_name) from information_schema.tables where table_schema='public'"
+          echo "--- 站点是否已初始化 ---"
+          psql "$DB_URL" -tAc "select site_ready()" || echo "（site_ready 不可用，可能未跑 schema.sql）"
