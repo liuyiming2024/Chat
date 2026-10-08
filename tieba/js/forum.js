@@ -159,6 +159,19 @@
   function render() {
     var mode = store.mode();
     $('modeTag').textContent = mode === 'db' ? '数据库（跨设备可见）' : '本地（仅本设备可见）';
+    /* 顶部横幅：本地模式会丢数据，这件事必须在发帖前就让人看见 */
+    var banner = $('modeBanner');
+    if (banner) {
+      if (mode === 'local') {
+        banner.style.display = '';
+        banner.className = 'mode-banner warn';
+        $('modeBannerText').textContent = '当前是本地模式：帖子只存在这台设备，换设备或清缓存就没了。';
+      } else {
+        banner.style.display = '';
+        banner.className = 'mode-banner ok';
+        $('modeBannerText').textContent = '已连接数据库：帖子跨设备可见。';
+      }
+    }
     var tip = $('cfgTip');
     if (mode === 'local') {
       tip.style.display = '';
