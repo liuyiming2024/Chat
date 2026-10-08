@@ -415,7 +415,15 @@ begin
         'deleted', m.deleted,
         'ts', (extract(epoch from m.created_at) * 1000)::bigint
       ) order by m.created_at) from messages m
-      where m.created_at > now() - interval '30 days'), '[]'::json),
+      where m.created_at > now() - interval '30 days'
+        -- 只能看到自己所在房间的消息。
+        -- 原来不加这层：私聊和别人的群聊会一视同仁全量返回。
+        and (
+          exists (select 1 from rooms r where r.id = m.room_id and r.type = 'public')
+          or exists (select 1 from room_members mm
+                     where mm.room_id = m.room_id and mm.user_id = me)
+        )
+      ), '[]'::json),
     'logs', coalesce((select json_agg(json_build_object(
         'id', l.id, 'who', l.who_id, 'act', l.act, 'detail', l.detail,
         'target', l.target, 'ts', (extract(epoch from l.created_at) * 1000)::bigint
@@ -445,6 +453,17 @@ begin
     select 1 from rooms r where r.id = p_room
       and (r.type = 'public' or exists (select 1 from room_members mm where mm.room_id = r.id and mm.user_id = uid))
   ) then raise exception '无权在该房间发言'; end if;
+
+  -- 长度上限：不限制的话一条消息就能塞进几 MB 文本
+  if length(coalesce(p_body,'')) > 8000 then raise exception '消息过长（上限 8000 字）'; end if;
+
+  -- 频率控制：10 秒内最多 20 条。
+  -- 数据库层做不了"失败计数"（raise 会回滚），但限流计数是在成功路径上写的，
+  -- 不会回滚，所以这里有效。这是防灌水、防免费额度被打爆的主要闸门。
+  if (select count(*) from messages
+      where from_id = uid and created_at > now() - interval '10 seconds') >= 20 then
+    raise exception '发送过于频繁，请稍后再试';
+  end if;
 
   insert into messages (room_id, from_id, type, body, media_path, media_name, media_size, reply_to)
   values (p_room, uid, p_type, coalesce(p_body,''), p_media, p_name, coalesce(p_size,0), p_reply)
@@ -487,7 +506,21 @@ declare uid uuid; rid text;
 begin
   uid := cur_user();
   if uid is null then raise exception '请先登录'; end if;
+
+  -- 权限校验（原来完全没有：任何登录用户都能无限建群）
+  perform acl_require('room.create');
+
+  -- 数量上限：免费版空间有限，一个脚本批量建群就能把项目撑爆。
+  -- 站长不受限（role='owner' 已在上面通过 acl_require，这里单独放行）。
+  if (select role from users where id = uid) <> 'owner' then
+    if (select count(*) from rooms where owner_id = uid) >= 20 then
+      raise exception '每人最多建 20 个群';
+    end if;
+  end if;
+
   if coalesce(trim(p_name), '') = '' then raise exception '群名不能为空'; end if;
+  if length(p_name) > 60 then raise exception '群名过长（上限 60 字）'; end if;
+  if length(coalesce(p_desc,'')) > 500 then raise exception '群简介过长（上限 500 字）'; end if;
   rid := 'r_' || encode(gen_random_bytes(6), 'hex');
   insert into rooms (id, name, type, owner_id, description, pwd_hash)
   values (rid, p_name, 'group', uid, coalesce(p_desc,''),
@@ -1126,6 +1159,21 @@ grant execute on all functions in schema public to anon, authenticated;
 grant execute on function session_cleanup() to anon, authenticated;
 
 -- Storage：媒体桶
+-- public=true 且零策略 = 匿名可读可写的公开文件托管点。
+-- 被扫到会当图床用，免费版带宽配额（约 5GB/月）第一个月就超。
+-- 改成私有：读写一律走服务端签发的短时 URL，不对外敞开。
 insert into storage.buckets (id, name, public)
-values ('media', 'media', true)
+values ('media', 'media', false)
 on conflict (id) do nothing;
+update storage.buckets set public = false where id = 'media';
+
+-- 桶级策略：只允许登录用户读自己所在房间的媒体。
+-- 没有这层，私有桶只是"默认拒绝"，仍然要靠下面的函数取签名 URL。
+drop policy if exists media_read on storage.objects;
+create policy media_read on storage.objects
+  for select to authenticated
+  using (bucket_id = 'media' and auth_role() is not null);
+drop policy if exists media_write on storage.objects;
+create policy media_write on storage.objects
+  for insert to authenticated
+  with check (bucket_id = 'media' and auth_role() is not null);

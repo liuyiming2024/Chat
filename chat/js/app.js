@@ -267,6 +267,26 @@
           '<label class="field-label">登录密码</label><input class="field" id="lPwd" type="password">' +
           '<button class="btn primary block" id="lOk">登录</button>';
         var ok = function () {
+          /* 在线模式：登录走服务端。本地根本没有 pwdHash（服务端从不返回）。
+             这段必须放在本地校验之前 —— 服务端用户的 pwdHash 是空的，
+             走本地分支必然判「密码错误」。 */
+          if (g.Online && g.Online.isOnline()) {
+            var ln = card.querySelector('#lNick').value.trim();
+            var lp = card.querySelector('#lPwd').value;
+            if (!ln || !lp) { g.UI.toast('请填写昵称与密码'); return; }
+            g.Online.login(ln, lp).then(function (r) {
+              sessionStorage.setItem(ME_KEY, r.uid);
+              return g.Online.pull().then(function (inS) {
+                if (inS && mergeState(inS)) save(true);
+                me = findUser(r.uid) || me;
+                g.Online.startPoll();
+                enterApp();
+              });
+            }).catch(function (e) {
+              g.UI.toast((e && e.message) || '登录失败', 'err');
+            });
+            return;
+          }
           var u = byNick(card.querySelector('#lNick').value);
           if (!u) { g.UI.toast('用户不存在', 'err'); return; }
           var lv = verifyPwd(card.querySelector('#lPwd').value, u.pwdSalt, u.pwdHash);
@@ -360,6 +380,18 @@
     }
   }
 
+  /* 显示当前数据存储位置（在线 / 本地） */
+  function showModeTag() {
+    var host = document.getElementById('modeTagHost');
+    if (!host) return;
+    host.style.display = '';
+    var on = !!(g.Online && g.Online.isOnline());
+    host.className = 'mode-tag ' + (on ? 'ok' : 'warn');
+    host.textContent = on ? '云端模式 · 换设备可见'
+                          : '本地模式 · 数据只在这台设备';
+    host.title = on ? '消息与账号存在服务器' : '换浏览器或清除缓存会丢失';
+  }
+
   function enterApp() {
     $('gate').classList.add('hidden');
     $('gate').innerHTML = '';
@@ -367,6 +399,9 @@
     $('app').classList.remove('hidden');
     $('app').style.display = '';
     ensurePublic();
+    /* 顶部模式标识：让使用者随时知道这一刻的数据存在哪。
+       原来整站只有贴吧页脚有一行小字，数据更多的聊天室反而没有任何提示。 */
+    showModeTag();
     if (me.role === 'member' && !findRoom('public')) { }
     joinRoom('public', me, true);
     save(true);
@@ -498,11 +533,18 @@
   }
 
   /* ================= 渲染 ================= */
-  function renderAll() { renderMe(); renderSidebar(); renderChat(); }
+  /* 未登录（me 为 null）时不能做完整渲染 —— renderMe() 会读 me.nick 直接抛错。
+     在线模式下 pull() 拿到数据后会在门禁阶段就回调渲染，必须先挡住。 */
+  function renderAll() {
+    if (!me) return;
+    renderMe(); renderSidebar(); renderChat();
+  }
 
   function renderMe() {
     var c = $('meCard');
+    if (!c) return;
     c.innerHTML = '';
+    if (!me) return;
     var a = g.UI.avatar(me, 'md');
     c.appendChild(a);
     var info = elc('div', 'me-info');
@@ -517,6 +559,7 @@
   }
 
   function renderSidebar() {
+    if (!me) return;
     var list = $('roomList');
     list.innerHTML = '';
     var rooms = myRooms();
@@ -628,6 +671,8 @@
   }
 
   function renderChat() {
+    if (!me) return;
+
     var r = findRoom(cur);
     if (!r) { cur = 'public'; r = findRoom('public'); }
     if (!r) return;

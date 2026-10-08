@@ -14,10 +14,10 @@
 <a class="back-home" href="../index.html" title="返回首页">← 首页</a>
 
 <!-- ============ 门禁 / 登录 ============ -->
-<div id="gate" class="mask hidden"></div>
+<div id="gate" class="mask hidden" style="display:flex"></div>
 
 <!-- ============ 主界面 ============ -->
-<div id="app" class="app hidden">
+<div id="app" class="app hidden" style="display:none">
 
   <!-- 左侧：会话列表 -->
   <aside class="sidebar" id="sidebar">
@@ -29,6 +29,12 @@
       <button class="icon-btn green" id="btnNewRoom" title="创建群聊">＋</button>
     </div>
     <div class="me-card" id="meCard"></div>
+    <div id="modeTagHost" class="mode-tag" style="display:none"></div>
+    <style>
+      .mode-tag{font-size:12px;padding:3px 8px;border-radius:6px;white-space:nowrap}
+      .mode-tag.warn{background:#fff4e5;color:#8a5300;border:1px solid #ffcf8b}
+      .mode-tag.ok{background:#eaf7ec;color:#1d6b2b;border:1px solid #a8ddb0}
+    </style>
     <div class="room-list" id="roomList"></div>
     <div class="side-foot">
       <button class="mini-btn" id="btnAdmin">管理面板</button>
