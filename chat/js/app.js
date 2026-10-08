@@ -1902,17 +1902,44 @@
         var nm = body.querySelector('#cName').value.trim();
         if (!nm) { g.UI.toast('群名不能为空'); return false; }
         var pwd = body.querySelector('#cPwd').value;
+        var cMem = body.querySelector('#cMem');
         var r = {
           id: uid('r'), name: nm, type: 'group', desc: body.querySelector('#cDesc').value.trim(),
           owner: me.id, admins: [], members: [me.id], pwd: null,
           notice: '', muted: [], createdAt: now(), updatedAt: now()
         };
         if (pwd) { var s = g.SHA256.randomId(12); r.pwd = { hash: hashPwd(pwd, s), salt: s }; }
-        body.querySelector('#cMem').value.split(/[,，\s]+/).forEach(function (n) {
+        cMem.value.split(/[,，\s]+/).forEach(function (n) {
           if (!n) return;
           var u = byNick(n);
           if (u && r.members.indexOf(u.id) < 0) r.members.push(u.id);
         });
+        /* 在线模式：群必须在服务端建，否则换设备就没了。
+           服务端返回真实 id，用它替换本地临时 id。 */
+        if (g.Online && g.Online.isOnline()) {
+          g.SB.rpc('room_create', { p_name: nm, p_desc: r.desc, p_pwd: pwd || null })
+            .then(function (rid) {
+              if (rid) {
+                r.id = rid;                 /* 用服务端 id，丢弃本地 uid('r') */
+                cMem.value.split(/[,，\s]+/).forEach(function (n) {
+                  if (!n) return;
+                  var u = byNick(n);
+                  if (u && r.members.indexOf(u.id) < 0) {
+                    r.members.push(u.id);
+                    g.SB.rpc('member_add', { p_room: rid, p_user: u.id }).catch(function () { });
+                  }
+                });
+              }
+              S.rooms.push(r);
+              log('create', nm, r.id);
+              save(true);
+              openRoom(r.id);
+            })
+            .catch(function (e) {
+              g.UI.toast('创建失败：' + ((e && e.message) || '网络错误'), 'err');
+            });
+          return true;      /* 先关弹窗，等服务端返回后再进群 */
+        }
         S.rooms.push(r);
         sysMsg(r.id, '「' + me.nick + '」创建了群聊');
         log('create', nm, r.id);
@@ -2297,6 +2324,20 @@
   }
 
   function adminPanel() {
+    if (!g.ACL.can(me, 'audit.log') && !g.ACL.can(me, 'user.view')) { g.UI.toast('仅管理员可打开管理面板', 'err'); return; }
+    /* 在线模式下先拉一次再渲染：否则新注册的账号要等下一次轮询才出现在审核列表里，
+       站长会以为"注册了但看不到申请"。 */
+    if (g.Online && g.Online.isOnline()) {
+      g.Online.pull().then(function (inS) {
+        if (inS && mergeState(inS)) { save(true); renderAll(); }
+        adminPanelRender();
+      }).catch(function () { adminPanelRender(); });
+      return;
+    }
+    adminPanelRender();
+  }
+
+  function adminPanelRender() {
     if (!g.ACL.can(me, 'audit.log') && !g.ACL.can(me, 'user.view')) { g.UI.toast('仅管理员可打开管理面板', 'err'); return; }
     var d = elc('div', '');
     d.innerHTML =

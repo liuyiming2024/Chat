@@ -171,7 +171,10 @@ input, textarea, select { font-family: inherit; font-size: 14px; }
   gap: 8px;
   padding: 8px;
   border-top: 1px solid #dcdcdc;
-}
+
+  /* 给左下角固定的「← 首页」按钮让出空间。
+     两者原本在同一位置重叠，管理面板/退出按钮点不到。 */
+  padding-bottom: 46px;}
 .empty-tip { padding: 16px; text-align: center; color: #999; font-size: 12px; }
 
 /* ================= 头像 ================= */

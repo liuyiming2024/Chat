@@ -174,6 +174,29 @@
     });
   }
 
+  /* ---------------- 房间 ----------------
+   * 建群/改群名/加人/踢人/设管理员：一律走带鉴权的 RPC。
+   * 不能整包写回（state_put 在服务端不存在，且会绕过全部权限校验）。
+   */
+  function createRoom(name, desc, pwd) {
+    return g.SB.rpc('room_create', { p_name: name, p_desc: desc || '', p_pwd: pwd || null });
+  }
+  function updateRoom(rid, name, desc, notice) {
+    return g.SB.rpc('room_update', { p_room: rid, p_name: name, p_desc: desc, p_notice: notice });
+  }
+  function joinRoom(rid, pwd) {
+    return g.SB.rpc('room_join', { p_room: rid, p_pwd: pwd || null });
+  }
+  function addMember(rid, userId) {
+    return g.SB.rpc('member_add', { p_room: rid, p_user: userId });
+  }
+  function removeMember(rid, userId) {
+    return g.SB.rpc('member_remove', { p_room: rid, p_user: userId });
+  }
+  function setAdmin(rid, userId, on) {
+    return g.SB.rpc('member_admin', { p_room: rid, p_user: userId, p_on: on !== false });
+  }
+
   /* ---------------- 接入 ---------------- */
 
   function init(handlers) {
@@ -185,6 +208,8 @@
     init: init, probe: probe, isOnline: isOnline, isReachable: isReachable,
     setup: setup, gate: gate, login: login, register: register,
     pull: pull, startPoll: startPoll, stopPoll: stopPoll,
+    createRoom: createRoom, updateRoom: updateRoom, joinRoom: joinRoom,
+    addMember: addMember, removeMember: removeMember, setAdmin: setAdmin,
     sendMsg: sendMsg, convert: convert
   };
 })(window);
