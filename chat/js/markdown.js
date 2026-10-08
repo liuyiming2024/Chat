@@ -94,13 +94,17 @@
   var R = {
     code: /`([^`\n]+)`/g,
     math: /\$\$([\s\S]+?)\$\$|\$([^$\n]+?)\$/g,
-    img: /!\[([^\]]*)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)/g,
-    link: /\[([^\]]+)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)/g,
+    /* esc() 已把 " 转成 &quot;，所以 title 必须按实体来匹配，否则带标题的链接会整体失效 */
+    img: /!\[([^\]]*)\]\(([^)\s）]+)(?:\s+&quot;([^&]*)&quot;)?\)/g,
+    link: /\[([^\]]+)\]\(([^)\s）]+)(?:\s+&quot;([^&]*)&quot;)?\)/g,
     bold: /(\*\*|__)(?=\S)([\s\S]*?\S)\1/g,
     italicStar: /([^_*]|^)\*(?!\*)([^\n*]+?)\*(?!\*)/g,
     italicUnder: /([^_*]|^)_(?!_)([^_\n]+?)_(?!_)/g,
     strike: /~~(?=\S)([\s\S]*?\S)~~/g,
-    autolink: /(https?:\/\/[^\s<]+)/g
+    /* 自动链接：必须带前缀锚点，否则会把上一行刚生成的 <a href="..."> 里的 URL
+       再包一层，产出 href="<a href=...>" 这种嵌套畸形 HTML。
+       前缀字符类刻意排除了 & ; " ' = —— 那些只可能出现在已生成的标签属性里。 */
+    autolink: /(^|[^\w&;"'=])(https?:\/\/[^\s<>"'&，。；：、）】」』！？]+)/g
   };
 
   /* 行内渲染：先保护 code 与 math，再做其余替换 */
@@ -133,8 +137,8 @@
     s = s.replace(R.strike, '<del>$1</del>');
     s = s.replace(R.italicStar, '$1<em>$2</em>');
     s = s.replace(R.italicUnder, '$1<em>$2</em>');
-    s = s.replace(R.autolink, function (m, u) {
-      return '<a class="md-link" href="' + esc(safeUrl(u)) + '" target="_blank" rel="noopener noreferrer">' + u + '</a>';
+    s = s.replace(R.autolink, function (m, pre, u) {
+      return pre + '<a class="md-link" href="' + esc(safeUrl(u)) + '" target="_blank" rel="noopener noreferrer">' + u + '</a>';
     });
     return s;
   }

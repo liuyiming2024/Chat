@@ -40,7 +40,8 @@ returns table (
   id uuid, title text, body text, author text,
   created_at timestamptz, replies json
 )
-language sql stable security definer as $$
+language sql stable security definer
+set search_path = public, pg_temp as $$
   select p.id, p.title, p.body, p.author, p.created_at,
          coalesce((
            select json_agg(json_build_object(
@@ -55,7 +56,8 @@ $$;
 
 -- 发新帖
 create or replace function forum_post(p_title text, p_body text, p_author text)
-returns uuid language plpgsql volatile security definer as $$
+returns uuid language plpgsql volatile security definer
+set search_path = public, pg_temp as $$
 declare newid uuid;
 begin
   if length(trim(coalesce(p_title, ''))) = 0 then raise exception '标题不能为空'; end if;
@@ -70,7 +72,8 @@ $$;
 
 -- 回复
 create or replace function forum_reply(p_post uuid, p_body text, p_author text)
-returns uuid language plpgsql volatile security definer as $$
+returns uuid language plpgsql volatile security definer
+set search_path = public, pg_temp as $$
 declare newid uuid;
 begin
   if not exists (select 1 from forum_posts where id = p_post) then
@@ -87,7 +90,8 @@ $$;
 
 -- 删帖（凭作者名校验，防止误删他人帖子）
 create or replace function forum_del(p_post uuid, p_author text)
-returns boolean language plpgsql volatile security definer as $$
+returns boolean language plpgsql volatile security definer
+set search_path = public, pg_temp as $$
 begin
   delete from forum_posts
   where id = p_post and author = coalesce(p_author, '');

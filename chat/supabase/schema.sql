@@ -26,7 +26,7 @@ insert into site (id) values (true) on conflict (id) do nothing;
 create table if not exists users (
   id          uuid primary key default gen_random_uuid(),
   nick        text not null unique,
-  real_name   text not null default '',     -- 实名，线下审核用
+  real_name   text not null default '',     -- 可选备注字段，前端不采集
   pwd_hash    text not null,                -- bcrypt
   role        text not null default 'member', -- owner / admin / member
   status      text not null default 'pending', -- pending 待审核 / active / banned
@@ -181,7 +181,8 @@ $$;
 
 -- 站点初始化：设保护密码 + 建站长（仅当未初始化时可用）
 create or replace function site_init(p_gate text, p_nick text, p_real text, p_pwd text)
-returns json language plpgsql volatile security definer as $$
+returns json language plpgsql volatile security definer
+set search_path = public, pg_temp as $$
 declare uid uuid; tk text;
 begin
   if exists (select 1 from site where gate_hash is not null) then
@@ -191,7 +192,7 @@ begin
     raise exception '密码至少 4 位';
   end if;
   insert into users (nick, real_name, pwd_hash, role, status)
-  values (p_nick, p_real, crypt(p_pwd, gen_salt('bf', 8)), 'owner', 'active')
+  values (p_nick, p_real, crypt(p_pwd, gen_salt('bf', 10)), 'owner', 'active')
   returning id into uid;
 
   insert into rooms (id, name, type, notice) values (
@@ -199,7 +200,7 @@ begin
     E'欢迎来到**公屏大厅**！\n\n- 支持 Markdown 与 `$E=mc^2$` 行内公式\n- 支持 `$$\\frac{a}{b}$$` 块级公式\n- 输入 `/help` 查看全部命令'
   ) on conflict (id) do nothing;
 
-  update site set gate_hash = crypt(p_gate, gen_salt('bf', 8)) where id = true;
+  update site set gate_hash = crypt(p_gate, gen_salt('bf', 10)) where id = true;
 
   insert into logs (who_id, act, detail) values (uid, 'init', '创建站点与站长 ' || p_nick);
   tk := issue_session(uid, false);
@@ -209,7 +210,8 @@ $$;
 
 -- 校验保护密码（通过后会话可读取站点公开信息）
 create or replace function gate_check(p text)
-returns text language plpgsql volatile security definer as $$
+returns text language plpgsql volatile security definer
+set search_path = public, pg_temp as $$
 declare tk text;
 begin
   if not exists (select 1 from site where gate_hash = crypt(p, gate_hash)) then
@@ -221,32 +223,35 @@ end;
 $$;
 
 -- 注册（默认 pending，需站长线下审核通过）
-create or replace function user_register(p_nick text, p_real text, p_pwd text)
-returns json language plpgsql volatile security definer as $$
+create or replace function user_register(p_nick text, p_pwd text, p_real text default null)
+returns json language plpgsql volatile security definer
+set search_path = public, pg_temp as $$
 declare uid uuid; cnt int;
 begin
   if not gate_passed() then raise exception '请先通过站点保护密码'; end if;
   if not (select allow_register from site where id = true) then
     raise exception '当前未开放注册';
   end if;
-  if length(p_nick) < 1 or length(p_real) < 1 then raise exception '请填写昵称与真实姓名'; end if;
+  if coalesce(length(p_nick), 0) < 1 then raise exception '请填写昵称'; end if;
+  -- real_name 为可选字段（前端无真实姓名输入框），不强制
   if length(p_pwd) < 4 then raise exception '密码至少 4 位'; end if;
   select count(*) into cnt from users where lower(nick) = lower(p_nick);
   if cnt > 0 then raise exception '昵称已被占用'; end if;
 
   insert into users (nick, real_name, pwd_hash, role, status)
-  values (p_nick, p_real, crypt(p_pwd, gen_salt('bf', 8)), 'member', 'pending')
+  values (p_nick, p_real, crypt(p_pwd, gen_salt('bf', 10)), 'member', 'pending')
   returning id into uid;
 
   -- 站长账号自动通过；普通账号待审核
-  insert into logs (who_id, act, detail) values (uid, 'register', p_nick || '（' || p_real || '）待审核');
+  insert into logs (who_id, act, detail) values (uid, 'register', p_nick || ' 待审核');
   return json_build_object('uid', uid, 'status', 'pending');
 end;
 $$;
 
 -- 登录
 create or replace function user_login(p_nick text, p_pwd text)
-returns json language plpgsql volatile security definer as $$
+returns json language plpgsql volatile security definer
+set search_path = public, pg_temp as $$
 declare u record; tk text;
 begin
   if not gate_passed() then raise exception '请先通过站点保护密码'; end if;
@@ -258,14 +263,16 @@ begin
 
   update users set last_seen = now() where id = u.id;
   tk := issue_session(u.id, false);
+  -- 不返回 real_name：前端无该字段，且避免实名信息随登录响应外泄
   return json_build_object('token', tk, 'uid', u.id,
-    'nick', u.nick, 'real_name', u.real_name, 'role', u.role);
+    'nick', u.nick, 'role', u.role, 'status', u.status);
 end;
 $$;
 
 -- 拉取全量状态（需已通过保护密码）
 create or replace function state_get()
-returns json language plpgsql stable security definer as $$
+returns json language plpgsql stable security definer
+set search_path = public, pg_temp as $$
 declare me uuid;
 begin
   if not gate_passed() then raise exception '请先通过站点保护密码'; end if;
@@ -311,7 +318,8 @@ create or replace function msg_send(
   p_room text, p_type text, p_body text,
   p_media text default null, p_name text default '', p_size bigint default 0,
   p_reply uuid default null
-) returns json language plpgsql volatile security definer as $$
+) returns json language plpgsql volatile security definer
+set search_path = public, pg_temp as $$
 declare uid uuid; mid uuid; st text;
 begin
   uid := cur_user();
@@ -336,7 +344,8 @@ $$;
 
 -- 撤回 / 删除消息
 create or replace function msg_delete(p_id uuid)
-returns boolean language plpgsql volatile security definer as $$
+returns boolean language plpgsql volatile security definer
+set search_path = public, pg_temp as $$
 declare uid uuid; r record;
 begin
   uid := cur_user();
@@ -360,7 +369,8 @@ $$;
 
 -- 建群
 create or replace function room_create(p_name text, p_desc text default '', p_pwd text default null)
-returns text language plpgsql volatile security definer as $$
+returns text language plpgsql volatile security definer
+set search_path = public, pg_temp as $$
 declare uid uuid; rid text;
 begin
   uid := cur_user();
@@ -369,7 +379,7 @@ begin
   rid := 'r_' || encode(gen_random_bytes(6), 'hex');
   insert into rooms (id, name, type, owner_id, description, pwd_hash)
   values (rid, p_name, 'group', uid, coalesce(p_desc,''),
-          case when nullif(p_pwd,'') is null then null else crypt(p_pwd, gen_salt('bf', 8)) end);
+          case when nullif(p_pwd,'') is null then null else crypt(p_pwd, gen_salt('bf', 10)) end);
   insert into room_members (room_id, user_id) values (rid, uid);
   perform nextval('state_rev');
   return rid;
@@ -378,7 +388,8 @@ $$;
 
 -- 私聊房间（不存在则创建）
 create or replace function room_dm(p_other uuid)
-returns text language plpgsql volatile security definer as $$
+returns text language plpgsql volatile security definer
+set search_path = public, pg_temp as $$
 declare uid uuid; rid text;
 begin
   uid := cur_user();
@@ -395,7 +406,8 @@ $$;
 
 -- 加入房间（带密码校验）
 create or replace function room_join(p_room text, p_pwd text default null)
-returns boolean language plpgsql volatile security definer as $$
+returns boolean language plpgsql volatile security definer
+set search_path = public, pg_temp as $$
 declare uid uuid; r record;
 begin
   uid := cur_user();
@@ -415,7 +427,8 @@ $$;
 
 -- 退出房间
 create or replace function room_leave(p_room text)
-returns boolean language plpgsql volatile security definer as $$
+returns boolean language plpgsql volatile security definer
+set search_path = public, pg_temp as $$
 declare uid uuid;
 begin
   uid := cur_user();
@@ -431,7 +444,8 @@ $$;
 create or replace function room_update(
   p_room text, p_name text default null, p_notice text default null,
   p_desc text default null, p_pwd text default null
-) returns boolean language plpgsql volatile security definer as $$
+) returns boolean language plpgsql volatile security definer
+set search_path = public, pg_temp as $$
 declare uid uuid;
 begin
   uid := cur_user();
@@ -449,7 +463,7 @@ begin
     description = coalesce(p_desc, description),
     pwd_hash = case when p_pwd is null then pwd_hash
                     when p_pwd = '' then null
-                    else crypt(p_pwd, gen_salt('bf', 8)) end
+                    else crypt(p_pwd, gen_salt('bf', 10)) end
   where id = p_room;
   perform nextval('state_rev');
   return true;
@@ -458,7 +472,8 @@ $$;
 
 -- 解散房间
 create or replace function room_delete(p_room text)
-returns boolean language plpgsql volatile security definer as $$
+returns boolean language plpgsql volatile security definer
+set search_path = public, pg_temp as $$
 declare uid uuid;
 begin
   uid := cur_user();
@@ -477,7 +492,8 @@ $$;
 
 -- 成员管理：邀请 / 移出 / 设管理员 / 取消管理员
 create or replace function member_add(p_room text, p_user uuid)
-returns boolean language plpgsql volatile security definer as $$
+returns boolean language plpgsql volatile security definer
+set search_path = public, pg_temp as $$
 declare uid uuid;
 begin
   uid := cur_user();
@@ -495,7 +511,8 @@ end;
 $$;
 
 create or replace function member_remove(p_room text, p_user uuid)
-returns boolean language plpgsql volatile security definer as $$
+returns boolean language plpgsql volatile security definer
+set search_path = public, pg_temp as $$
 declare uid uuid;
 begin
   uid := cur_user();
@@ -514,7 +531,8 @@ end;
 $$;
 
 create or replace function member_admin(p_room text, p_user uuid, p_on boolean)
-returns boolean language plpgsql volatile security definer as $$
+returns boolean language plpgsql volatile security definer
+set search_path = public, pg_temp as $$
 declare uid uuid;
 begin
   uid := cur_user();
@@ -537,7 +555,8 @@ $$;
 
 -- 用户管理：审核 / 封禁 / 禁言 / 改角色 / 改权限
 create or replace function user_review(p_user uuid, p_status text)
-returns boolean language plpgsql volatile security definer as $$
+returns boolean language plpgsql volatile security definer
+set search_path = public, pg_temp as $$
 declare uid uuid;
 begin
   uid := cur_user();
@@ -554,7 +573,8 @@ end;
 $$;
 
 create or replace function user_mute(p_user uuid, p_minutes int)
-returns boolean language plpgsql volatile security definer as $$
+returns boolean language plpgsql volatile security definer
+set search_path = public, pg_temp as $$
 declare uid uuid;
 begin
   uid := cur_user();
@@ -572,7 +592,8 @@ end;
 $$;
 
 create or replace function user_role_set(p_user uuid, p_role text)
-returns boolean language plpgsql volatile security definer as $$
+returns boolean language plpgsql volatile security definer
+set search_path = public, pg_temp as $$
 declare uid uuid;
 begin
   uid := cur_user();
@@ -593,7 +614,8 @@ end;
 $$;
 
 create or replace function user_perms_set(p_user uuid, p_perms text[])
-returns boolean language plpgsql volatile security definer as $$
+returns boolean language plpgsql volatile security definer
+set search_path = public, pg_temp as $$
 declare uid uuid;
 begin
   uid := cur_user();
@@ -609,7 +631,8 @@ end;
 $$;
 
 create or replace function user_delete(p_user uuid)
-returns boolean language plpgsql volatile security definer as $$
+returns boolean language plpgsql volatile security definer
+set search_path = public, pg_temp as $$
 declare uid uuid;
 begin
   uid := cur_user();
@@ -627,7 +650,8 @@ $$;
 -- 个人资料
 create or replace function profile_update(p_nick text default null, p_real text default null,
                                           p_bio text default null)
-returns boolean language plpgsql volatile security definer as $$
+returns boolean language plpgsql volatile security definer
+set search_path = public, pg_temp as $$
 declare uid uuid;
 begin
   uid := cur_user();
@@ -646,7 +670,8 @@ end;
 $$;
 
 create or replace function user_password(p_old text, p_new text)
-returns boolean language plpgsql volatile security definer as $$
+returns boolean language plpgsql volatile security definer
+set search_path = public, pg_temp as $$
 declare uid uuid; u record;
 begin
   uid := cur_user();
@@ -654,13 +679,14 @@ begin
   select * into u from users where id = uid;
   if u.pwd_hash <> crypt(p_old, u.pwd_hash) then raise exception '原密码错误'; end if;
   if length(p_new) < 4 then raise exception '新密码至少 4 位'; end if;
-  update users set pwd_hash = crypt(p_new, gen_salt('bf', 8)) where id = uid;
+  update users set pwd_hash = crypt(p_new, gen_salt('bf', 10)) where id = uid;
   return true;
 end;
 $$;
 
 create or replace function gate_set(p_old text, p_new text)
-returns boolean language plpgsql volatile security definer as $$
+returns boolean language plpgsql volatile security definer
+set search_path = public, pg_temp as $$
 declare uid uuid;
 begin
   uid := cur_user();
@@ -672,14 +698,15 @@ begin
     raise exception '原保护密码错误';
   end if;
   if length(p_new) < 4 then raise exception '新密码至少 4 位'; end if;
-  update site set gate_hash = crypt(p_new, gen_salt('bf', 8)) where id = true;
+  update site set gate_hash = crypt(p_new, gen_salt('bf', 10)) where id = true;
   insert into logs (who_id, act, detail) values (uid, 'gate', '修改保护密码');
   return true;
 end;
 $$;
 
 create or replace function site_set(p_name text default null, p_allow_register boolean default null)
-returns boolean language plpgsql volatile security definer as $$
+returns boolean language plpgsql volatile security definer
+set search_path = public, pg_temp as $$
 declare uid uuid;
 begin
   uid := cur_user();
@@ -698,7 +725,8 @@ $$;
 
 -- 退出登录
 create or replace function logout()
-returns boolean language plpgsql volatile security definer as $$
+returns boolean language plpgsql volatile security definer
+set search_path = public, pg_temp as $$
 begin
   delete from sessions where token = cur_token();
   return true;
