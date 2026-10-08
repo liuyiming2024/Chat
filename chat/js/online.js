@@ -31,7 +31,10 @@
   /* 探测后端是否可达 + 站点是否已初始化。
      失败一律降级为本地模式，绝不阻断用户使用。 */
   function probe() {
-    if (!g.SB || !g.SB.isOn || !g.SB.isOn()) return Promise.resolve(false);
+    /* 后端不可用必须静默降级：缺 SB、缺 rpc、连不上，都只是退回本地模式，
+       绝不能把异常抛到 boot() 里把整个页面搞崩。 */
+    if (!g.SB || typeof g.SB.rpc !== 'function') return Promise.resolve(false);
+    if (g.SB.isOn && !g.SB.isOn()) return Promise.resolve(false);
     return g.SB.rpc('site_ready', {}).then(function (r) {
       reachable = true;
       online = (r === true || r === 'true' || r === 't');

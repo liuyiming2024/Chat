@@ -192,6 +192,7 @@
   g.SB = {
     loadCfg: loadCfg, configure: configure, isOn: isOn, clearCfg: clearCfg,
     ping: ping, syncAcl: syncAcl, token: token, uid: uid, setSession: setSession, dropSession: dropSession,
+    rpc: rpc,
     gateCheck: gateCheck, login: login, register: register, initSite: initSite,
     changePwd: changePwd, setGate: setGate,
     stateSeq: stateSeq, stateGet: stateGet, statePut: statePut,
