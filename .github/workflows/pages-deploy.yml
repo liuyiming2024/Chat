@@ -1,0 +1,51 @@
+name: 部署到 Pages
+
+# 显式部署：把仓库内容作为静态站点发布。
+#
+# 为什么需要它：仓库的 Pages 构建方式已切到 GitHub Actions（build_type=workflow），
+# 但切换后自动部署没有再触发，站点停留在旧版本。这里自己上传并部署，
+# 不再依赖内置流程。
+#
+# 触发：推送到 main，或手动 Run workflow。
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 排队：同时多次推送时只跑最新一次，其余取消
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 准备发布内容
+        run: |
+          set -euo pipefail
+          rm -rf _site && mkdir -p _site
+          # 排除版本管理与开发相关目录；其余按原样发布
+          tar --exclude=.git --exclude=.github --exclude=_site \
+              -cf - . | (cd _site && tar -xf -)
+          # 静态站点不需要 Jekyll 处理
+          touch _site/.nojekyll
+          echo "发布文件数: $(find _site -type f | wc -l)"
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deploy
+        uses: actions/deploy-pages@v4
