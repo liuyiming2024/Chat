@@ -62,12 +62,17 @@
 
   /* ---------- Supabase 配置（贴吧用） ---------- */
   var CFG_KEY = 'wxlg_sb_cfg';
+  /* 内置默认后端：打开即用。publishable key 按设计可公开，
+     真正的边界是站点保护密码 + 服务端鉴权。禁止换成 secret key。 */
+  var DEFAULT_URL = 'https://pimryrsxkwyafmponegp.supabase.co';
+  var DEFAULT_KEY = 'sb_publishable_jPrK6j5l9NGbnLKcytTegg_di1njO8t';
+
   function loadCfg() {
     try {
       var c = JSON.parse(localStorage.getItem(CFG_KEY) || 'null');
       if (c && c.url && c.key) return c;
     } catch (e) { }
-    return null;
+    return { url: DEFAULT_URL, key: DEFAULT_KEY };
   }
   function saveCfg(url, key) {
     localStorage.setItem(CFG_KEY, JSON.stringify({
