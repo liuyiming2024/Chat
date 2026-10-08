@@ -1,0 +1,71 @@
+name: 数据库执行
+
+# 执行仓库里的 .github/sql/run.sql，结果写回 diag 分支的 report.txt。
+# 用途：让维护者能远程验证数据库状态、跑一次性修复，无需手动粘贴。
+#
+# 触发：Actions → 数据库执行 → Run workflow
+# 结果：diag 分支 report.txt（读取后在 Actions 里手动删分支，或下次覆盖）
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: '模式'
+        required: true
+        default: '只读'
+        type: choice
+        options:
+          - 只读
+          - 可写
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 执行 SQL
+        env:
+          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          MODE: ${{ inputs.mode }}
+        run: |
+          set -uo pipefail
+          DB_URL="$(printf '%s' "$DB_URL" | tr -d '\r\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+          export DB_URL
+          OUT=report.txt
+          : > "$OUT"
+          echo "时间: $(date -u)" >> "$OUT"
+          echo "模式: $MODE" >> "$OUT"
+          echo >> "$OUT"
+
+          if [ ! -f .github/sql/run.sql ]; then
+            echo "::error::找不到 .github/sql/run.sql"
+            echo "找不到 .github/sql/run.sql" >> "$OUT"
+          else
+            echo "=== 待执行 ===" >> "$OUT"
+            cat .github/sql/run.sql >> "$OUT"
+            echo >> "$OUT"
+            echo "=== 结果 ===" >> "$OUT"
+            if [ "$MODE" = "只读" ]; then
+              # 只读模式：强制在只读事务里跑，任何写操作都会报错
+              ( echo "begin read only;"; cat .github/sql/run.sql; echo "commit;" ) > /tmp/ro.sql
+              timeout 120 psql "$DB_URL" -v ON_ERROR_STOP=0 -f /tmp/ro.sql >> "$OUT" 2>&1 \
+                || echo "（只读事务已回滚，这是预期行为）" >> "$OUT"
+            else
+              timeout 120 psql "$DB_URL" -v ON_ERROR_STOP=1 -f .github/sql/run.sql >> "$OUT" 2>&1 \
+                || echo "❌ 执行出错，见上方" >> "$OUT"
+            fi
+          fi
+
+      - name: 结果写回 diag 分支
+        run: |
+          set -euo pipefail
+          git config user.name  "diag-bot"
+          git config user.email "diag@local"
+          git checkout --orphan diag 2>/dev/null || git checkout diag
+          git rm -rf --cached . >/dev/null 2>&1 || true
+          git add -f report.txt
+          git commit -m "执行结果 $(date -u +%Y%m%d-%H%M%S)" || echo "无变化"
+          git push -f origin diag
