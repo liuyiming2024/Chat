@@ -169,6 +169,43 @@ language sql stable as $$
   limit 1;
 $$;
 
+-- ==================================================================
+-- 统一身份层（跨项目共用）
+--   未来所有网页项目都复用同一张 users / sessions，
+--   通过下面这几个 auth_* 函数取身份，不要各自另建账号体系。
+--   约定：
+--     auth_uid()      当前账号 id，未登录 null
+--     auth_role()     当前角色，未登录 null（owner / admin / member）
+--     auth_is_staff() 是否站长或管理员（有管理权，可删他人内容）
+--   新项目只需保证会话走同一套 sessions 表，即可直接调用。
+-- ==================================================================
+create or replace function auth_uid() returns uuid
+language sql stable as $$ select cur_user() $$;
+
+create or replace function auth_role() returns text
+language sql stable as $$
+  select u.role from users u where u.id = cur_user();
+$$;
+
+create or replace function auth_is_staff() returns boolean
+language sql stable as $$
+  select exists (
+    select 1 from users u
+    where u.id = cur_user() and u.role in ('owner','admin') and u.status = 'active'
+  );
+$$;
+
+-- 要求已登录，否则抛错。供各项目的写操作统一调用。
+create or replace function auth_require() returns uuid
+language plpgsql stable as $$
+declare uid uuid;
+begin
+  uid := auth_uid();
+  if uid is null then raise exception '请先登录'; end if;
+  return uid;
+end;
+$$;
+
 -- 是否已通过站点保护密码
 -- 注意：这里【不能】加 "gate_hash is null 就算通过" 的分支。
 -- 那会让站点在尚未设置保护密码的窗口期里，任何人都能调 user_register 批量注册

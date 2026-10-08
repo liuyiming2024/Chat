@@ -40,8 +40,15 @@
       return Promise.resolve(localLoad().slice().sort(function (a, b) { return b.ts - a.ts; }));
     },
 
+    requireLogin: function () {
+      if (this.mode() !== 'db') return null;
+      if (!g.Site || !g.Site.hasSession || g.Site.hasSession()) return null;
+      return new Error('请先在聊天室登录（贴吧与聊天室共用同一账号），登录后回来刷新即可发帖。');
+    },
+
     add: function (title, body, author) {
       if (this.mode() === 'db') {
+        var e0 = this.requireLogin(); if (e0) return Promise.reject(e0);
         return g.Site.rpc('forum_post', { p_title: title, p_body: body, p_author: author })
           .then(function () { return true; });
       }
@@ -55,6 +62,7 @@
 
     reply: function (pid, body, author) {
       if (this.mode() === 'db') {
+        var e1 = this.requireLogin(); if (e1) return Promise.reject(e1);
         return g.Site.rpc('forum_reply', { p_post: pid, p_body: body, p_author: author })
           .then(function () { return true; });
       }
@@ -72,7 +80,10 @@
 
     remove: function (pid, author) {
       if (this.mode() === 'db') {
-        return g.Site.rpc('forum_del', { p_post: pid, p_author: author });
+        var e2 = this.requireLogin(); if (e2) return Promise.reject(e2);
+        /* 后端改为按会话身份校验（本人或管理员），不再传作者名 ——
+           作者名是公开的，用它当凭证等于没有校验。 */
+        return g.Site.rpc('forum_del', { p_post: pid });
       }
       state.posts = state.posts.filter(function (x) { return x.id !== pid; });
       localSave();

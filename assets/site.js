@@ -76,13 +76,29 @@
   }
   function cfgOn() { var c = loadCfg(); return !!(c && c.url && c.key); }
 
+  /* 统一身份：读取聊天室登录时写入的会话 token。
+     键名与 chat/js/sb.js 保持一致（wxlg_sb_token），
+     两个页面共用一条会话 —— 在聊天室登录后，贴吧即可发帖。 */
+  var TOK_KEY = 'wxlg_sb_token';
+  function sessionToken() {
+    try {
+      return sessionStorage.getItem(TOK_KEY) || localStorage.getItem(TOK_KEY) || '';
+    } catch (e) { return ''; }
+  }
+  function hasSession() { return !!sessionToken(); }
+
   /* 统一请求：走 REST，会话用 x-session 头 */
   function rpc(name, params) {
     var c = loadCfg();
     if (!c) return Promise.reject(new Error('未配置后端'));
+    /* 必须带 x-session：服务端的 cur_token() 从请求头取会话，
+       不带则所有需要登录的 RPC 一律判定为未登录。 */
+    var h = { apikey: c.key, 'Content-Type': 'application/json' };
+    var t = sessionToken();
+    if (t) h['x-session'] = t;
     return fetch(c.url + '/rest/v1/rpc/' + name, {
       method: 'POST',
-      headers: { apikey: c.key, 'Content-Type': 'application/json' },
+      headers: h,
       body: JSON.stringify(params || {})
     }).then(function (r) {
       if (!r.ok) {
@@ -100,7 +116,8 @@
   g.Site = {
     initTheme: initTheme, setTheme: setTheme, getTheme: getTheme,
     initNav: initNav,
-    loadCfg: loadCfg, saveCfg: saveCfg, cfgOn: cfgOn, rpc: rpc
+    loadCfg: loadCfg, saveCfg: saveCfg, cfgOn: cfgOn, rpc: rpc,
+    hasSession: hasSession, sessionToken: sessionToken
   };
 
   document.addEventListener('DOMContentLoaded', function () {
