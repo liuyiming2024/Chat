@@ -118,11 +118,20 @@
       return t;
     });
   }
+  /* 登录后向服务端拉取权威权限表，覆盖前端本地判定。
+     不做这一步，前端会按本地角色渲染按钮 —— 可能与服务端不一致。 */
+  function syncAcl() {
+    return rpc('acl_mine', {}).then(function (j) {
+      if (j && window.ACL && window.ACL.syncFromServer) window.ACL.syncFromServer(j);
+      return j;
+    }).catch(function () { return null; });   /* 失败不阻断登录，退回本地判定 */
+  }
+
   function login(nick, pwd) {
     return rpc('user_login', { p_nick: nick, p_pwd: pwd }).then(function (r) {
       if (!r) throw new Error('昵称或密码错误');
       setSession(r.token, r.uid);
-      return r;
+      return syncAcl().then(function () { return r; });
     });
   }
   function register(nick, realName, pwd) {
@@ -130,7 +139,10 @@
   }
   function initSite(gate, nick, realName, pwd) {
     return rpc('site_init', { p_gate: gate, p_nick: nick, p_real: realName, p_pwd: pwd })
-      .then(function (r) { if (r && r.token) setSession(r.token, r.uid); return r; });
+      .then(function (r) {
+        if (r && r.token) setSession(r.token, r.uid);
+        return syncAcl().then(function () { return r; });
+      });
   }
   function changePwd(oldP, newP) { return rpc('user_password', { p_old: oldP, p_new: newP }); }
   function setGate(newP) { return rpc('gate_set', { p_new: newP }); }
@@ -172,7 +184,7 @@
 
   g.SB = {
     loadCfg: loadCfg, configure: configure, isOn: isOn, clearCfg: clearCfg,
-    ping: ping, token: token, uid: uid, setSession: setSession, dropSession: dropSession,
+    ping: ping, syncAcl: syncAcl, token: token, uid: uid, setSession: setSession, dropSession: dropSession,
     gateCheck: gateCheck, login: login, register: register, initSite: initSite,
     changePwd: changePwd, setGate: setGate,
     stateSeq: stateSeq, stateGet: stateGet, statePut: statePut,
