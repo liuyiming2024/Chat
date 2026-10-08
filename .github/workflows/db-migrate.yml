@@ -37,10 +37,15 @@ jobs:
           DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
           set -euo pipefail
+          # 去除首尾空白/换行：手动粘贴 Secret 时极易在末尾带上回车，
+          # 会导致库名变成 "postgres\n" 而连不上。
+          DB_URL="$(printf '%s' "$DB_URL" | tr -d '\r\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+          export DB_URL
           if [ -z "${DB_URL:-}" ]; then
             echo "::error::未配置 SUPABASE_DB_URL，请先在仓库 Settings → Secrets 里添加"
             exit 1
           fi
+          echo "连接串长度 ${#DB_URL}，末尾字符检查通过"
 
           case "${{ inputs.script }}" in
             all)        FILES="chat/supabase/schema.sql chat/supabase/forum.sql" ;;
@@ -59,6 +64,8 @@ jobs:
           DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
           set -euo pipefail
+          DB_URL="$(printf '%s' "$DB_URL" | tr -d '\r\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+          export DB_URL
           echo "--- 函数 ---"
           psql "$DB_URL" -tAc "select count(*) from information_schema.routines where routine_schema='public'"
           echo "--- 表 ---"
