@@ -1,0 +1,83 @@
+name: 数据库清库
+
+# ⚠ 危险：删除 public schema 下全部表与数据，不可撤销。
+#
+# 唯一触发方式：手动，且必须输入 RESET 才执行。
+# 没有定时、没有自动、不随推送触发 —— 避免误操作。
+#
+# 清库后要恢复：
+#   1. Actions → 数据库迁移 → 选 all
+#   2. 网页重新设置站点保护密码
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: '输入 RESET 确认清库（区分大小写）'
+        required: true
+        default: ''
+
+jobs:
+  reset:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 确认
+        run: |
+          if [ "${{ inputs.confirm }}" != "RESET" ]; then
+            echo "::error::确认词不是 RESET，已取消。不会动任何数据。"
+            exit 1
+          fi
+          echo "确认通过，准备清库"
+
+      - name: 清库前快照（留个证据）
+        env:
+          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -uo pipefail
+          DB_URL="$(printf '%s' "$DB_URL" | tr -d '\r\n')"
+          export DB_URL
+          OUT=report.txt
+          : > "$OUT"
+          echo "清库时间: $(date -u)" >> "$OUT"
+          echo "--- 清库前 ---" >> "$OUT"
+          psql "$DB_URL" -tAc "select coalesce(string_agg(table_name,', ' order by table_name),'（空）') from information_schema.tables where table_schema='public'" >> "$OUT" 2>&1
+          psql "$DB_URL" -tAc "select '用户'||count(*) from users" >> "$OUT" 2>&1
+          psql "$DB_URL" -tAc "select '消息'||count(*) from messages" >> "$OUT" 2>&1
+          cat "$OUT"
+
+      - name: 执行清库
+        env:
+          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -uo pipefail
+          DB_URL="$(printf '%s' "$DB_URL" | tr -d '\r\n')"
+          export DB_URL
+          # 脚本在私有库 Tool 维护；这里从 Tool 仓库拉取执行
+          curl -sL -o /tmp/reset.sql \
+            "https://raw.githubusercontent.com/liuyiming2024/Tool/main/supabase/reset.sql"
+          # 若拉不到（例如仓库改名），退回内置等价操作
+          if [ ! -s /tmp/reset.sql ]; then
+            echo "::warning::拉不到 reset.sql，使用内置脚本"
+            cat > /tmp/reset.sql <<'SQL'
+          drop schema if exists public cascade;
+          create schema public;
+          grant usage on schema public to postgres, anon, authenticated, service_role;
+          grant all on schema public to postgres, service_role;
+          SQL
+          fi
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f /tmp/reset.sql 2>&1 | tee -a report.txt
+
+      - name: 结果写回 diag 分支
+        run: |
+          set -euo pipefail
+          git config user.name  "diag-bot"
+          git config user.email "diag@local"
+          git checkout --orphan diag 2>/dev/null || git checkout diag
+          git rm -rf --cached . >/dev/null 2>&1 || true
+          git add -f report.txt
+          git commit -m "清库 $(date -u +%Y%m%d-%H%M%S)" || echo "无变化"
+          git push -f origin diag

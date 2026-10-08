@@ -30,6 +30,9 @@ GHTOK=<token> python3 tools/ghsync.py --repo liuyiming2024/Chat --dry
 
 ## 当前状态
 
-**单机模式**。数据存浏览器 localStorage / IndexedDB，消息只在本机内同步，
-跨设备 / 多人聊天需接 Supabase（脚本已备，见 `chat/supabase/`）。
-权限体系为前端判定，对懂技术的人无效 —— 接入服务端后才能成为真正的权限。
+**后端已就绪。** 数据库已建好（10 表 + 45 函数），填入 URL 与 key 后刷新即切换在线模式。
+未填配置时以本机模式运行（数据存 localStorage）。
+
+**唯一待办**：权限判定仍在前端（`chat/js/acl.js`），可被 DevTools 绕过。
+服务端已有 `auth_uid()` / `auth_role()` / `auth_is_staff()` 可用，贴吧权限已走服务端，
+聊天室主流程的 ACL 待迁移。
