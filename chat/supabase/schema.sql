@@ -261,6 +261,15 @@ language sql volatile as $$
   select nextval('state_rev');
 $$;
 
+-- ⚠ 前端轮询必须用这个，不能用 state_seq()。
+--   state_seq() 是 nextval —— 每调一次就把序号 +1，
+--   拿它做轮询比对会导致序号永远不同 → 前端每次都全量拉取，白跑。
+--   这里读 last_value，不改变序列。
+create or replace function state_peek() returns bigint
+language sql stable as $$
+  select last_value from state_rev;
+$$;
+
 -- 站点初始化：设保护密码 + 建站长（仅当未初始化时可用）
 -- 注意：本函数用 $fn$ 而非 $$ 定界 —— 函数体里的公屏欢迎语含 $$…$$ 公式示例，
 -- 若用 $$ 会被词法器当成函数体结束，整段脚本执行失败。

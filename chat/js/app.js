@@ -163,8 +163,8 @@
       '<label class="field-label">站长登录密码</label><input class="field" id="gPwd" type="password">' +
       '<button class="btn primary block" id="gOk">创建并进入</button>' +
       '<div class="form-note">保护密码与登录密码均经加盐慢哈希存储，不保存明文。</div>' +
-      '<div class="form-note demo-note">提示：本聊天室默认「单机演示」——聊天记录存在你自己的浏览器里，' +
-      '换设备或换浏览器看不到别人的消息（可开多个标签页自测）。需要跨设备可在「管理面板 → 站点」配置后端。</div>'
+      '<div class="form-note demo-note">提示：正在使用云端后端——账号与消息存在服务器，换设备也能看到。' +
+      '（若此处提示连接失败，会自动退回单机模式，数据只存本机。）</div>'
     );
     card.querySelector('#gOk').onclick = function () {
       var gp = card.querySelector('#gGate').value, gp2 = card.querySelector('#gGate2').value;
@@ -174,6 +174,21 @@
       if (gp !== gp2) { g.UI.toast('两次保护密码不一致'); return; }
       if (!nick) { g.UI.toast('请填写站长昵称'); return; }
       if (pwd.length < 4) { g.UI.toast('登录密码至少 4 位'); return; }
+      /* 在线模式：交给服务端建站（保护密码与站长密码都在服务端 bcrypt） */
+      if (g.Online && g.Online.isReachable()) {
+        g.Online.setup(gp, nick, pwd).then(function (r) {
+          sessionStorage.setItem(GATE_KEY, '1');
+          if (r && r.uid) sessionStorage.setItem(ME_KEY, r.uid);
+          return g.Online.pull().then(function (inS) {
+            if (inS && mergeState(inS)) save(true);
+            g.Online.startPoll();
+            afterGate();
+          });
+        }).catch(function (e) {
+          g.UI.toast('初始化失败：' + (e && e.message ? e.message : '网络错误'), 'err');
+        });
+        return;
+      }
       var gs = g.SHA256.randomId(12), us = g.SHA256.randomId(12);
       S.gate = { hash: hashPwd(gp, gs), salt: gs };
       var u = {
@@ -202,6 +217,19 @@
     function ok() {
       var p = card.querySelector('#gP').value;
       if (!p) { g.UI.toast('请输入密码'); return; }
+      /* 在线模式：保护密码由服务端校验，本地根本不存这个哈希 */
+      if (g.Online && g.Online.isOnline()) {
+        g.Online.gate(p).then(function () {
+          sessionStorage.setItem(GATE_KEY, '1');
+          return g.Online.pull();
+        }).then(function (inS) {
+          if (inS && mergeState(inS)) save(true);
+          afterGate();
+        }).catch(function (e) {
+          g.UI.toast('密码错误或网络异常', 'err');
+        });
+        return;
+      }
       var gv = verifyPwd(p, S.gate.salt, S.gate.hash);
       if (!gv.ok) { g.UI.toast('密码错误', 'err'); return; }
       if (gv.legacy) { S.gate.hash = hashPwd(p, S.gate.salt); save(); }
@@ -280,6 +308,16 @@
           if (byNick(n)) { g.UI.toast('昵称已被占用'); return; }
           if (a.length < 4) { g.UI.toast('密码至少 4 位'); return; }
           if (a !== b) { g.UI.toast('两次密码不一致'); return; }
+          /* 在线模式：注册交给服务端，密码只在服务端 bcrypt */
+          if (g.Online && g.Online.isOnline()) {
+            g.Online.register(n, a).then(function () {
+              g.UI.toast('申请已提交，请等待站长通过', 'ok');
+              pane('login');
+            }).catch(function (e) {
+              g.UI.toast('注册失败：' + ((e && e.message) || '昵称可能已被占用'), 'err');
+            });
+            return;
+          }
           var salt = g.SHA256.randomId(12);
           var needReview = S.needReview !== false;
           var u = {
@@ -863,6 +901,15 @@
     replyTo = null; $('replyBar').classList.add('hidden');
     pushMsg(m);
     ta.style.height = 'auto';
+
+    /* 在线模式：真发到服务端。
+       先本地插入（乐观更新，界面不卡），服务端成功后会被下次 pull 覆盖为权威版本。 */
+    if (g.Online && g.Online.isOnline()) {
+      g.Online.sendMsg(cur, 'text', text, null, '', 0, m.replyTo || null)
+        .catch(function (e) {
+          g.UI.toast('发送失败：' + (e && e.message ? e.message : '网络错误'), 'err');
+        });
+    }
   }
 
   var RECALL_MS = 5 * 60 * 1000;   /* 撤回时限：5 分钟 */
@@ -2764,14 +2811,42 @@
   }
 
   /* ================= 启动 ================= */
+  /* 在线模式：认证与数据走服务端；连不上或站点未初始化则退回本地模式。
+     降级必须是静默的 —— 后端挂了不该让用户进不去聊天室。 */
+  function bootOnline() {
+    if (!g.Online) return Promise.resolve(false);
+    return g.Online.init({ onState: function (inS) { if (mergeState(inS)) renderAll(); } })
+      .then(function (ok) {
+        if (!ok) return false;
+        if (!g.Online.isOnline()) {
+          /* 连得上但站点还没初始化 → 走服务端初始化流程 */
+          if (!S) { S = fresh(); ensurePublic(); }
+          setupGate();
+          return true;      /* 已接管，不再走本地门禁 */
+        }
+        /* 站点已初始化：拉一次全量，再决定显示门禁还是直接进 */
+        return g.Online.pull().then(function (inS) {
+          if (inS && mergeState(inS)) save(true);
+          if (g.SB && g.SB.token()) afterGate();   /* 已有会话 */
+          else enterGate();
+          return true;
+        }).catch(function () { return false; });
+      })
+      .catch(function () { return false; });
+  }
+
   function boot() {
     initTheme();
     S = load();
     if (!S) { S = fresh(); ensurePublic(); save(true); }
     initSync();
-    if (!S.gate) { setupGate(); return; }
-    if (sessionStorage.getItem(GATE_KEY) !== '1') { enterGate(); return; }
-    afterGate();
+    bootOnline().then(function (handled) {
+      if (handled) { g.Online.startPoll(); return; }   /* 在线模式已接管 */
+      /* 后端不可用 → 纯本地模式，行为与改动前一致 */
+      if (!S.gate) { setupGate(); return; }
+      if (sessionStorage.getItem(GATE_KEY) !== '1') { enterGate(); return; }
+      afterGate();
+    });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
