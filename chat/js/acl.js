@@ -223,12 +223,41 @@
     return (u.perms || []).length + (u.denied || []).length;
   }
 
+  /* ---------------- 服务端权威判定 ----------------
+   * 在线模式下，真正的权限由服务端 acl_can() 说了算，
+   * 前端这份只用于「要不要显示按钮」—— 显示不等于放行。
+   * 每次拿到服务端的 acl_mine() 结果后调用 syncFromServer() 覆盖本地判定，
+   * 避免前端按过期角色渲染出不该出现的按钮。 */
+  var SERVER = null;
+
+  function syncFromServer(j) {
+    if (!j || !j.perms) return;
+    SERVER = j.perms;
+    /* 角色与昵称也以服务端为准，防止本地被篡改后界面显示错身份 */
+    if (window.APP && window.APP.state && window.APP.state()) {
+      var me = window.APP.state().me;
+      if (me) { if (j.role) me.role = j.role; if (j.nick) me.nick = j.nick; }
+    }
+  }
+  function fromServer() { return SERVER; }
+  function isSynced() { return !!SERVER; }
+
+  /* 服务端已同步时以其为准，否则退回本地判定（离线模式） */
+  function canEffective(user, perm, room) {
+    if (SERVER && Object.prototype.hasOwnProperty.call(SERVER, perm)) {
+      return SERVER[perm] === true;
+    }
+    return can(user, perm, room);
+  }
+
   g.ACL = {
     PERMS: PERMS, GROUPS: GROUPS, ROLE_PERMS: ROLE_PERMS,
-    can: can, canSpeak: canSpeak, roomRole: roomRole,
+    can: canEffective, canLocal: can,
+    canSpeak: canSpeak, roomRole: roomRole,
     muted: muted, muteLeft: muteLeft,
     label: label, all: all, groups: groups, roleName: roleName,
     stateOf: stateOf, setState: setState, effective: effective,
-    customCount: customCount
+    customCount: customCount,
+    syncFromServer: syncFromServer, fromServer: fromServer, isSynced: isSynced
   };
 })(window);

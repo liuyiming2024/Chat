@@ -53,6 +53,9 @@ create table if not exists users (
   status      text not null default 'pending', -- pending 待审核 / active / banned
   perms       text[] not null default '{}',
   muted_until timestamptz,
+  -- perms = 显式授予，denied = 显式禁止（denied 优先级高于 perms 与角色默认，站长除外）。
+  -- 前端 acl.js 一直在用 denied，建库脚本里漏了这列 —— 迁移缺口，故补。
+  denied      text[] not null default '{}',
   bio         text not null default '',
   created_at  timestamptz not null default now(),
   last_seen   timestamptz not null default now()
@@ -90,6 +93,9 @@ create table if not exists rooms (
 create table if not exists room_members (
   room_id text references rooms(id) on delete cascade,
   user_id uuid references users(id) on delete cascade,
+  -- 房间内禁言（区别于 users.muted_until 的全站禁言）。
+  -- 前端 acl.js 的 canSpeak 检查 room.muted 数组，数据库原本无处存，故补。
+  muted_until timestamptz,
   primary key (room_id, user_id)
 );
 
@@ -418,8 +424,9 @@ begin
   if uid is null then raise exception '请先登录'; end if;
   select status into st from users where id = uid;
   if st <> 'active' then raise exception '账号未通过审核'; end if;
-  if exists (select 1 from users where id = uid and muted_until > now()) then
-    raise exception '你已被禁言';
+  -- 统一走 acl_can_speak：权限 + 全站禁言 + 房间内禁言，一处维护
+  if not (acl_can_speak(p_room)->>'ok')::boolean then
+    raise exception '%', acl_can_speak(p_room)->>'why';
   end if;
   if not exists (
     select 1 from rooms r where r.id = p_room
@@ -540,6 +547,8 @@ create or replace function room_update(
 set search_path = public, extensions, pg_temp as $$
 declare uid uuid;
 begin
+  -- 服务端权限校验（前端判定只能决定按钮显不显示，这里才是真正的闸门）
+  perform acl_require('room.manage', p_room);
   uid := cur_user();
   if uid is null then raise exception '请先登录'; end if;
   if not exists (
@@ -568,6 +577,8 @@ returns boolean language plpgsql volatile security definer
 set search_path = public, extensions, pg_temp as $$
 declare uid uuid;
 begin
+  -- 服务端权限校验（前端判定只能决定按钮显不显示，这里才是真正的闸门）
+  perform acl_require('room.delete', p_room);
   uid := cur_user();
   if uid is null then raise exception '请先登录'; end if;
   if not exists (
@@ -588,6 +599,8 @@ returns boolean language plpgsql volatile security definer
 set search_path = public, extensions, pg_temp as $$
 declare uid uuid;
 begin
+  -- 服务端权限校验（前端判定只能决定按钮显不显示，这里才是真正的闸门）
+  perform acl_require('room.invite', p_room);
   uid := cur_user();
   if uid is null then raise exception '请先登录'; end if;
   if not exists (
@@ -607,6 +620,8 @@ returns boolean language plpgsql volatile security definer
 set search_path = public, extensions, pg_temp as $$
 declare uid uuid;
 begin
+  -- 服务端权限校验（前端判定只能决定按钮显不显示，这里才是真正的闸门）
+  perform acl_require('room.kick', p_room);
   uid := cur_user();
   if uid is null then raise exception '请先登录'; end if;
   if not exists (
@@ -627,6 +642,8 @@ returns boolean language plpgsql volatile security definer
 set search_path = public, extensions, pg_temp as $$
 declare uid uuid;
 begin
+  -- 服务端权限校验（前端判定只能决定按钮显不显示，这里才是真正的闸门）
+  perform acl_require('room.grant', p_room);
   uid := cur_user();
   if uid is null then raise exception '请先登录'; end if;
   if not exists (
@@ -651,6 +668,8 @@ returns boolean language plpgsql volatile security definer
 set search_path = public, extensions, pg_temp as $$
 declare uid uuid;
 begin
+  -- 服务端权限校验（前端判定只能决定按钮显不显示，这里才是真正的闸门）
+  perform acl_require('audit.review');
   uid := cur_user();
   if uid is null then raise exception '请先登录'; end if;
   if not exists (select 1 from users u where u.id = uid and u.role in ('owner','admin')) then
@@ -669,6 +688,8 @@ returns boolean language plpgsql volatile security definer
 set search_path = public, extensions, pg_temp as $$
 declare uid uuid;
 begin
+  -- 服务端权限校验（前端判定只能决定按钮显不显示，这里才是真正的闸门）
+  perform acl_require('user.mute');
   uid := cur_user();
   if uid is null then raise exception '请先登录'; end if;
   if not exists (select 1 from users u where u.id = uid and u.role in ('owner','admin')) then
@@ -688,6 +709,8 @@ returns boolean language plpgsql volatile security definer
 set search_path = public, extensions, pg_temp as $$
 declare uid uuid;
 begin
+  -- 服务端权限校验（前端判定只能决定按钮显不显示，这里才是真正的闸门）
+  perform acl_require('user.grant');
   uid := cur_user();
   if uid is null then raise exception '请先登录'; end if;
   if not exists (select 1 from users u where u.id = uid and u.role = 'owner') then
@@ -710,6 +733,8 @@ returns boolean language plpgsql volatile security definer
 set search_path = public, extensions, pg_temp as $$
 declare uid uuid;
 begin
+  -- 服务端权限校验（前端判定只能决定按钮显不显示，这里才是真正的闸门）
+  perform acl_require('user.perms');
   uid := cur_user();
   if uid is null then raise exception '请先登录'; end if;
   if not exists (select 1 from users u where u.id = uid and u.role = 'owner') then
@@ -727,6 +752,8 @@ returns boolean language plpgsql volatile security definer
 set search_path = public, extensions, pg_temp as $$
 declare uid uuid;
 begin
+  -- 服务端权限校验（前端判定只能决定按钮显不显示，这里才是真正的闸门）
+  perform acl_require('user.delete');
   uid := cur_user();
   if uid is null then raise exception '请先登录'; end if;
   if not exists (select 1 from users u where u.id = uid and u.role = 'owner') then
@@ -781,6 +808,8 @@ returns boolean language plpgsql volatile security definer
 set search_path = public, extensions, pg_temp as $$
 declare uid uuid;
 begin
+  -- 服务端权限校验（前端判定只能决定按钮显不显示，这里才是真正的闸门）
+  perform acl_require('site.gate');
   uid := cur_user();
   if uid is null then raise exception '请先登录'; end if;
   if not exists (select 1 from users u where u.id = uid and u.role in ('owner','admin')) then
@@ -801,6 +830,8 @@ returns boolean language plpgsql volatile security definer
 set search_path = public, extensions, pg_temp as $$
 declare uid uuid;
 begin
+  -- 服务端权限校验（前端判定只能决定按钮显不显示，这里才是真正的闸门）
+  perform acl_require('site.name');
   uid := cur_user();
   if uid is null then raise exception '请先登录'; end if;
   if not exists (select 1 from users u where u.id = uid and u.role in ('owner','admin')) then
@@ -838,6 +869,240 @@ begin
   delete from sessions where expires_at < now();
   get diagnostics n = row_count;
   return n;
+end;
+$$;
+
+-- 老库补丁（幂等，重复执行安全）
+alter table users        add column if not exists denied      text[] not null default '{}';
+alter table room_members add column if not exists muted_until timestamptz;
+
+
+-- ==================================================================
+-- 权限判定（服务端）
+--
+-- 背景：原先「谁能做什么」由前端 acl.js 的 can() 判定，角色存在浏览器内存里，
+--       打开 DevTools 改一下对象就能提权 —— 那不是权限，是提示。
+--       现在把判定搬到服务端，前端只负责"要不要显示这个按钮"，
+--       真正的放不放行由这里说了算。
+--
+-- 判定顺序（与前端保持一致，避免两边行为不一致）：
+--   1. 未登录               → false
+--   2. 已封禁（非 msg.send）→ false
+--   3. 聚合键展开           → 任一子权限通过即可
+--   4. 站长 owner           → true（恒为全部权限，不可剥夺）
+--   5. 显式禁止 denied      → false
+--   6. 显式授予 perms       → true
+--   7. 角色默认             → true
+--   8. 房主 / 房管在自己房间内、且属于房间固有权力 → true
+--
+-- ⚠ 新增任何写操作 RPC，第一件事就是在这里加一行 acl_require(...)。
+-- ==================================================================
+
+-- 角色默认权限（与前端 acl.js 的 ROLE_PERMS 一致，改动时两边都要改）
+create or replace function acl_role_perms(p_role text) returns text[]
+language sql immutable as $$
+  select case p_role
+    when 'owner' then array[
+      -- owner 恒为全部，这里列出仅为与前端对齐；实际第 4 步已直接放行
+      'msg.send','msg.recall.own','msg.remove','msg.delete','msg.viewRaw','msg.pin',
+      'media.image','media.video','media.voice','media.file',
+      'room.create','room.rename','room.notice','room.desc','room.pwd',
+      'room.invite','room.kick','room.grant','room.delete','room.export',
+      'user.view','user.mute','user.ban','user.create','user.delete',
+      'user.grant','user.perms','user.transfer',
+      'audit.review','audit.log',
+      'site.name','site.gate','site.register','site.clean','site.export','site.reset',
+      'sys.notice','sys.env'
+    ]
+    when 'admin' then array[
+      'msg.send','msg.recall.own','msg.remove','msg.viewRaw',
+      'media.image','media.video','media.voice','media.file',
+      'room.create','room.rename','room.notice','room.desc','room.pwd',
+      'room.invite','room.kick','room.delete','room.export',
+      'user.view','user.mute','user.ban','user.create',
+      'audit.review','audit.log',
+      'site.name','site.register','site.clean','site.export',
+      'sys.notice','sys.env'
+    ]
+    when 'member' then array[
+      'msg.send','msg.recall.own',
+      'media.image','media.video','media.voice','media.file',
+      'room.create','user.view','sys.env'
+    ]
+    else '{}'::text[]
+  end;
+$$;
+
+-- 聚合权限：任一子权限通过即通过（与前端 AGGREGATE 一致）
+create or replace function acl_aggregate(p_perm text) returns text[]
+language sql immutable as $$
+  select case p_perm
+    when 'msg.recall'  then array['msg.recall.own']
+    when 'media.send'  then array['media.image','media.video','media.voice','media.file']
+    when 'room.manage' then array['room.rename','room.notice','room.desc','room.pwd','room.invite','room.kick']
+    else null
+  end;
+$$;
+
+-- 房主 / 房管在自己房间内的固有权力（与前端 ROOM_INHERENT 一致）
+create or replace function acl_room_inherent() returns text[]
+language sql immutable as $$
+  select array[
+    'room.rename','room.notice','room.desc','room.pwd',
+    'room.invite','room.kick','room.delete','room.export','user.mute'
+  ];
+$$;
+
+-- 当前用户在某房间内的角色：owner / roomOwner / roomAdmin / member
+create or replace function acl_room_role(p_room text) returns text
+language sql stable as $$
+  select case
+    when cur_user() is null then 'guest'
+    when exists (select 1 from users u where u.id = cur_user() and u.role = 'owner') then 'owner'
+    when p_room is not null and exists (
+      select 1 from rooms r where r.id = p_room and r.owner_id = cur_user()
+    ) then 'roomOwner'
+    when p_room is not null and exists (
+      select 1 from room_admins ra where ra.room_id = p_room and ra.user_id = cur_user()
+    ) then 'roomAdmin'
+    else 'member'
+  end;
+$$;
+
+-- 核心判定。p_room 传 null 表示站点级权限，传房间 id 表示房间级权限。
+create or replace function acl_can(p_perm text, p_room text default null) returns boolean
+language plpgsql stable security definer
+set search_path = public, extensions, pg_temp as $$
+declare
+  uid uuid; u record; subs text[];
+begin
+  uid := cur_user();
+  if uid is null then return false; end if;
+
+  select * into u from users where id = uid;
+  if not found then return false; end if;
+
+  -- 2) 封禁：除发言外全部拒绝（发言仍允许，好让人知道自己被封了）
+  if u.status = 'banned' and p_perm <> 'msg.send' then return false; end if;
+
+  -- 3) 聚合键
+  subs := acl_aggregate(p_perm);
+  if subs is not null then
+    return exists (
+      select 1 from unnest(subs) as sp where acl_can(sp, p_room)
+    );
+  end if;
+
+  -- 4) 站长恒为全部权限
+  if u.role = 'owner' then return true; end if;
+
+  -- 5) 显式禁止（优先级最高，站长已在上面放行）
+  if p_perm = any (coalesce(u.denied, '{}'::text[])) then return false; end if;
+
+  -- 6) 显式授予
+  if p_perm = any (coalesce(u.perms, '{}'::text[])) then return true; end if;
+
+  -- 7) 角色默认
+  if p_perm = any (acl_role_perms(u.role)) then return true; end if;
+
+  -- 8) 房主 / 房管的固有权力
+  if p_room is not null
+     and acl_room_role(p_room) in ('roomOwner','roomAdmin')
+     and p_perm = any (acl_room_inherent()) then return true; end if;
+
+  return false;
+end;
+$$;
+
+-- 要求有某权限，否则抛错。写操作统一调这个，不要自己写 if。
+create or replace function acl_require(p_perm text, p_room text default null) returns boolean
+language plpgsql stable security definer
+set search_path = public, extensions, pg_temp as $$
+begin
+  if cur_user() is null then raise exception '请先登录'; end if;
+  if not acl_can(p_perm, p_room) then
+    raise exception '没有「%」权限', coalesce(
+      (select value from acl_perm_label where key = p_perm), p_perm);
+  end if;
+  return true;
+end;
+$$;
+
+-- 权限点中文名（供错误提示与前端展示，避免各处硬编码）
+create table if not exists acl_perm_label (
+  key   text primary key,
+  value text not null
+);
+insert into acl_perm_label (key, value) values
+  ('msg.send','发言'), ('msg.recall.own','撤回自己的消息'),
+  ('msg.remove','移除他人消息'), ('msg.delete','物理删除消息'),
+  ('msg.viewRaw','查看被撤回消息原文'), ('msg.pin','置顶消息'),
+  ('media.image','发送图片'), ('media.video','发送视频'),
+  ('media.voice','发送语音'), ('media.file','发送文件'),
+  ('room.create','创建群聊'), ('room.rename','修改群名'),
+  ('room.notice','修改群公告'), ('room.desc','修改群简介'),
+  ('room.pwd','修改群密码'), ('room.invite','邀请成员'),
+  ('room.kick','移出成员'), ('room.grant','设置群管理员'),
+  ('room.delete','解散群聊'), ('room.export','导出群聊记录'),
+  ('user.view','查看成员'), ('user.mute','禁言'),
+  ('user.ban','封禁账号'), ('user.create','手动开户'),
+  ('user.delete','删除用户'), ('user.grant','授予管理员'),
+  ('user.perms','分配他人权限'), ('user.transfer','转让站长'),
+  ('audit.review','审核注册'), ('audit.log','查看日志'),
+  ('site.name','修改站点名称'), ('site.gate','修改保护密码'),
+  ('site.register','开关注册'), ('site.clean','清理媒体'),
+  ('site.export','导出全站数据'), ('site.reset','重置站点'),
+  ('sys.notice','发布全站公告'), ('sys.env','查看运行环境')
+on conflict (key) do nothing;
+
+-- 能否发言：权限 + 全站禁言 + 房间内禁言
+create or replace function acl_can_speak(p_room text default null)
+returns json language plpgsql stable security definer
+set search_path = public, extensions, pg_temp as $$
+declare u record; rm record;
+begin
+  if cur_user() is null then
+    return json_build_object('ok', false, 'why', '请先登录');
+  end if;
+  select * into u from users where id = cur_user();
+
+  if not acl_can('msg.send', p_room) then
+    return json_build_object('ok', false, 'why', '没有发言权限');
+  end if;
+
+  if u.muted_until is not null and u.muted_until > now() then
+    return json_build_object('ok', false, 'why', '你已被禁言，剩余 '
+      || ceil(extract(epoch from (u.muted_until - now())) / 60)::int || ' 分钟');
+  end if;
+
+  if p_room is not null then
+    select * into rm from room_members where room_id = p_room and user_id = cur_user();
+    if found and rm.muted_until is not null and rm.muted_until > now() then
+      return json_build_object('ok', false, 'why', '你已被本群禁言，剩余 '
+        || ceil(extract(epoch from (rm.muted_until - now())) / 60)::int || ' 分钟');
+    end if;
+  end if;
+
+  return json_build_object('ok', true);
+end;
+$$;
+
+-- 前端一次性拉取全部权限点状态，避免逐项往返
+create or replace function acl_mine(p_room text default null)
+returns json language plpgsql stable security definer
+set search_path = public, extensions, pg_temp as $$
+declare u record; k text; res jsonb := '{}'::jsonb;
+begin
+  if cur_user() is null then return '{}'::json; end if;
+  select * into u from users where id = cur_user();
+  for k in select key from acl_perm_label loop
+    res := res || jsonb_build_object(k, acl_can(k, p_room));
+  end loop;
+  return json_build_object(
+    'uid', u.id, 'nick', u.nick, 'role', u.role, 'status', u.status,
+    'perms', res,
+    'muted_until', u.muted_until
+  );
 end;
 $$;
 
