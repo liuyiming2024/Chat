@@ -12,6 +12,8 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+
       - name: 1. 收集诊断信息（不打印密码）
         id: diag
         env:
