@@ -1,7 +1,7 @@
 name: 数据库诊断
 
 # 只做连通性检查，不改任何数据。用来区分「连不上」和「SQL 有错」。
-# 全程不打印密码。
+# 全程不打印密码；结果写到 diag 分支的 report.txt，便于回传排查。
 
 on:
   workflow_dispatch:
@@ -9,25 +9,28 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - name: 1. 密钥是否存在
+      - name: 1. 收集诊断信息（不打印密码）
+        id: diag
         env:
           DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
-          if [ -z "${DB_URL:-}" ]; then
-            echo "::error::未配置 SUPABASE_DB_URL"
-            exit 1
-          fi
-          echo "已配置，长度 ${#DB_URL} 字符"
-          # 只打印结构，不打印密码
-          echo "$DB_URL" | sed -E 's#(postgres://[^:]+:)[^@]+(@.*)#\1********\2#'
-
-      - name: 2. 解析各部分
-        env:
-          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
-        run: |
-          python3 - <<'PY'
-          import os, re
+          set -uo pipefail
+          OUT=report.txt
+          : > $OUT
+          {
+            echo "时间: $(date -u)"
+            echo "psql: $(psql --version 2>&1)"
+            echo
+            echo "=== URL 结构（密码已打码）==="
+            echo "$DB_URL" | sed -E 's#(postgres://[^:]+:)[^@]+(@.*)#\1********\2#'
+            echo
+            echo "=== 解析结果 ==="
+          } >> $OUT
+          python3 - >> $OUT <<'PY'
+          import os
           from urllib.parse import urlparse
           u = os.environ.get('DB_URL','')
           try:
@@ -36,41 +39,42 @@ jobs:
               print('主机 :', p.hostname)
               print('端口 :', p.port)
               print('用户 :', p.username)
-              print('密码 :', '*' * len(p.password or ''), f'({len(p.password or "")} 位)')
+              print('密码长度:', len(p.password or ''))
               print('库名 :', p.path.lstrip('/'))
-              # 常见错误提示
               if p.port == 5432:
-                  print('\n⚠ 用的是 5432 直连端口。Actions 里建议改 6543（连接池）。')
-              if not p.hostname or 'pooler' not in (p.hostname or ''):
-                  print('\n⚠ 主机名里没有 pooler，可能不是连接池地址。')
-              if p.password and any(c in p.password for c in '@:/?#[]'):
-                  print('\n⚠ 密码含特殊字符，需做 URL 编码，否则解析会错。')
+                  print('⚠ 5432 是直连端口，Actions 建议用 6543')
+              if 'pooler' not in (p.hostname or ''):
+                  print('⚠ 主机名不含 pooler，可能不是连接池地址')
+              if p.password and any(c in p.password for c in '@:/?#[]%'):
+                  print('⚠ 密码含特殊字符，需 URL 编码')
           except Exception as e:
               print('解析失败:', e)
           PY
-
-      - name: 3. 尝试连接
-        env:
-          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
-        run: |
-          set -uo pipefail
-          echo "psql 版本: $(psql --version 2>&1)"
-          echo "--- 连接测试 ---"
-          if timeout 40 psql "$DB_URL" -tAc "select version()" 2>&1 | head -5; then
-            echo "✅ 能连上"
+          {
+            echo
+            echo "=== 连接测试 ==="
+          } >> $OUT
+          if timeout 40 psql "$DB_URL" -tAc "select version()" > conn.out 2> conn.err; then
+            echo "✅ 连接成功" >> $OUT
+            cat conn.out >> $OUT
           else
-            echo "❌ 连不上（上面是原始错误信息）"
-            exit 1
+            echo "❌ 连接失败，原始错误如下：" >> $OUT
+            cat conn.err >> $OUT
+            echo >> $OUT
+            echo "--- DNS 解析检查 ---" >> $OUT
+            HOST=$(echo "$DB_URL" | sed -E 's#postgres://[^@]+@([^:/]+).*#\1#')
+            echo "主机: $HOST" >> $OUT
+            getent hosts "$HOST" >> $OUT 2>&1 || echo "DNS 解析失败" >> $OUT
           fi
 
-      - name: 4. 现状
-        env:
-          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      - name: 2. 结果写回 diag 分支
         run: |
-          set -uo pipefail
-          echo "--- 已有表 ---"
-          psql "$DB_URL" -tAc "select coalesce(string_agg(table_name,', ' order by table_name),'（空）') from information_schema.tables where table_schema='public'" 2>&1 | head -3
-          echo "--- 已有函数 ---"
-          psql "$DB_URL" -tAc "select count(*) from information_schema.routines where routine_schema='public'" 2>&1 | head -3
-          echo "--- pgcrypto 是否可用 ---"
-          psql "$DB_URL" -tAc "select extname from pg_extension where extname='pgcrypto'" 2>&1 | head -3
+          set -euo pipefail
+          git config user.name  "diag-bot"
+          git config user.email "diag@local"
+          git checkout --orphan diag 2>/dev/null || git checkout diag
+          git rm -rf . 2>/dev/null || true
+          cp report.txt . 2>/dev/null || true
+          git add report.txt
+          git commit -m "诊断结果 $(date -u +%Y%m%d-%H%M%S)" || echo "无变化"
+          git push -f origin diag
