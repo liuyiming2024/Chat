@@ -7,7 +7,22 @@
 --      即使 publishable key 公开，没有站点保护密码也拿不到任何数据。
 --   2. 密码一律用 pgcrypto 的 bcrypt 在数据库内处理，
 --      前端永远拿不到任何人的 pwd_hash / salt。
---   3. 会话 token 由服务端签发，通过 x-session 请求头传递。
+--   3. 会话 token 由服务端签发，通过 x-session 请求头传递；
+--      库里只存 sha256(token)，不存明文。
+--   4. ⚠ 限流【不在数据库层】—— gate_check / user_login 必须允许匿名调用，
+--      口令可被无限次试。数据库层做不了：plpgsql 的 raise exception 会回滚
+--      同一函数内此前的写入，在 raise 前 update 失败计数永远累加不上去
+--      （曾这样实现过，实测无效，已移除）。
+--      必须在网关层配：Supabase Dashboard → Settings → Rate Limits，
+--      或在 Cloudflare 按 IP 限制 /rest/v1/rpc/gate_check、user_login。
+--      建议：同 IP 每分钟 ≤ 10 次；bcrypt cost ≥ 10 抬高单次成本。
+--
+-- ⚠ 关于 RLS —— 别把它当防线：
+--   下面所有表都 enable row level security，但脚本里【没有任何 create policy】，
+--   默认全拒；而业务读写全部走 SECURITY DEFINER 函数，definer 以 owner 身份执行，
+--   owner 绕过 RLS。也就是说 RLS 在本架构下等于没开，
+--   真正的安全边界 100% 是每个函数体开头的那几行 if ... raise。
+--   ⇒ 新增任何 RPC，第一件事就是写鉴权判断。这是硬约定，不是风格问题。
 -- ==================================================================
 
 create extension if not exists pgcrypto;
@@ -40,13 +55,19 @@ create index if not exists users_nick_idx on users (lower(nick));
 
 -- ---------- 会话 ----------
 create table if not exists sessions (
-  token       text primary key,
+  -- 只存 sha256(token)，不存明文。
+  -- 理由：token 即身份。明文入库意味着任何拿到数据库读权限的人（备份泄露、
+  -- 误开策略、控制台截图）都能直接冒充全部在线用户，连密码都不用破。
+  -- token 本身是 gen_random_bytes(24) 的高熵随机串，不是用户口令，
+  -- 所以 sha256 单次即可，不需要 bcrypt 这类慢哈希。
+  token_hash  text primary key,
   user_id     uuid references users(id) on delete cascade,
   gate_ok     boolean not null default false, -- 仅通过保护密码、尚未登录账号
   expires_at  timestamptz not null,
   created_at  timestamptz not null default now()
 );
 create index if not exists sessions_user_idx on sessions (user_id);
+create index if not exists sessions_exp_idx on sessions (expires_at);
 
 -- ---------- 房间 ----------
 create table if not exists rooms (
@@ -132,22 +153,33 @@ language sql volatile as $$
   select encode(gen_random_bytes(24), 'hex');
 $$;
 
+-- 当前请求携带的会话 token 的哈希（空则为空串）
+-- 所有对 sessions 的查询一律用它，禁止直接比对明文 token。
+create or replace function cur_token_hash() returns text
+language sql stable as $$
+  select case when cur_token() = '' then ''
+         else encode(digest(cur_token(), 'sha256'), 'hex') end;
+$$;
+
 -- 当前登录用户（未登录返回 null）
 create or replace function cur_user() returns uuid
 language sql stable as $$
   select s.user_id from sessions s
-  where s.token = cur_token() and s.expires_at > now() and s.user_id is not null
+  where s.token_hash = cur_token_hash() and s.expires_at > now() and s.user_id is not null
   limit 1;
 $$;
 
 -- 是否已通过站点保护密码
+-- 注意：这里【不能】加 "gate_hash is null 就算通过" 的分支。
+-- 那会让站点在尚未设置保护密码的窗口期里，任何人都能调 user_register 批量注册
+-- （虽然状态是 pending，但仍可占昵称、灌日志）。
+-- 未初始化时只放行 site_ready() / site_init()，其余一律要求有效会话。
 create or replace function gate_passed() returns boolean
 language sql stable as $$
   select exists (
-    select 1 from site where gate_hash is null
-  ) or exists (
     select 1 from sessions s
-    where s.token = cur_token() and s.expires_at > now() and s.gate_ok
+    where s.token_hash = cur_token_hash() and s.expires_at > now()
+      and (s.gate_ok or s.user_id is not null)   -- 过了门禁，或已登录账号
   );
 $$;
 
@@ -157,9 +189,10 @@ returns text language plpgsql volatile as $$
 declare tk text;
 begin
   tk := new_token();
-  insert into sessions (token, user_id, gate_ok, expires_at)
-  values (tk, uid, coalesce(gate_only, false), now() + interval '30 days');
-  return tk;
+  insert into sessions (token_hash, user_id, gate_ok, expires_at)
+  values (encode(digest(tk, 'sha256'), 'hex'), uid, coalesce(gate_only, false),
+          now() + interval '14 days');
+  return tk;   -- 明文 token 只在这一刻出现，随后随响应返回，库里不留
 end;
 $$;
 
@@ -180,9 +213,11 @@ language sql volatile as $$
 $$;
 
 -- 站点初始化：设保护密码 + 建站长（仅当未初始化时可用）
+-- 注意：本函数用 $fn$ 而非 $$ 定界 —— 函数体里的公屏欢迎语含 $$…$$ 公式示例，
+-- 若用 $$ 会被词法器当成函数体结束，整段脚本执行失败。
 create or replace function site_init(p_gate text, p_nick text, p_real text, p_pwd text)
 returns json language plpgsql volatile security definer
-set search_path = public, pg_temp as $$
+set search_path = public, pg_temp as $fn$
 declare uid uuid; tk text;
 begin
   if exists (select 1 from site where gate_hash is not null) then
@@ -206,17 +241,24 @@ begin
   tk := issue_session(uid, false);
   return json_build_object('token', tk, 'uid', uid);
 end;
-$$;
+$fn$;
 
 -- 校验保护密码（通过后会话可读取站点公开信息）
 create or replace function gate_check(p text)
 returns text language plpgsql volatile security definer
 set search_path = public, pg_temp as $$
-declare tk text;
+declare tk text; st record;
 begin
-  if not exists (select 1 from site where gate_hash = crypt(p, gate_hash)) then
+  select * into st from site where id = true;
+  if st.gate_hash is null then raise exception '站点尚未初始化'; end if;
+
+  /* 这里【不能】做失败计数：plpgsql 的 raise exception 会回滚同一函数内
+     此前的所有写入，raise 前 update 计数永远累加不上去。
+     真实限流必须在网关层做，见文件头「限流」一节。 */
+  if not exists (select 1 from site where id = true and gate_hash = crypt(p, gate_hash)) then
     raise exception '保护密码错误';
   end if;
+
   tk := issue_session(null, true);
   return tk;
 end;
@@ -238,8 +280,9 @@ begin
   select count(*) into cnt from users where lower(nick) = lower(p_nick);
   if cnt > 0 then raise exception '昵称已被占用'; end if;
 
+  -- p_real 可为 null（前端不采集），列是 not null，故 coalesce
   insert into users (nick, real_name, pwd_hash, role, status)
-  values (p_nick, p_real, crypt(p_pwd, gen_salt('bf', 10)), 'member', 'pending')
+  values (p_nick, coalesce(p_real, ''), crypt(p_pwd, gen_salt('bf', 10)), 'member', 'pending')
   returning id into uid;
 
   -- 站长账号自动通过；普通账号待审核
@@ -257,7 +300,13 @@ begin
   if not gate_passed() then raise exception '请先通过站点保护密码'; end if;
   select * into u from users where lower(nick) = lower(p_nick);
   if not found then raise exception '昵称或密码错误'; end if;
-  if u.pwd_hash <> crypt(p_pwd, u.pwd_hash) then raise exception '昵称或密码错误'; end if;
+
+  /* 同上：失败计数在这里无效（raise 会回滚），不要再加。 */
+  if u.pwd_hash <> crypt(p_pwd, u.pwd_hash) then
+    raise exception '昵称或密码错误';
+  end if;
+
+  -- 密码正确，再判状态（顺序不能反：否则能凭报错枚举"昵称是否存在/是否被封"）
   if u.status = 'banned' then raise exception '该账号已被封禁'; end if;
   if u.status = 'pending' then raise exception '账号待站长审核，请稍候'; end if;
 
@@ -728,7 +777,7 @@ create or replace function logout()
 returns boolean language plpgsql volatile security definer
 set search_path = public, pg_temp as $$
 begin
-  delete from sessions where token = cur_token();
+  delete from sessions where token_hash = cur_token_hash();
   return true;
 end;
 $$;
@@ -736,9 +785,24 @@ $$;
 -- ==================================================================
 -- 权限：只授予执行 RPC，不授予任何表的读写
 -- ==================================================================
+-- 清理过期会话。建议挂 pg_cron 每天跑一次，或用 GitHub Actions 定期调用。
+-- 未登录也可调用（它只删自己那条已过期的记录，不泄露任何信息）。
+create or replace function session_cleanup()
+returns int language plpgsql volatile security definer
+set search_path = public, pg_temp as $$
+declare n int;
+begin
+  delete from sessions where expires_at < now();
+  get diagnostics n = row_count;
+  return n;
+end;
+$$;
+
 revoke all on all tables in schema public from anon, authenticated;
 grant usage on schema public to anon, authenticated;
 grant execute on all functions in schema public to anon, authenticated;
+-- session_cleanup 只影响过期记录，保留给 anon 便于外部定时调用
+grant execute on function session_cleanup() to anon, authenticated;
 
 -- Storage：媒体桶
 insert into storage.buckets (id, name, public)
