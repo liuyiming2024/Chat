@@ -1,3 +1,19 @@
--- 本文件由「数据库执行」workflow 读取。按需写入，用完清空。
--- ⚠ 严禁写密码 / token：本仓库公开，提交即永久留在 git 历史。
-select 'ok' as 状态;
+\echo '===== users 列 ====='
+select string_agg(column_name,' , ' order by ordinal_position) from information_schema.columns
+where table_schema='public' and table_name='users';
+
+\echo '===== rooms 列 ====='
+select string_agg(column_name,' , ' order by ordinal_position) from information_schema.columns
+where table_schema='public' and table_name='rooms';
+
+\echo '===== room_admins 列 ====='
+select string_agg(column_name,' , ' order by ordinal_position) from information_schema.columns
+where table_schema='public' and table_name='room_admins';
+
+\echo '===== room_members 列 ====='
+select string_agg(column_name,' , ' order by ordinal_position) from information_schema.columns
+where table_schema='public' and table_name='room_members';
+
+\echo '===== perms 列类型 ====='
+select column_name, data_type, udt_name from information_schema.columns
+where table_schema='public' and table_name='users' and column_name in ('perms','role','status','muted_until');
