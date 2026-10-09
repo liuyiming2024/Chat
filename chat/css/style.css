@@ -168,7 +168,8 @@ input, textarea, select { font-family: inherit; font-size: 14px; }
 }
 .side-foot {
   display: flex;
-  gap: 8px;
+  /* 两个会开面板/改状态的按钮紧邻，拉开一点 */
+  gap: 12px;
   padding: 8px;
   border-top: 1px solid #dcdcdc;
 
@@ -345,6 +346,11 @@ input, textarea, select { font-family: inherit; font-size: 14px; }
   transition: opacity .12s;
 }
 .msg-row:hover .msg-acts, .msg-row:focus-within .msg-acts { opacity: 1; }
+/* 触屏没有 hover：撤回/编辑/移除这些操作在手机上等于不存在。
+   hover: none 覆盖手机与平板，直接常显。 */
+@media (hover: none) {
+  .msg-acts { opacity: 1; }
+}
 .msg-row.me .msg-acts { justify-content: flex-end; }
 .msg-act {
   border: 0;
@@ -416,7 +422,9 @@ video.thumb { width: 320px; height: 180px; background: #000; }
 .composer-tools {
   display: flex;
   align-items: center;
-  gap: 4px;
+  /* 误触代价决定间距：这排里每个邻居都会开面板或唤起系统选择器，
+     指偏 8px 就换一个功能。gap 从 4 拉到 10。 */
+  gap: 10px;
   margin-bottom: 4px;
 }
 .tool-btn {
@@ -661,6 +669,8 @@ video.thumb { width: 320px; height: 180px; background: #000; }
   left: 50%;
   transform: translateX(-50%);
   z-index: 1200;
+  /* 提示层不该拦截点击：它盖在内容上方，吞掉点击表现为"点了没反应" */
+  pointer-events: none;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -1253,3 +1263,12 @@ body.dark .demo-note { background: #2a2318; color: #d9b26a; }
 
 /* 消息渲染缓存的外壳：display:contents 让它不产生盒子，不影响布局 */
 .msg-cache-wrap { display: contents; }
+
+
+/* 侧栏底部按钮：原本 padding 3px 8px（约 26px 高），两个紧挨着。
+   「管理面板」误触要手动关；「退出」已有二次确认，代价可控但仍不该这么小。 */
+.side-foot .mini-btn {
+  padding: 7px 14px;
+  font-size: 13px;
+  min-height: 32px;
+}

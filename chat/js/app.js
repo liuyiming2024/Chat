@@ -2779,6 +2779,14 @@
         if (rec) { stopRecord(false); } else { startRecord(); }
       };
     }
+    /* 取消录音的唯一出口。
+       没有它，误触 🎙 之后只能：把不想发的语音发出去，或刷新页面。
+       cancelRecord() 早就写好了，只是从没接到 UI 上。 */
+    var rc = $('recCancel');
+    if (rc) rc.onclick = function (e) {
+      e.preventDefault(); e.stopPropagation();
+      cancelRecord();
+    };
     /* 文件附件 */
     var bf = $('btnFile');
     if (bf) bf.onclick = function () { $('fileDoc').click(); };
