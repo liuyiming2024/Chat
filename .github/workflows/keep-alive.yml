@@ -21,6 +21,10 @@ jobs:
           DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
           set -euo pipefail
+          # 与 db-migrate 同样处理：Secret 末尾极易带回车，
+          # 会让库名变成 "postgres\n" 而连不上。
+          DB_URL="$(printf '%s' "$DB_URL" | tr -d '\r\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+          export DB_URL
           if [ -z "${DB_URL:-}" ]; then
             echo "::warning::未配置 SUPABASE_DB_URL，跳过"
             exit 0
