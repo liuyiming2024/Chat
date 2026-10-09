@@ -807,6 +807,7 @@ begin
     raise exception '仅管理员可审核';
   end if;
   if p_status not in ('active','pending','banned') then raise exception '状态不合法'; end if;
+  if p_status = 'banned' then perform self_guard(p_user, '封禁'); end if;
   update users set status = p_status where id = p_user;
   insert into logs (who_id, act, detail) values (uid, 'review', p_status || ' ' || p_user);
   perform nextval('state_rev');
@@ -826,6 +827,7 @@ begin
   if not exists (select 1 from users u where u.id = uid and u.role in ('owner','admin')) then
     raise exception '仅管理员可禁言';
   end if;
+  perform self_guard(p_user, '禁言');
   update users set muted_until =
     case when coalesce(p_minutes,0) <= 0 then null else now() + (p_minutes || ' minutes')::interval end
   where id = p_user;
@@ -848,6 +850,8 @@ begin
     raise exception '仅站长可调整角色';
   end if;
   if p_role not in ('owner','admin','member') then raise exception '角色不合法'; end if;
+  /* 不能改自己的角色：把自己降为 member 会立刻失去全部管理权限，且无法自恢复 */
+  perform self_guard(p_user, '调整角色');
   -- 转让站长：原站长降为管理员
   if p_role = 'owner' then
     update users set role = 'admin' where id = uid;
@@ -868,6 +872,8 @@ begin
   perform acl_require('user.perms');
   uid := cur_user();
   if uid is null then raise exception '请先登录'; end if;
+  /* 不能改自己的权限：给自己加 denied 就再也拿不掉，等于自锁 */
+  perform self_guard(p_user, '调整权限');
   if not exists (select 1 from users u where u.id = uid and u.role = 'owner') then
     raise exception '仅站长可调整权限';
   end if;
@@ -890,7 +896,7 @@ begin
   if not exists (select 1 from users u where u.id = uid and u.role = 'owner') then
     raise exception '仅站长可删除用户';
   end if;
-  if p_user = uid then raise exception '不能删除自己'; end if;
+  perform self_guard(p_user, '删除');
   delete from users where id = p_user;
   perform nextval('state_rev');
   return true;
@@ -1007,6 +1013,64 @@ $$;
 alter table users        add column if not exists denied      text[] not null default '{}';
 alter table room_members add column if not exists muted_until timestamptz;
 
+
+
+-- ==================================================================
+-- 自操作保护（站长误伤自己）
+--
+-- 事故：站长在管理面板里把自己封禁了，之后进不去、也没法自解 ——
+--       因为封禁状态下除 msg.send 外全部权限失效，而解封需要 audit.review。
+--       user_delete 有"不能删除自己"，但封禁/降级/改权限都没有，属于保护残缺。
+--
+-- 规则：
+--   1. 不能封禁/停用自己
+--   2. 不能改自己的角色（降级会把自己锁在外面；转让走 user_transfer）
+--   3. 不能改自己的权限（denied 一旦加上就再也拿不掉）
+--   4. 不能删自己（已有，统一收进来）
+--   5. 唯一站长不允许被停用 —— 否则站点永久失去管理者
+-- ==================================================================
+
+create or replace function self_guard(p_target uuid, p_action text)
+returns void language plpgsql volatile security definer
+set search_path = public, extensions, pg_temp as $$
+declare uid uuid; cnt int;
+begin
+  uid := cur_user();
+  if uid is null then raise exception '请先登录'; end if;
+
+  if p_target = uid then
+    raise exception '不能对自己执行「%」', p_action;
+  end if;
+
+  /* 唯一站长保护：停用最后一个 owner 会让站点永久失去管理者 */
+  if p_action in ('封禁', '停用', '删除') then
+    select count(*) into cnt from users where role = 'owner' and status <> 'banned';
+    if exists (select 1 from users where id = p_target and role = 'owner')
+       and cnt <= 1 then
+      raise exception '这是唯一可用的站长，不能%s', p_action;
+    end if;
+  end if;
+end;
+$$;
+
+-- 站长自救：即便被误封，也能凭站长身份把自己恢复。
+-- 没有这条，封禁自己 = 站点永久失去管理者。
+create or replace function user_self_unban()
+returns boolean language plpgsql volatile security definer
+set search_path = public, extensions, pg_temp as $$
+declare uid uuid;
+begin
+  uid := cur_user();
+  if uid is null then raise exception '请先登录'; end if;
+  if not exists (select 1 from users where id = uid and role = 'owner') then
+    raise exception '仅站长可用';
+  end if;
+  update users set status = 'active', muted_until = null where id = uid;
+  insert into logs (who_id, act, detail) values (uid, 'unban', '站长自助解封');
+  perform nextval('state_rev');
+  return true;
+end;
+$$;
 
 -- ==================================================================
 -- 权限判定（服务端）

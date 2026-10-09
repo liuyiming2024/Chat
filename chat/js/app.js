@@ -2414,19 +2414,52 @@
           if (u.banned) line.appendChild(elc('span', 'tag red', '封禁'));
           if (g.ACL.muted(u)) line.appendChild(elc('span', 'tag orange', '禁言'));
           var ops = elc('div', 'line-ops');
+          /* 对自己不显示任何管理操作。
+             服务端已经拦（self_guard），但按钮摆在那里就是诱导误点 ——
+             站长把自己封禁后失去全部权限，连解封都点不了。 */
+          var isSelf = !!(me && u && me.id === u.id);
           ops.appendChild(mkBtn('资料', function () { mo.close(); userCard(u, findRoom(cur)); }));
-          if (g.ACL.can(me, 'user.ban')) ops.appendChild(mkBtn(u.banned ? '解封' : '封禁', function () { u.banned = !u.banned; touch(u); log(u.banned ? 'ban' : 'unban', u.nick); save(); adminPanelRefresh(mo, d, view, t); }));
-          if (g.ACL.can(me, 'user.mute')) ops.appendChild(mkBtn(g.ACL.muted(u) ? '解禁' : '禁言', function () {
+          if (isSelf) {
+            ops.appendChild(elc('span', 'tag', '本人'));
+          }
+          if (!isSelf && g.ACL.can(me, 'user.ban')) ops.appendChild(mkBtn(u.banned ? '解封' : '封禁', function () { u.banned = !u.banned; touch(u); log(u.banned ? 'ban' : 'unban', u.nick); save(); adminPanelRefresh(mo, d, view, t); }));
+          if (!isSelf && g.ACL.can(me, 'user.mute')) ops.appendChild(mkBtn(g.ACL.muted(u) ? '解禁' : '禁言', function () {
             if (g.ACL.muted(u)) { u.mutedUntil = 0; touch(u); save(); }
             else g.UI.prompt('禁言分钟数', '', '10', function (v) { u.mutedUntil = now() + (parseInt(v, 10) || 10) * 60000; touch(u); log('mute', u.nick); save(); });
             adminPanelRefresh(mo, d, view, t);
           }));
-          if (me.role === 'owner') ops.appendChild(mkBtn(u.role === 'admin' ? '撤管理' : '设管理', function () { u.role = u.role === 'admin' ? 'member' : 'admin'; touch(u); log('role', u.nick + '→' + u.role); save(); adminPanelRefresh(mo, d, view, t); }));
-          if (me.role === 'owner') ops.appendChild(mkBtn('权限', function () { mo.close(); permEditor(u); }));
-          if (me.role === 'owner') ops.appendChild(mkBtn('删除', function () {
+          if (!isSelf && me.role === 'owner') ops.appendChild(mkBtn(u.role === 'admin' ? '撤管理' : '设管理', function () { u.role = u.role === 'admin' ? 'member' : 'admin'; touch(u); log('role', u.nick + '→' + u.role); save(); adminPanelRefresh(mo, d, view, t); }));
+          if (!isSelf && me.role === 'owner') ops.appendChild(mkBtn('权限', function () { mo.close(); permEditor(u); }));
+          if (!isSelf && me.role === 'owner') ops.appendChild(mkBtn('删除', function () {
             g.UI.confirm('删除用户「' + u.nick + '」？其消息将保留。', function () {
               S.users = S.users.filter(function (x) { return x.id !== u.id; });
               log('deluser', u.nick); save(); adminPanelRefresh(mo, d, view, t);
+            });
+          }));
+          if (!isSelf) ops.appendChild(mkBtn('拒绝', function () {
+            var rd = elc('div', '');
+            rd.innerHTML =
+              '<label class="field-label">拒绝理由（展示给对方）</label><input class="field" id="rjWhy" placeholder="选填">' +
+              '<label class="field-label">处理方式</label><select class="field" id="rjMode">' +
+              '<option value="delete">删除申请（对方可重新提交）</option>' +
+              '<option value="reject">保留为已拒绝（不再出现在待审核）</option></select>';
+            g.UI.modal({
+              title: '拒绝「' + g.UI.esc(u.nick) + '」的申请', body: rd, okText: '确认拒绝', danger: true,
+              onOk: function (body) {
+                var why = (body.querySelector('#rjWhy').value || '').trim();
+                var mode = body.querySelector('#rjMode').value;
+                if (mode === 'reject') {
+                  u.status = 'rejected';
+                  u.rejectReason = why || '未说明理由';
+                  touch(u);
+                }
+                log('audit', '拒绝 ' + u.nick + (why ? '：' + why : ''));
+                if (mode === 'delete') {
+                  S.users = S.users.filter(function (x) { return x.id !== u.id; });
+                }
+                save(); adminPanelRefresh(mo, d, view, t);
+                g.UI.toast('已拒绝', 'ok');
+              }
             });
           }));
           line.appendChild(ops);
