@@ -15,6 +15,17 @@
 
   /* ================= 小工具 ================= */
   function $(id) { return document.getElementById(id); }
+  function setPlayIcon(btn) {
+    if (btn) btn.innerHTML = '<svg class="ic ic-fill" aria-hidden="true"><use href="#i-play"/></svg>';
+  }
+
+  /* 图标：从 index.html 内联的雪碧图取。
+     换掉 emoji 后必须保留 title / aria-label —— 图标比 emoji 抽象，
+     没有文字提示，28px 的按钮照样得靠猜。 */
+  function ic(name, cls) {
+    return '<svg class="ic ' + (cls || '') + '" aria-hidden="true"><use href="#i-' + name + '"/></svg>';
+  }
+
   function elc(tag, cls, txt) {
     var d = document.createElement(tag);
     if (cls) d.className = cls;
@@ -652,7 +663,7 @@
   }
 
   /* ================= 极简模式 / 专业模式 =================
-   * simple：像微信，只留「+」和表情，隐藏语法工具条与命令提示
+   * simple：只留「+」和表情，隐藏语法工具条与命令提示
    * pro：显示 Markdown / 公式工具条、语法帮助、代码语言标签、可看源码
    */
   var MODE_KEY = 'wxlg_mode';
@@ -890,7 +901,8 @@
       if (m.poster) v.poster = m.poster;
       v.onclick = function () { g.UI.lightbox(v.src, 'video', m.name); };
       wrap.appendChild(v);
-      var play = elc('div', 'play-badge', '▶');
+      var play = elc('div', 'play-badge');
+      play.innerHTML = '<svg class="ic ic-fill" aria-hidden="true"><use href="#i-play"/></svg>';
       play.onclick = function () { g.UI.lightbox(v.src, 'video', m.name); };
       wrap.appendChild(play);
     }
@@ -1082,7 +1094,9 @@
         if (nd) { nd.scrollIntoView({ block: 'center' }); nd.classList.add('flash'); setTimeout(function () { nd.classList.remove('flash'); }, 1200); }
       };
       if (g.ACL.can(me, 'msg.pin', r)) {
-        var x = elc('button', 'pinned-x', '✕');
+        var x = elc('button', 'pinned-x');
+        x.innerHTML = '<svg class="ic ic-sm" aria-hidden="true"><use href="#i-close"/></svg>';
+        x.title = '取消置顶';
         x.title = '取消置顶';
         x.onclick = function (e) { e.stopPropagation(); togglePin(m); };
         row.appendChild(x);
@@ -1239,7 +1253,9 @@
   /* 语音气泡 */
   function voiceNode(m) {
     var wrap = elc('div', 'voice-msg');
-    var play = elc('button', 'voice-play', '▶');
+    /* 播放按钮换成图标（实心）。切暂停态时替换整个 svg，不再改 textContent */
+    var play = elc('button', 'voice-play');
+    play.innerHTML = '<svg class="ic ic-fill" aria-hidden="true"><use href="#i-play"/></svg>';
     var bars = elc('div', 'voice-bars');
     var n = Math.max(6, Math.min(28, Math.round((m.dur || 1) * 1.6) + 6));
     for (var i = 0; i < n; i++) {
@@ -1253,14 +1269,14 @@
     wrap.appendChild(dur);
     var audio = null;
     play.onclick = function () {
-      if (audio && !audio.paused) { audio.pause(); audio.currentTime = 0; play.textContent = '▶'; bars.classList.remove('playing'); return; }
+      if (audio && !audio.paused) { audio.pause(); audio.currentTime = 0; setPlayIcon(play); bars.classList.remove('playing'); return; }
       g.Media.get(m.mediaId).then(function (u) {
         if (!u) { g.UI.toast('语音数据已丢失'); return; }
         if (!audio) audio = new Audio(u);
         play.textContent = '⏸';
         bars.classList.add('playing');
-        audio.onended = function () { play.textContent = '▶'; bars.classList.remove('playing'); };
-        audio.play().catch(function () { g.UI.toast('播放失败'); play.textContent = '▶'; bars.classList.remove('playing'); });
+        audio.onended = function () { setPlayIcon(play); bars.classList.remove('playing'); };
+        audio.play().catch(function () { g.UI.toast('播放失败'); setPlayIcon(play); bars.classList.remove('playing'); });
       });
     };
     return wrap;
@@ -1718,7 +1734,18 @@
         if (!u4 || !g.ACL.can(me, 'room.kick', r)) { g.UI.toast('用法：/kick @昵称（或权限不足）', 'err'); return; }
         if (r.type === 'public') { g.UI.toast('公屏大厅不能踢人', 'err'); return; }
         r.members = (r.members || []).filter(function (x) { return x !== u4.id; });
-        touch(r); sysMsg(cur, '「' + u4.nick + '」已被移出群聊'); log('kick', u4.nick, r.id); save(); renderAll(); return;
+        touch(r); sysMsg(cur, '「' + u4.nick + '」已被移出群聊'); log('kick', u4.nick, r.id); save(); renderAll();
+
+        /* 在线模式：同步到服务端。失败要回滚本地，
+           否则本地显示已踢、服务端还在群里。 */
+        if (g.Online && g.Online.isOnline()) {
+          g.Online.removeMember(r.id, u4.id).catch(function (e) {
+            r.members = (r.members || []).concat([u4.id]);
+            save(true); renderAll();
+            g.UI.toast('操作失败：' + ((e && e.message) || '网络错误'), 'err');
+          });
+        }
+        return;
       }
       case 'ban': {
         var u5 = byNick(rest.split(/\s+/)[0] || '');
@@ -1740,13 +1767,26 @@
         var u8 = byNick(rest.split(/\s+/)[0] || '');
         if (!u8 || !g.ACL.can(me, 'user.grant', r)) { g.UI.toast('用法：/unadmin @昵称', 'err'); return; }
         r.admins = r.admins.filter(function (x) { return x !== u8.id; });
-        touch(r); sysMsg(cur, '「' + u8.nick + '」已被撤销群管理员'); log('revoke', u8.nick, r.id); save(); return;
+        touch(r); sysMsg(cur, '「' + u8.nick + '」已被撤销群管理员'); log('revoke', u8.nick, r.id); save();
+        if (g.Online && g.Online.isOnline()) {
+          g.Online.setAdmin(r.id, u8.id, false).catch(function (e) {
+            r.admins.push(u8.id); save(true);   /* 回滚 */
+            g.UI.toast('操作失败：' + ((e && e.message) || '网络错误'), 'err');
+          });
+        }
+        return;
       }
       case 'invite': {
         var u9 = byNick(rest.split(/\s+/)[0] || '');
         if (!u9) { g.UI.toast('用法：/invite @昵称'); return; }
         if (!g.ACL.can(me, 'room.manage', r)) { g.UI.toast('没有邀请权限', 'err'); return; }
-        joinRoom(r.id, u9); save(); return;
+        joinRoom(r.id, u9); save();
+        if (g.Online && g.Online.isOnline()) {
+          g.Online.addMember(r.id, u9.id).catch(function (e) {
+            g.UI.toast('已加入本地，但服务端同步失败：' + ((e && e.message) || '网络错误'), 'err');
+          });
+        }
+        return;
       }
       case 'transfer': {
         var ua = byNick(rest.split(/\s+/)[0] || '');
@@ -2049,9 +2089,16 @@
       '<div class="sec-title">转让群主</div><div id="sOwner" class="chip-box"></div>';
     var mo = g.UI.modal({
       title: '群设置', body: d, wide: true, okText: '保存', onOk: function (body) {
-        r.name = body.querySelector('#sName').value.trim() || r.name;
-        r.desc = body.querySelector('#sDesc').value.trim();
+        var nm = body.querySelector('#sName').value.trim() || r.name;
+        var ds = body.querySelector('#sDesc').value.trim();
+        r.name = nm; r.desc = ds;
         touch(r); log('roomset', r.name, r.id); save();
+        /* 在线模式：推到服务端，否则换设备群名就回退了 */
+        if (g.Online && g.Online.isOnline()) {
+          g.Online.updateRoom(r.id, nm, ds, r.notice || '').catch(function (e) {
+            g.UI.toast('保存失败：' + ((e && e.message) || '网络错误'), 'err');
+          });
+        }
       }
     });
     var ab = d.querySelector('#sAdmin');
@@ -2060,8 +2107,18 @@
       b.onclick = function () {
         if (!g.ACL.can(me, 'user.grant', r)) { g.UI.toast('无授权权限', 'err'); return; }
         var i = r.admins.indexOf(u.id);
+        var want = i < 0;                       /* true = 设为管理员 */
         if (i >= 0) r.admins.splice(i, 1); else r.admins.push(u.id);
         touch(r); save(true); mo.close(); roomSettings(r);
+        if (g.Online && g.Online.isOnline()) {
+          g.Online.setAdmin(r.id, u.id, want).catch(function (e) {
+            /* 失败要回滚本地，否则界面显示是管理员、服务端不是 */
+            if (want) { var k = r.admins.indexOf(u.id); if (k >= 0) r.admins.splice(k, 1); }
+            else r.admins.push(u.id);
+            save(true); roomSettings(r);
+            g.UI.toast('操作失败：' + ((e && e.message) || '网络错误'), 'err');
+          });
+        }
       };
       ab.appendChild(b);
     });
@@ -2128,6 +2185,16 @@
       btn('移出本群', '', function () {
         r.members = (r.members || []).filter(function (x) { return x !== u.id; });
         touch(r); sysMsg(r.id, '「' + u.nick + '」已被移出群聊'); log('kick', u.nick, r.id); save(); renderAll();
+
+        /* 在线模式：同步到服务端。失败要回滚本地，
+           否则本地显示已踢、服务端还在群里。 */
+        if (g.Online && g.Online.isOnline()) {
+          g.Online.removeMember(r.id, u.id).catch(function (e) {
+            r.members = (r.members || []).concat([u.id]);
+            save(true); renderAll();
+            g.UI.toast('操作失败：' + ((e && e.message) || '网络错误'), 'err');
+          });
+        }
       });
     }
     if (g.ACL.can(me, 'user.ban', r)) {
@@ -2456,6 +2523,15 @@
                 log('audit', '拒绝 ' + u.nick + (why ? '：' + why : ''));
                 if (mode === 'delete') {
                   S.users = S.users.filter(function (x) { return x.id !== u.id; });
+                  if (g.Online && g.Online.isOnline()) {
+                    g.SB.rpc('user_delete', { p_user: u.id }).catch(function () {
+                      g.UI.toast('服务端删除失败（本地已删除）', 'err');
+                    });
+                  }
+                } else {
+                  if (g.Online && g.Online.isOnline()) {
+                    g.SB.rpc('user_review', { p_user: u.id, p_status: 'banned' }).catch(function () { });
+                  }
                 }
                 save(); adminPanelRefresh(mo, d, view, t);
                 g.UI.toast('已拒绝', 'ok');
@@ -2484,6 +2560,17 @@
             sysMsg('public', '「' + u.nick + '」通过了审核，加入聊天室');
             log('audit', '通过 ' + u.nick);
             save(); adminPanelRefresh(mo, d, view, t);
+            /* 审核是站长的核心动作，必须落到服务端 ——
+               否则在本地通过了，对方换个设备仍是待审核。 */
+            if (g.Online && g.Online.isOnline()) {
+              g.SB.rpc('user_review', { p_user: u.id, p_status: 'active' })
+                .then(function () {
+                  if (g.Online.addMember) g.Online.addMember('public', u.id).catch(function () { });
+                })
+                .catch(function (e) {
+                  g.UI.toast('已通过本地审核，但服务端同步失败：' + ((e && e.message) || '网络错误'), 'err');
+                });
+            }
           }));
           ops.appendChild(mkBtn('拒绝', function () {
             var rd = elc('div', '');
@@ -2508,6 +2595,15 @@
                 log('audit', '拒绝 ' + u.nick + (why ? '：' + why : ''));
                 if (mode === 'delete') {
                   S.users = S.users.filter(function (x) { return x.id !== u.id; });
+                  if (g.Online && g.Online.isOnline()) {
+                    g.SB.rpc('user_delete', { p_user: u.id }).catch(function () {
+                      g.UI.toast('服务端删除失败（本地已删除）', 'err');
+                    });
+                  }
+                } else {
+                  if (g.Online && g.Online.isOnline()) {
+                    g.SB.rpc('user_review', { p_user: u.id, p_status: 'banned' }).catch(function () { });
+                  }
                 }
                 save(); adminPanelRefresh(mo, d, view, t);
                 g.UI.toast('已拒绝', 'ok');

@@ -176,7 +176,7 @@ IndexedDB / WASM 的限制。**它不存数据、不做同步**，与 GitHub Pag
 ```
 .
 ├── index.html            # 单页入口（93 行，骨架）
-├── css/style.css         # 微信风格样式（约 970 行，含深色适配与窄屏适配）
+├── css/style.css         # 样式表（约 970 行，含深色适配与窄屏适配）
 ├── js/
 │   ├── sha256.js         # SHA-256 + 加盐慢哈希（PBKDF2 式 4000 轮迭代）
 │   ├── latex.js          # LaTeX 解析与渲染（$ / $$ 包裹，输出 HTML+CSS）

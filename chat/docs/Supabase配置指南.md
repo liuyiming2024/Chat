@@ -32,7 +32,7 @@
 | 填写项 | 怎么填 |
 |---|---|
 | Organization | 选刚建的那个 |
-| **Name** | `luogu-chat` |
+| **Name** | `chat`（或你喜欢的名字） |
 | **Database Password** | ⚠️ 点右边的 **Generate a password**，然后把生成的密码**复制存到备忘录**——这是数据库管理员密码，丢了只能删项目重来 |
 | **Region** | 选 **Southeast Asia (Singapore)**（离国内最近，延迟最低） |
 
