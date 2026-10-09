@@ -1272,3 +1272,27 @@ body.dark .demo-note { background: #2a2318; color: #d9b26a; }
   font-size: 13px;
   min-height: 32px;
 }
+
+
+/* ================= 按下反馈 =================
+ * 三个样式表里 :active 规则原本是 0 —— 按下完全没有视觉变化。
+ * 后果不只是"手感差"：用户不确定点没点中 → 反复点 → 加重误触。
+ * 这里给所有可点元素统一补上。 */
+button:active,
+.icon-btn:active,
+.tool-btn:active,
+.mini-btn:active,
+.tab:active,
+.msg-act:active {
+  transform: translateY(1px);
+  filter: brightness(.92);
+}
+.btn:active { transform: translateY(1px); box-shadow: inset 0 1px 3px rgba(0,0,0,.18); }
+.tool-btn:active { background: #d0d0d0; }
+.rec-x:active { background: rgba(255,255,255,.35); }
+
+/* 触屏：会开面板或唤起系统选择器的按钮，撑到 36px（配合已拉开的 10px 间距）。
+   误触无事发生的（语音播放、表情格）保持原尺寸不动。 */
+@media (hover: none) {
+  .composer-tools .tool-btn { width: 36px; height: 36px; font-size: 18px; }
+}

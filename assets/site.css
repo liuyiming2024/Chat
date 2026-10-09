@@ -396,3 +396,7 @@ body.dark .doc-main code { color: #e6a0b8; }
 .doc-main pre code {
   background: none; color: var(--text); padding: 0; font-size: 13px;
 }
+
+
+/* 按下反馈：原本 0 条 :active 规则，按下去没有任何变化 */
+a:active, button:active { transform: translateY(1px); filter: brightness(.94); }

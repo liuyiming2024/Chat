@@ -26,7 +26,7 @@
 <body>
 
 <!-- 返回站点首页（聊天室为全屏应用，仅在角落放一个小入口，不干扰布局） -->
-<a class="back-home" href="../index.html" title="返回首页">← 首页</a>
+<a class="back-home" href="../index.html" title="返回首页" aria-label="返回首页">← 首页</a>
 
 <!-- ============ 门禁 / 登录 ============ -->
 <div id="gate" class="mask hidden" style="display:flex"></div>
@@ -41,7 +41,7 @@
         <span class="search-ico">🔍</span>
         <input id="searchInput" placeholder="搜索会话">
       </div>
-      <button class="icon-btn green" id="btnNewRoom" title="创建群聊">＋</button>
+      <button class="icon-btn green" id="btnNewRoom" title="创建群聊" aria-label="创建群聊">＋</button>
     </div>
     <div class="me-card" id="meCard"></div>
     <div id="modeTagHost" class="mode-tag" style="display:none"></div>
@@ -60,15 +60,15 @@
   <!-- 中间：聊天区 -->
   <main class="main">
     <header class="chat-head">
-      <button class="icon-btn only-narrow" id="btnMenu" title="会话列表">☰</button>
+      <button class="icon-btn only-narrow" id="btnMenu" title="会话列表" aria-label="会话列表">☰</button>
       <div class="ch-info">
         <div class="ch-title" id="roomTitle">公屏大厅</div>
         <div class="ch-sub" id="roomSub">公屏大厅</div>
       </div>
       <div class="ch-actions">
-        <button class="icon-btn mode-btn" id="btnMode" title="切换极简 / 专业模式">专业</button>
-        <button class="icon-btn" id="btnRoomSet" title="会话设置">⚙</button>
-        <button class="icon-btn" id="btnMembers" title="成员面板">👥</button>
+        <button class="icon-btn mode-btn" id="btnMode" title="切换极简 / 专业模式" aria-label="切换极简 / 专业模式">专业</button>
+        <button class="icon-btn" id="btnRoomSet" title="会话设置" aria-label="会话设置">⚙</button>
+        <button class="icon-btn" id="btnMembers" title="成员面板" aria-label="成员面板">👥</button>
       </div>
     </header>
 
@@ -83,28 +83,28 @@
     <div class="composer">
       <div id="replyBar" class="reply-bar hidden"></div>
       <div class="composer-tools">
-        <button class="tool-btn" id="btnImg" title="发送图片">🖼</button>
-        <button class="tool-btn" id="btnVideo" title="发送视频">🎬</button>
-        <button class="tool-btn" id="btnFile" title="发送文件（zip/pdf 等）">📎</button>
-        <button class="tool-btn" id="btnVoice" title="按住说话 / 点一下开始录音">🎙</button>
-        <button class="tool-btn" id="btnEmoji" title="表情">😊</button>
-        <button class="tool-btn" id="btnAt" title="提及某人">@</button>
-        <button class="tool-btn pro-only" id="btnHelp" title="Markdown / LaTeX / 命令帮助">?</button>
+        <button class="tool-btn" id="btnImg" title="发送图片" aria-label="发送图片">🖼</button>
+        <button class="tool-btn" id="btnVideo" title="发送视频" aria-label="发送视频">🎬</button>
+        <button class="tool-btn" id="btnFile" title="发送文件（zip/pdf 等）" aria-label="发送文件（zip/pdf 等）">📎</button>
+        <button class="tool-btn" id="btnVoice" title="按住说话 / 点一下开始录音" aria-label="按住说话 / 点一下开始录音">🎙</button>
+        <button class="tool-btn" id="btnEmoji" title="表情" aria-label="表情">😊</button>
+        <button class="tool-btn" id="btnAt" title="提及某人" aria-label="提及某人">@</button>
+        <button class="tool-btn pro-only" id="btnHelp" title="Markdown / LaTeX / 命令帮助" aria-label="Markdown / LaTeX / 命令帮助">?</button>
         <span class="rec-tip hidden" id="recTip">● 录音中 <span id="recSec">0</span>s · 松开发送
-          <button class="rec-x" id="recCancel" type="button" title="取消录音，不发送">✕ 取消</button></span>
+          <button class="rec-x" id="recCancel" type="button" title="取消录音，不发送" aria-label="取消录音，不发送">✕ 取消</button></span>
         <span class="composer-hint">Enter 发送 · Shift+Enter 换行 · 支持 **Markdown**、`$x^2$` 公式、拖入图片视频</span>
       </div>
       <div class="md-bar pro-only" id="mdBar">
-        <button class="md-btn" data-ins="**" data-ins2="**" title="粗体"><b>B</b></button>
-        <button class="md-btn" data-ins="*" data-ins2="*" title="斜体"><i>I</i></button>
-        <button class="md-btn" data-ins="~~" data-ins2="~~" title="删除线"><s>S</s></button>
-        <button class="md-btn" data-ins="`" data-ins2="`" title="行内代码">&lt;/&gt;</button>
-        <button class="md-btn" data-ins="```cpp\n" data-ins2="\n```" title="代码块">```</button>
-        <button class="md-btn" data-ins="$" data-ins2="$" title="行内公式">$x$</button>
-        <button class="md-btn" data-ins="$$\n" data-ins2="\n$$" title="块级公式">$$</button>
+        <button class="md-btn" data-ins="**" data-ins2="**" title="粗体" aria-label="粗体"><b>B</b></button>
+        <button class="md-btn" data-ins="*" data-ins2="*" title="斜体" aria-label="斜体"><i>I</i></button>
+        <button class="md-btn" data-ins="~~" data-ins2="~~" title="删除线" aria-label="删除线"><s>S</s></button>
+        <button class="md-btn" data-ins="`" data-ins2="`" title="行内代码" aria-label="行内代码">&lt;/&gt;</button>
+        <button class="md-btn" data-ins="```cpp\n" data-ins2="\n```" title="代码块" aria-label="代码块">```</button>
+        <button class="md-btn" data-ins="$" data-ins2="$" title="行内公式" aria-label="行内公式">$x$</button>
+        <button class="md-btn" data-ins="$$\n" data-ins2="\n$$" title="块级公式" aria-label="块级公式">$$</button>
         <button class="md-btn" data-ins="> " data-ins2="" title="引用">❝</button>
-        <button class="md-btn" data-ins="- " data-ins2="" title="列表">•</button>
-        <button class="md-btn" id="btnSym" title="公式符号面板">√</button>
+        <button class="md-btn" data-ins="- " data-ins2="" title="列表" aria-label="列表">•</button>
+        <button class="md-btn" id="btnSym" title="公式符号面板" aria-label="公式符号面板">√</button>
       </div>
       <textarea id="input" rows="1" placeholder="说点什么…（/help 查看命令）"></textarea>
       <div class="composer-foot">
