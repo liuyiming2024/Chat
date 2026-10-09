@@ -863,7 +863,9 @@ begin
 end;
 $$;
 
-create or replace function user_perms_set(p_user uuid, p_perms text[])
+/* 权限分配：perms = 显式授予，denied = 显式禁止（优先级更高）。
+   原来只有 p_perms，前端权限矩阵里选的「禁止」无处可存 —— 迁移缺口。 */
+create or replace function user_perms_set(p_user uuid, p_perms text[], p_denied text[] default null)
 returns boolean language plpgsql volatile security definer
 set search_path = public, extensions, pg_temp as $$
 declare uid uuid;
@@ -877,8 +879,13 @@ begin
   if not exists (select 1 from users u where u.id = uid and u.role = 'owner') then
     raise exception '仅站长可调整权限';
   end if;
-  update users set perms = coalesce(p_perms, '{}') where id = p_user;
-  insert into logs (who_id, act, detail) values (uid, 'perm', p_user::text || ': ' || array_to_string(coalesce(p_perms,'{}'), ','));
+  update users set
+    perms  = coalesce(p_perms, '{}'),
+    denied = coalesce(p_denied, '{}')
+  where id = p_user;
+  insert into logs (who_id, act, detail) values (uid, 'perm',
+    p_user::text || ' 允许[' || array_to_string(coalesce(p_perms,'{}'), ',') ||
+    '] 禁止[' || array_to_string(coalesce(p_denied,'{}'), ',') || ']');
   perform nextval('state_rev');
   return true;
 end;

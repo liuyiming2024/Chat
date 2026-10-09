@@ -1722,6 +1722,7 @@
         var min = parseInt(p[1] || '10', 10) || 10;
         if (g.ACL.roomRole(u2, r) === 'roomAdmin' && g.ACL.roomRole(me, r) !== 'roomOwner' && me.role !== 'owner') { g.UI.toast('不能禁言同级管理员', 'err'); return; }
         u2.mutedUntil = now() + min * 60000; touch(u2);
+        syncMute(u2, min);
         sysMsg(cur, '「' + u2.nick + '」被禁言 ' + min + ' 分钟'); log('mute', u2.nick + ' ' + min + '分钟', r.id); save(); return;
       }
       case 'unmute': {
@@ -2171,11 +2172,11 @@
     });
     if (g.ACL.can(me, 'user.mute', r)) {
       btn(g.ACL.muted(u) ? '解除禁言' : '禁言', '', function () {
-        if (g.ACL.muted(u)) { u.mutedUntil = 0; touch(u); save(); }
+        if (g.ACL.muted(u)) { u.mutedUntil = 0; touch(u); save(); syncMute(u, 0); }
         else {
           g.UI.prompt('禁言时长', '分钟', '10', function (v) {
             var m = parseInt(v, 10) || 10;
-            u.mutedUntil = now() + m * 60000; touch(u);
+            u.mutedUntil = now() + m * 60000; touch(u); syncMute(u, m);
             sysMsg(r.id, '「' + u.nick + '」被禁言 ' + m + ' 分钟'); log('mute', u.nick, r.id); save();
           });
         }
@@ -2230,6 +2231,17 @@
    *   每项三态 —— 继承 / 允许 / 禁止
    *   站长恒为全部权限，不显示可改。
    * ============================================================ */
+  /* 把禁言状态同步到服务端。minutes<=0 表示解除。
+     失败必须回滚本地 —— 否则界面显示已禁言、服务端没有。 */
+  function syncMute(u, minutes) {
+    if (!g.Online || !g.Online.isOnline()) return;
+    g.Online.setMute(u.id, minutes).catch(function (e) {
+      u.mutedUntil = minutes > 0 ? 0 : now() + 600000;
+      save(true); renderAll();
+      g.UI.toast('禁言同步失败：' + ((e && e.message) || '网络错误'), 'err');
+    });
+  }
+
   function permEditor(u) {
     if (u.role === 'owner') { g.UI.toast('站长拥有全部权限，无需单独设置'); return; }
     if (!g.ACL.can(me, 'user.perms')) { g.UI.toast('你没有分配权限的权限', 'err'); return; }
@@ -2307,6 +2319,13 @@
         log('perm', u.nick + ' 权限：允许[' + allow.join(',') + '] 禁止[' + deny.join(',') + ']');
         save();
         g.UI.toast('已保存：允许 ' + allow.length + ' 项，禁止 ' + deny.length + ' 项', 'ok');
+        /* 在线模式：denied 也必须一起存，否则服务端只知道「允许」，
+           被禁止的权限在服务端照样放行。 */
+        if (g.Online && g.Online.isOnline()) {
+          g.Online.setPerms(u.id, allow, deny).catch(function (e) {
+            g.UI.toast('权限同步失败：' + ((e && e.message) || '网络错误'), 'err');
+          });
+        }
       }
     });
   }
@@ -2491,7 +2510,7 @@
           }
           if (!isSelf && g.ACL.can(me, 'user.ban')) ops.appendChild(mkBtn(u.banned ? '解封' : '封禁', function () { u.banned = !u.banned; touch(u); log(u.banned ? 'ban' : 'unban', u.nick); save(); adminPanelRefresh(mo, d, view, t); }));
           if (!isSelf && g.ACL.can(me, 'user.mute')) ops.appendChild(mkBtn(g.ACL.muted(u) ? '解禁' : '禁言', function () {
-            if (g.ACL.muted(u)) { u.mutedUntil = 0; touch(u); save(); }
+            if (g.ACL.muted(u)) { u.mutedUntil = 0; touch(u); save(); syncMute(u, 0); }
             else g.UI.prompt('禁言分钟数', '', '10', function (v) { u.mutedUntil = now() + (parseInt(v, 10) || 10) * 60000; touch(u); log('mute', u.nick); save(); });
             adminPanelRefresh(mo, d, view, t);
           }));

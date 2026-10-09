@@ -214,6 +214,20 @@
   function removeMember(rid, userId) {
     return g.SB.rpc('member_remove', { p_room: rid, p_user: userId });
   }
+  /* 禁言。minutes<=0 表示解除。 */
+  function setMute(userId, minutes) {
+    return g.SB.rpc('user_mute', { p_user: userId, p_minutes: minutes || 0 });
+  }
+  /* 权限矩阵：授予 / 撤销单个权限点 */
+  function setPerms(userId, perms, denied) {
+    return g.SB.rpc('user_perms_set', {
+      p_user: userId, p_perms: perms || [], p_denied: denied || []
+    });
+  }
+  function setRole(userId, role) {
+    return g.SB.rpc('user_role_set', { p_user: userId, p_role: role });
+  }
+
   function setAdmin(rid, userId, on) {
     return g.SB.rpc('member_admin', { p_room: rid, p_user: userId, p_on: on !== false });
   }
@@ -232,6 +246,7 @@
     pull: pull, pullDelta: pullDelta, startPoll: startPoll, stopPoll: stopPoll,
     createRoom: createRoom, updateRoom: updateRoom, joinRoom: joinRoom,
     addMember: addMember, removeMember: removeMember, setAdmin: setAdmin,
+    setMute: setMute, setPerms: setPerms, setRole: setRole,
     sendMsg: sendMsg, convert: convert
   };
 })(window);
