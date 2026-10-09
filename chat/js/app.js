@@ -392,6 +392,11 @@
     host.title = on ? '消息与账号存在服务器' : '换浏览器或清除缓存会丢失';
   }
 
+  function toggleSidebar() {
+    var sb = $('sidebar');
+    if (sb) sb.classList.toggle('show');
+  }
+
   function enterApp() {
     $('gate').classList.add('hidden');
     $('gate').innerHTML = '';
@@ -2868,7 +2873,23 @@
     $('btnRoomSet').onclick = function () { roomMenu(findRoom(cur)); };
     $('btnEditNotice').onclick = function () { editNotice(findRoom(cur)); };
     $('searchInput').addEventListener('input', function (e) { roomFilter = e.target.value; renderSidebar(); });
-    $('btnMenu').onclick = function () { $('sidebar').classList.toggle('show'); };
+    /* 抽屉：原来只有 ☰ 能开合。手机上侧栏是覆盖式的，
+       打开后没有遮罩、没有关闭按钮、点外面也没反应 —— 出不来。
+       补三个出口：点遮罩、点侧栏外任意处、按 ESC。 */
+    $('btnMenu').onclick = function () { toggleSidebar(); };
+    document.addEventListener('click', function (e) {
+      var sb = $('sidebar');
+      if (!sb || !sb.classList.contains('show')) return;
+      if (sb.contains(e.target)) return;
+      if (e.target === $('btnMenu') || ($('btnMenu') && $('btnMenu').contains(e.target))) return;
+      sb.classList.remove('show');
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') {
+        var sb = $('sidebar');
+        if (sb) sb.classList.remove('show');
+      }
+    });
     $('noticeBar').onclick = function () {
       var r = findRoom(cur);
       if (r) editNotice(r);

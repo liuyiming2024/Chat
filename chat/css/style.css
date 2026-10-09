@@ -702,9 +702,13 @@ video.thumb { width: 320px; height: 180px; background: #000; }
 .lb-wrap { position: relative; max-width: 92vw; max-height: 92vh; }
 .lb-media { max-width: 92vw; max-height: 82vh; display: block; border-radius: 4px; }
 .lb-bar {
-  position: absolute;
-  top: -38px;
-  right: 0;
+  /* 原来是 top: -38px（浮在媒体上方 38px）。
+     媒体高度接近 92vh 时，这 38px 就跑到视口外面去了 —— 关闭按钮点不到，
+     用户只能刷新页面才能退出预览。改成贴视口顶部。 */
+  position: fixed;
+  top: 10px;
+  right: 12px;
+  z-index: 1110;
   display: flex;
   gap: 10px;
 }

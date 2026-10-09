@@ -563,12 +563,17 @@ begin
   if uid is null then raise exception '请先登录'; end if;
   select * into r from messages where id = p_id;
   if not found then return false; end if;
+  /* 自己的消息：走「撤回自己的消息」权限点，不再是硬编码 uid 相等。
+     这样被授予 msg.recall.own 的人也能撤，被 denied 的人撤不了。 */
   if r.from_id = uid then
+    perform acl_require('msg.recall.own', r.room_id);
     update messages set deleted = true, body = '', media_path = null where id = p_id;
     perform nextval('state_rev');
     return true;
   end if;
-  if exists (select 1 from users where id = uid and role in ('owner','admin')) then
+  /* 别人的消息：走统一的权限判定，不再硬编码 role in ('owner','admin')。
+     硬编码的后果是房主/房管在自己的房间里管不了自己的群。 */
+  if acl_can('msg.remove', r.room_id) then
     update messages set deleted = true, body = '', media_path = null where id = p_id;
     insert into logs (who_id, act, detail) values (uid, 'delete', '删除消息 ' || p_id);
     perform nextval('state_rev');
