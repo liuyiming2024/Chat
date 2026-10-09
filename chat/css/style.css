@@ -1,7 +1,10 @@
 /* ==================================================================
- * 洛谷 · 微信聊天室 —— 样式表
- * 参考微信 PC 端配色与布局（左会话 / 中聊天 / 右成员），
- * 公式排版参考 luogu.com.cn（$...$ 行内，$$...$$ 块级）
+ * 聊天室 —— 样式表
+ *
+ * 关于早期注释里出现过的名字：本项目早期用「三栏 + 蓝绿配色」描述自己时
+ * 借用了现成产品做参照，后来发现这既不准确也不必要——
+ * 它现在是自己的东西，不该挂着别人的名号。
+ * 布局：左会话 / 中聊天 / 右成员；公式用 $...$ 行内、$$...$$ 块级。
  * ================================================================== */
 
 * { box-sizing: border-box; }
@@ -20,7 +23,7 @@ input, textarea, select { font-family: inherit; font-size: 14px; }
 .hidden { display: none !important; }
 .only-narrow { display: none; }
 
-/* ---------------- 微信主色调变量 ---------------- */
+/* ---------------- 主色调变量 ---------------- */
 :root {
   --wx-bg: #f5f5f5;
   --wx-side: #e7e7e7;
@@ -859,7 +862,7 @@ video.thumb { width: 320px; height: 180px; background: #000; }
   line-height: 1.6;
 }
 
-/* ================= LaTeX（仿洛谷 KaTeX 观感） ================= */
+/* ================= LaTeX 公式排版 ================= */
 .md-inline-math { white-space: nowrap; }
 .tex-holder { display: inline-block; vertical-align: middle; }
 .tex-block {
@@ -1154,7 +1157,7 @@ body.dark .gate-card { background: var(--bg-panel); }
 .form-tip.warn { background: #fff8e6; border-color: #ffe0a3; color: #8a5a00; }
 
 /* ============ 极简模式 ============
-   隐藏专业向控件，让界面像微信一样干净。
+   隐藏专业向控件，让界面保持干净。
    公式照常渲染，只是不显示语法辅助入口。 */
 body.mode-simple .md-bar,
 body.mode-simple .btn-sym,
@@ -1299,4 +1302,34 @@ button:active,
    误触无事发生的（语音播放、表情格）保持原尺寸不动。 */
 @media (hover: none) {
   .composer-tools .tool-btn { width: 36px; height: 36px; font-size: 18px; }
+}
+
+
+/* ================= 线性图标（替换 emoji） =================
+ * 以前工具栏用 emoji：🖼 🎬 📎 🎙 😊 —— 跨平台渲染不一致，
+ * 深色模式下部分 emoji 自带颜色不会跟着主题变，高分屏还发虚。
+ * 换成手写 SVG，currentColor 上色，随主题自动适配。 */
+.ic {
+  width: 20px; height: 20px;
+  display: inline-block;
+  vertical-align: middle;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.ic-sm { width: 16px; height: 16px; }
+.ic-lg { width: 22px; height: 22px; }
+/* 实心例外（play） */
+.ic-fill { fill: currentColor; stroke: none; }
+
+/* 工具栏按钮改成装图标后，尺寸与居中需要重设 */
+.tool-btn .ic { width: 20px; height: 20px; }
+.tool-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+}
+@media (hover: none) {
+  .composer-tools .tool-btn .ic { width: 22px; height: 22px; }
 }
