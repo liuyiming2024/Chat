@@ -1333,3 +1333,36 @@ button:active,
 @media (hover: none) {
   .composer-tools .tool-btn .ic { width: 22px; height: 22px; }
 }
+
+
+/* 媒体缺失占位态
+ * 原来取不到媒体就是一块灰方块，用户不知道是还在加载、
+ * 没权限、还是数据没了 —— 而且图片/视频静默、文件/语音有提示，
+ * 同一个问题三种处理。现在统一成一个能看懂、可重试的占位态。 */
+.media-missing {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 90px;
+  padding: 12px;
+  border: 1px dashed var(--line, #d0d5dd);
+  border-radius: 6px;
+  background: var(--bg2, #f7f8fa);
+  color: #888;
+  font-size: 12px;
+  text-align: center;
+}
+.media-missing .ic { width: 24px; height: 24px; opacity: .5; }
+.media-retry {
+  margin-top: 2px;
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--pri, #3b7ff2);
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.media-retry:active { transform: translateY(1px); }
