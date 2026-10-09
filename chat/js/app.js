@@ -1184,12 +1184,24 @@
     try { rec.stop(); } catch (e) { finishRecord(recStreamRef); }
   }
 
+  /* 误触录音的最后一道保险：
+     进得去出不来的链条是「误触 🎙 → 唯一出口 ⏹ → ⏹ 的作用是发送」。
+     ✕ 取消已补上，但真有人慌了直接按 ⏹ 呢？
+     录制不足 800ms 视为误触 —— 不发送，直接丢弃并提示。
+     （原来 Math.max(1,...) 会把 0.5 秒硬算成 1 秒照样发出去。） */
+  var REC_MIN_MS = 800;
+
   function finishRecord(stream) {
     if (stream) { try { stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) { } }
     var tip = $('recTip');
     if (tip) tip.classList.add('hidden');
     var bv = $('btnVoice');
     if (bv) { bv.classList.remove('recording'); bv.textContent = '🎙'; }
+    if (recStart && (now() - recStart) < REC_MIN_MS) {
+      recChunks = []; rec = null; recStart = 0;
+      g.UI.toast('录音太短，已取消（未发送）', 'err');
+      return;
+    }
     var dur = Math.max(1, Math.round((now() - recStart) / 1000));
     if (!recChunks.length) return;
     var blob = new Blob(recChunks, { type: recChunks[0].type || 'audio/webm' });
