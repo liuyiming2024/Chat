@@ -116,7 +116,7 @@
   }
 
   /* ---------------- 站点与账号 ---------------- */
-  function ping() { return rpc('state_seq', {}).then(function () { return true; }); }
+
 
   function gateCheck(pwd) {
     return rpc('gate_check', { p: pwd }).then(function (t) {
@@ -191,7 +191,7 @@
 
   g.SB = {
     loadCfg: loadCfg, configure: configure, isOn: isOn, clearCfg: clearCfg,
-    ping: ping, syncAcl: syncAcl, token: token, uid: uid, setSession: setSession, dropSession: dropSession,
+    syncAcl: syncAcl, token: token, uid: uid, setSession: setSession, dropSession: dropSession,
     rpc: rpc,
     gateCheck: gateCheck, login: login, register: register, initSite: initSite,
     changePwd: changePwd, setGate: setGate,

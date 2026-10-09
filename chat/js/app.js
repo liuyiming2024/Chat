@@ -1929,16 +1929,34 @@
         /* 在线模式：群必须在服务端建，否则换设备就没了。
            服务端返回真实 id，用它替换本地临时 id。 */
         if (g.Online && g.Online.isOnline()) {
-          g.SB.rpc('room_create', { p_name: nm, p_desc: r.desc, p_pwd: pwd || null })
+          /* 一律走 Online 封装，不要直接 g.SB.rpc ——
+             绕过封装等于绕过"写操作只走带鉴权 RPC"这条约定，
+             新模块当天就被自己人开了后门。 */
+          g.Online.createRoom(nm, r.desc, pwd || null)
             .then(function (rid) {
               if (rid) {
                 r.id = rid;                 /* 用服务端 id，丢弃本地 uid('r') */
+                var failed = [];
+                var jobs = [];
                 cMem.value.split(/[,，\s]+/).forEach(function (n) {
                   if (!n) return;
                   var u = byNick(n);
                   if (u && r.members.indexOf(u.id) < 0) {
                     r.members.push(u.id);
-                    g.SB.rpc('member_add', { p_room: rid, p_user: u.id }).catch(function () { });
+                    /* 加人失败必须让用户知道。
+                       原来 .catch() 静默吞掉：群建好了、人没进去、毫无提示。 */
+                    jobs.push(
+                      g.Online.addMember(rid, u.id).catch(function () { failed.push(n); })
+                    );
+                  }
+                });
+                return Promise.all(jobs).then(function () {
+                  S.rooms.push(r);
+                  log('create', nm, r.id);
+                  save(true);
+                  openRoom(r.id);
+                  if (failed.length) {
+                    g.UI.toast('群已创建，但以下成员添加失败：' + failed.join('、'), 'err');
                   }
                 });
               }
@@ -2921,7 +2939,13 @@
      降级必须是静默的 —— 后端挂了不该让用户进不去聊天室。 */
   function bootOnline() {
     if (!g.Online) return Promise.resolve(false);
-    return g.Online.init({ onState: function (inS) { if (mergeState(inS)) renderAll(); } })
+    return g.Online.init({
+      onState: function (inS) { if (mergeState(inS)) renderAll(); },
+      /* 后端不可用 → 明确告知，不再静默回零 */
+      onMode: function (ok) {
+        if (!ok) g.UI.toast('未连接云端，当前为本地模式：数据只存在这台设备', 'err');
+      }
+    })
       .then(function (ok) {
         if (!ok) return false;
         if (!g.Online.isOnline()) {

@@ -265,9 +265,88 @@ $$;
 --   state_seq() 是 nextval —— 每调一次就把序号 +1，
 --   拿它做轮询比对会导致序号永远不同 → 前端每次都全量拉取，白跑。
 --   这里读 last_value，不改变序列。
+/* 增量拉取：只返回 p_since 之后变化的部分。
+ *
+ * 为什么必须有它 —— 轮询触发全量拉取是额度层面唯一还开着的水龙头：
+ *   全站用户 + 全站房间 + 近 30 天全部消息 + 200 条日志，
+ *   一个人发一句话，N 个在线客户端各拉一次全站，N×N 增长。
+ * 有了增量后，一次普通轮询返回的通常只有几条新消息。
+ *
+ * p_since：上次拿到的序号（state_peek 的返回值）。传 0 或 null 等价于全量。
+ * 返回结构比 state_get 多一个 rev，前端应把它存起来作为下次的 p_since。
+ * 删除的消息也会带上（deleted=true），前端据此撤回气泡。
+ */
+create or replace function state_delta(p_since bigint default 0)
+returns json language plpgsql stable security definer
+set search_path = public, extensions, pg_temp as $$
+declare me uuid; v_from timestamptz; v_rev bigint;
+begin
+  if not gate_passed() then raise exception '请先通过站点保护密码'; end if;
+  me := cur_user();
+  v_rev := (select last_value from state_rev);
+
+  /* 序号对应的大致时间。用 rev 差值估秒数，避免额外维护时间戳列。 */
+  if coalesce(p_since, 0) <= 0 then
+    v_from := now() - interval '30 days';
+  else
+    v_from := now() - make_interval(secs => greatest(0, v_rev - p_since) * 2 + 30);
+  end if;
+
+  return json_build_object(
+    'rev', v_rev,
+    'me', me,
+    'site', (select row_to_json(s) from (
+      select site_name, allow_register, (gate_hash is not null) as has_gate from site where id = true) s),
+    /* 用户与房间量小且变动会牵动权限，每次都带上，不做增量 */
+    'users', coalesce((select json_agg(json_build_object(
+        'id', u.id, 'nick', u.nick, 'realName', u.real_name, 'role', u.role,
+        'status', u.status, 'perms', u.perms, 'bio', u.bio,
+        'mutedUntil', (extract(epoch from u.muted_until) * 1000)::bigint,
+        'createdAt', (extract(epoch from u.created_at) * 1000)::bigint,
+        'lastSeen', (extract(epoch from u.last_seen) * 1000)::bigint
+      )) from users u), '[]'::json),
+    'rooms', coalesce((select json_agg(r) from (
+      select json_build_object(
+        'id', rm.id, 'name', rm.name, 'type', rm.type, 'owner', rm.owner_id,
+        'desc', rm.description, 'notice', rm.notice,
+        'hasPwd', (rm.pwd_hash is not null),
+        'createdAt', (extract(epoch from rm.created_at) * 1000)::bigint,
+        'members', coalesce((select json_agg(mm.user_id) from room_members mm where mm.room_id = rm.id), '[]'::json),
+        'admins', coalesce((select json_agg(aa.user_id) from room_admins aa where aa.room_id = rm.id), '[]'::json)
+      ) as r from rooms rm) x), '[]'::json),
+    'messages', coalesce((select json_agg(json_build_object(
+        'id', m.id, 'room', m.room_id, 'from', m.from_id, 'type', m.type,
+        'text', m.body, 'mediaId', m.media_path, 'name', m.media_name,
+        'size', m.media_size, 'replyTo', m.reply_to,
+        'deleted', m.deleted,
+        'ts', (extract(epoch from m.created_at) * 1000)::bigint
+      ) order by m.created_at) from messages m
+      where m.created_at > v_from
+        and (
+          exists (select 1 from rooms r where r.id = m.room_id and r.type = 'public')
+          or exists (select 1 from room_members mm
+                     where mm.room_id = m.room_id and mm.user_id = me)
+        )
+      ), '[]'::json),
+    'logs', coalesce((select json_agg(json_build_object(
+        'id', l.id, 'who', l.who_id, 'act', l.act, 'detail', l.detail,
+        'target', l.target, 'ts', (extract(epoch from l.created_at) * 1000)::bigint
+      ) order by l.created_at desc) from (
+        select * from logs where created_at > v_from order by created_at desc limit 200
+      ) l), '[]'::json)
+  );
+end;
+$$;
+
+/* 新 RPC 一律先写鉴权：序号本身不敏感，但它暴露"站点是否在活跃变化"，
+   且轮询接口不该对未过门禁的人开放。 */
 create or replace function state_peek() returns bigint
-language sql stable as $$
-  select last_value from state_rev;
+language plpgsql stable security definer
+set search_path = public, extensions, pg_temp as $$
+begin
+  if not gate_passed() then raise exception '请先通过站点保护密码'; end if;
+  return (select last_value from state_rev);
+end;
 $$;
 
 -- 站点初始化：设保护密码 + 建站长（仅当未初始化时可用）
@@ -377,6 +456,7 @@ end;
 $$;
 
 -- 拉取全量状态（需已通过保护密码）
+/* 全量拉取。前端只在首次与"本地完全没数据"时用；日常轮询走 state_delta()。 */
 create or replace function state_get()
 returns json language plpgsql stable security definer
 set search_path = public, extensions, pg_temp as $$
