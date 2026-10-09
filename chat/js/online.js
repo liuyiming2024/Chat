@@ -25,25 +25,30 @@
   var seq = null;          // 上次看到的序号
   var timer = null;
   var onStateCb = null;
+  var onModeCb = null;
 
   /* ---------------- 能力探测 ---------------- */
 
   /* 探测后端是否可达 + 站点是否已初始化。
-     失败一律降级为本地模式，绝不阻断用户使用。 */
+     失败时降级为本地模式，但必须告知用户 —— 静默回零会让人
+     以为自己在云端，实际数据只存在本机浏览器里。 */
   function probe() {
-    /* 后端不可用必须静默降级：缺 SB、缺 rpc、连不上，都只是退回本地模式，
-       绝不能把异常抛到 boot() 里把整个页面搞崩。 */
-    if (!g.SB || typeof g.SB.rpc !== 'function') return Promise.resolve(false);
-    if (g.SB.isOn && !g.SB.isOn()) return Promise.resolve(false);
+    /* 异常不能抛到 boot() 里把页面搞崩，但要回调通知。 */
+    if (!g.SB || typeof g.SB.rpc !== 'function') { notifyMode(false); return Promise.resolve(false); }
+    if (g.SB.isOn && !g.SB.isOn()) { notifyMode(false); return Promise.resolve(false); }
     return g.SB.rpc('site_ready', {}).then(function (r) {
       reachable = true;
       online = (r === true || r === 'true' || r === 't');
+      notifyMode(online);
       return true;
     }).catch(function () {
       reachable = false; online = false;
+      notifyMode(false);
       return false;
     });
   }
+
+  function notifyMode(ok) { if (onModeCb) { try { onModeCb(ok); } catch (e) { } } }
 
   function isOnline() { return online; }
   function isReachable() { return reachable; }
@@ -119,6 +124,7 @@
   function convert(j) {
     if (!j) return null;
     var out = { users: [], rooms: [], messages: {}, logs: [] };
+    if (j.rev != null) out.rev = j.rev;
     (j.users || []).forEach(function (u) { out.users.push(tUser(u)); });
     (j.rooms || []).forEach(function (r) { out.rooms.push(tRoom(r)); });
     (j.messages || []).forEach(function (m) {
@@ -137,10 +143,25 @@
     return out;
   }
 
-  /* ---------------- 拉取 ---------------- */
+  /* ---------------- 拉取 ----------------
+   * 首次用 state_get() 全量；之后一律 state_delta(since) 增量。
+   * 全量轮询的代价：一个人发一句话，N 个在线客户端各拉一次全站（30 天消息 + 200 日志），
+   * N×N 增长 —— 免费额度层面唯一还开着的水龙头。
+   */
 
   function pull() {
     return g.SB.rpc('state_get', {}).then(function (j) {
+      var s = convert(j);
+      if (s && j && typeof j.rev === 'number') seq = j.rev;
+      if (s && onStateCb) onStateCb(s);
+      return s;
+    });
+  }
+
+  /* 增量拉取：只取上次之后变化的部分 */
+  function pullDelta() {
+    return g.SB.rpc('state_delta', { p_since: seq || 0 }).then(function (j) {
+      if (j && typeof j.rev === 'number') seq = j.rev;
       var s = convert(j);
       if (s && onStateCb) onStateCb(s);
       return s;
@@ -156,8 +177,8 @@
       if (!online || !g.SB || !g.SB.token()) return;
       g.SB.rpc('state_peek', {}).then(function (n) {
         n = Number(n);
-        if (seq === null) { seq = n; return; }
-        if (n !== seq) { seq = n; return pull(); }
+        if (seq === null) { seq = n; return pull(); }   /* 首次建立基线 */
+        if (n !== seq) { seq = n; return pullDelta(); } /* 之后只拉增量 */
       }).catch(function () { /* 网络抖动忽略，下次再来 */ });
     }, intervalMs);
   }
@@ -201,13 +222,14 @@
 
   function init(handlers) {
     onStateCb = handlers && handlers.onState;
+    onModeCb = handlers && handlers.onMode;
     return probe();
   }
 
   g.Online = {
     init: init, probe: probe, isOnline: isOnline, isReachable: isReachable,
     setup: setup, gate: gate, login: login, register: register,
-    pull: pull, startPoll: startPoll, stopPoll: stopPoll,
+    pull: pull, pullDelta: pullDelta, startPoll: startPoll, stopPoll: stopPoll,
     createRoom: createRoom, updateRoom: updateRoom, joinRoom: joinRoom,
     addMember: addMember, removeMember: removeMember, setAdmin: setAdmin,
     sendMsg: sendMsg, convert: convert
