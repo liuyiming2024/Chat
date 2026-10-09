@@ -451,11 +451,20 @@ create table if not exists login_attempts (
 create index if not exists login_attempts_time_idx on login_attempts (created_at desc);
 create index if not exists login_attempts_nick_idx on login_attempts (lower(nick), created_at desc);
 
-/* 清理旧记录，顺带被 session_cleanup 调用 */
+/* 管理员手动清理入口。
+   必须鉴权：谁都能调的话，攻击者可以反复清空失败记录，
+   刚做的登录限流就形同虚设 —— 冻不住任何人。
+   注意：登录成功路径不能调这个（会把普通用户自己拒绝掉），
+   那里改成内联 delete 了。 */
 create or replace function login_attempts_cleanup()
-returns void language sql volatile security definer
+returns void language plpgsql volatile security definer
 set search_path = public, extensions, pg_temp as $$
+begin
+  if not auth_is_staff() then
+    raise exception '仅管理员可清理登录记录';
+  end if;
   delete from login_attempts where created_at < now() - interval '24 hours';
+end;
 $$;
 
 /* 登录。
@@ -500,7 +509,10 @@ begin
   end if;
 
   insert into login_attempts (nick, ok) values (p_nick, true);
-  perform login_attempts_cleanup();
+  /* 顺手清掉 24 小时前的旧记录。
+     内联写而不调 login_attempts_cleanup() —— 那个函数要求管理员权限，
+     普通用户登录成功时会把自己拒绝掉。 */
+  delete from login_attempts where created_at < now() - interval '24 hours';
 
   update users set last_seen = now() where id = u.id;
   tk := issue_session(u.id, false);

@@ -912,7 +912,7 @@
       var dl = elc('button', 'file-dl', '下载 ' + g.UI.esc(m.name || '文件'));
       dl.onclick = function () {
         g.Media.get(m.mediaId).then(function (u) {
-          if (!u) { g.UI.toast('文件数据已丢失'); return; }
+          if (!u) { g.UI.toast('这个文件没同步到这台设备'); return; }
           var a = document.createElement('a');
           a.href = u; a.download = m.name || 'file'; a.click();
         });
@@ -920,13 +920,40 @@
       wrap.appendChild(dl);
     }
     wrap.appendChild(cap);
-    /* 唯一的媒体读取路径：一律从 IndexedDB 取（任何部署形态都相同） */
-    if (m.mediaId) {
-      g.Media.get(m.mediaId).then(function (u) {
-        if (!u) return;
-        if (m.type === 'image') img.src = u; else if (!v.src) v.src = u;
-      });
+
+    /* 占位态：本地没命中、远端也取不到时的兜底。
+       原来这里是 `if (!u) return;` —— 什么都不做，用户只看到一个灰色方块，
+       不知道是还在加载、没权限、还是数据没了。而且同类不一致：
+       文件会提示「文件数据已丢失」、语音会提示「语音数据已丢失」，
+       只有图片和视频是静默的。同一个问题三种处理。
+       现在统一：给一个能看懂的占位态，并且可重试。 */
+    function showMissing() {
+      var ph = elc('div', 'media-missing');
+      ph.innerHTML =
+        '<svg class="ic" aria-hidden="true"><use href="#i-image"/></svg>' +
+        '<span>' + (m.type === 'video' ? '这个视频没同步到这台设备'
+                                       : '这张图没同步到这台设备') + '</span>' +
+        '<button class="media-retry" type="button">重试</button>';
+      ph.querySelector('.media-retry').onclick = function (e) {
+        e.stopPropagation();
+        ph.remove();
+        load();
+      };
+      wrap.insertBefore(ph, cap);
+      /* 占位态下把媒体元素藏掉，避免灰块和提示叠在一起 */
+      if (m.type === 'image') img.style.display = 'none';
+      else if (v) v.style.display = 'none';
     }
+
+    function load() {
+      if (!m.mediaId) { showMissing(); return; }
+      g.Media.get(m.mediaId).then(function (u) {
+        if (!u) { showMissing(); return; }
+        if (m.type === 'image') img.src = u;
+        else if (v && !v.src) v.src = u;
+      }).catch(function () { showMissing(); });
+    }
+    load();
     return wrap;
   }
 
@@ -1271,7 +1298,7 @@
     play.onclick = function () {
       if (audio && !audio.paused) { audio.pause(); audio.currentTime = 0; setPlayIcon(play); bars.classList.remove('playing'); return; }
       g.Media.get(m.mediaId).then(function (u) {
-        if (!u) { g.UI.toast('语音数据已丢失'); return; }
+        if (!u) { g.UI.toast('这条语音没同步到这台设备'); return; }
         if (!audio) audio = new Audio(u);
         play.textContent = '⏸';
         bars.classList.add('playing');
@@ -1644,6 +1671,7 @@
     if (!blob) return;
     g.Online.uploadMedia(m.room, m.name || '', blob).then(function (slot) {
       m.mediaPath = slot.path;
+      g.UI.toast('已同步到云端，换设备可见', 'ok');
       /* 回填到服务端消息记录，其他设备才能知道去哪取 */
       if (g.SB && g.SB.rpc) {
         g.SB.rpc('msg_media', { p_msg: m.id, p_media: slot.path }).catch(function () { });
@@ -1688,7 +1716,15 @@
             });
         });
       });
-    }).then(function (m) { pushMsg(m); g.UI.toast('已发送', 'ok'); })
+    }).then(function (m) {
+      pushMsg(m);
+      /* 在线模式下先说「已发送（本机）」。
+         上传是异步的、不等结果，几秒后才可能弹「云端上传失败」——
+         如果第一条直接说「已发送」，用户会看到一绿一红自相矛盾，
+         不知道到底发出去没有。 */
+      var onl = !!(g.Online && g.Online.isOnline());
+      g.UI.toast(onl ? '已发送（本机），正在同步到云端…' : '已发送', 'ok');
+    })
       .catch(function (e) { g.UI.toast('发送失败：' + (e && e.message ? e.message : '未知错误'), 'err'); });
   }
 

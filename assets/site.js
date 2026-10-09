@@ -21,7 +21,9 @@
     }
     b.classList.toggle('dark', dark);
     var btn = document.getElementById('btnTheme');
-    if (btn) btn.textContent = dark ? '☀' : '🌙';
+    /* 换成 SVG 后不能再改 textContent —— 那会把整个 svg 抹掉 */
+    if (btn) btn.innerHTML = '<svg class="ic" aria-hidden="true"><use href="#i-' +
+      (dark ? 'sun' : 'moon') + '"/></svg>';
   }
   function getTheme() {
     try { return localStorage.getItem(THEME_KEY) || 'auto'; } catch (e) { return 'auto'; }
