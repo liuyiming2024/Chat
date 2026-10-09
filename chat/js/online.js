@@ -73,9 +73,15 @@
     });
   }
 
+  /* 登录。
+     服务端契约已改：凭证类失败【返回 {ok:false, err}】而不是抛异常 ——
+     因为 raise 会回滚同一函数内的写入，失败计数根本记不上。
+     所以这里必须检查 ok 字段，只看"有没有抛异常"会漏判。 */
   function login(nick, pwd) {
     return g.SB.rpc('user_login', { p_nick: nick, p_pwd: pwd }).then(function (r) {
       if (!r) throw new Error('昵称或密码错误');
+      if (r.ok === false) throw new Error(r.err || '登录失败');
+      if (!r.token) throw new Error('登录失败');
       g.SB.setSession(r.token, r.uid);
       online = true;
       return r;
@@ -232,11 +238,52 @@
     return g.SB.rpc('member_admin', { p_room: rid, p_user: userId, p_on: on !== false });
   }
 
+  /* ---------------- 媒体 ----------------
+   * 桶是私有的，且本项目用自建会话（拿不到 Supabase Auth 的 JWT），
+   * 所以上传走"先申请槽位 → anon 上传 → 提交"三步。
+   * 任一步失败都退回本地 IndexedDB，并明确告知用户。
+   */
+  function prepareMedia(room, name, size) {
+    return g.SB.rpc('media_prepare', { p_room: room, p_name: name, p_size: size });
+  }
+  function commitMedia(id) {
+    return g.SB.rpc('media_commit', { p_id: id });
+  }
+  function mediaUrl(id, exp) {
+    return g.SB.rpc('media_url', { p_id: id, p_exp: exp || 3600 });
+  }
+
+  /* 完整上传：申请 → 上传字节 → 提交。返回 {id, path}，失败抛错。 */
+  function uploadMedia(room, name, blob) {
+    if (!g.SB || !g.SB.uploadToStorage) return Promise.reject(new Error('上传不可用'));
+    var slot = null;
+    return prepareMedia(room, name, blob.size || 0).then(function (r) {
+      slot = r;
+      return g.SB.uploadToStorage(r.path, blob);
+    }).then(function () {
+      return commitMedia(slot.id);
+    }).then(function () {
+      return slot;
+    });
+  }
+
   /* ---------------- 接入 ---------------- */
 
   function init(handlers) {
     onStateCb = handlers && handlers.onState;
     onModeCb = handlers && handlers.onMode;
+
+    /* 媒体远端解析：本地 IndexedDB 里没有的媒体（换设备、清缓存），
+       去服务端换签名 URL。桶是私有的，不能直接拼公开链接。 */
+    if (g.Media && g.Media.setRemoteResolver) {
+      g.Media.setRemoteResolver(function (id) {
+        /* id 可能是 storage 路径（room/uid/uuid），也可能是本地 id */
+        if (!id || String(id).indexOf('/') < 0) return Promise.resolve(null);
+        return g.SB.rpc('media_url_by_path', { p_path: String(id) })
+          .then(function (u) { return u || null; })
+          .catch(function () { return null; });
+      });
+    }
     return probe();
   }
 
@@ -247,6 +294,8 @@
     createRoom: createRoom, updateRoom: updateRoom, joinRoom: joinRoom,
     addMember: addMember, removeMember: removeMember, setAdmin: setAdmin,
     setMute: setMute, setPerms: setPerms, setRole: setRole,
+    prepareMedia: prepareMedia, commitMedia: commitMedia, mediaUrl: mediaUrl,
+    uploadMedia: uploadMedia,
     sendMsg: sendMsg, convert: convert
   };
 })(window);

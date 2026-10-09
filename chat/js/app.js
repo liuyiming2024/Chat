@@ -1636,6 +1636,25 @@
     g.UI.modal({ title: '公式符号', body: d, okText: '关闭', cancelText: null, wide: true });
   }
 
+  /* 把媒体同步到云端。失败静默降级为本地（消息照发，只是跨设备看不到）。
+     上传成功后再更新消息的 mediaPath，让其他设备能取到。 */
+  function uploadRemote(m, dataUrl) {
+    if (!g.Online || !g.Online.isOnline() || !g.Media.toBlob) return;
+    var blob = g.Media.toBlob(dataUrl);
+    if (!blob) return;
+    g.Online.uploadMedia(m.room, m.name || '', blob).then(function (slot) {
+      m.mediaPath = slot.path;
+      /* 回填到服务端消息记录，其他设备才能知道去哪取 */
+      if (g.SB && g.SB.rpc) {
+        g.SB.rpc('msg_media', { p_msg: m.id, p_media: slot.path }).catch(function () { });
+      }
+      save(true);
+    }).catch(function (e) {
+      /* 降级不静默：这条消息在本机看得到、换设备看不到，得让人知道 */
+      g.UI.toast('已发送（本机可见），云端上传失败：' + ((e && e.message) || '未知原因'), 'err');
+    });
+  }
+
   function sendMediaFile(file, kind) {
     var r = findRoom(cur);
     var sp = g.ACL.canSpeak(me, r);
@@ -1657,11 +1676,16 @@
             id: uid('msg'), room: cur, from: me.id, type: kind,
             mediaId: id, name: file.name, size: g.Media.dataUrlSize(u), ts: now()
           };
-          if (kind === 'video') {
-            return g.Media.videoPoster(u).then(function (p) { if (p) m.poster = p; return m; })
-              .catch(function () { return m; });
-          }
-          return m;
+          return (kind === 'video'
+            ? g.Media.videoPoster(u).then(function (p) { if (p) m.poster = p; return m; })
+                .catch(function () { return m; })
+            : Promise.resolve(m)).then(function (mm) {
+              /* 在线模式：同时往云端传一份，换设备才看得到。
+                 本地已经存好了，云端失败不影响这条消息发出去 ——
+                 只是对方换设备看不到，所以失败要提示。 */
+              uploadRemote(mm, u);
+              return mm;
+            });
         });
       });
     }).then(function (m) { pushMsg(m); g.UI.toast('已发送', 'ok'); })

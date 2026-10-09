@@ -35,16 +35,47 @@
     });
   }
 
+  /* 远端解析器：由 online.js 注入。
+     本地 IndexedDB 里没有这条媒体时（换设备、清缓存），
+     用它把 storage 里的对象换成可访问链接。 */
+  var remoteResolver = null;
+  function setRemoteResolver(fn) { remoteResolver = fn; }
+
   function get(id) {
     return open().then(function (db) {
-      if (!db) return localStorage.getItem('wxlg_m_' + id);
+      var local = null;
+      if (!db) local = localStorage.getItem('wxlg_m_' + id);
       return new Promise(function (res) {
+        if (!db) { res(local); return; }
         var tx = db.transaction(STORE, 'readonly');
         var rq = tx.objectStore(STORE).get(id);
-        rq.onsuccess = function () { res(rq.result || null); };
-        rq.onerror = function () { res(null); };
+        rq.onsuccess = function () { res(rq.result || local || null); };
+        rq.onerror = function () { res(local || null); };
       });
+    }).then(function (v) {
+      if (v) return v;
+      if (remoteResolver) {
+        return Promise.resolve()
+          .then(function () { return remoteResolver(id); })
+          .then(function (u) { return u || null; })
+          .catch(function () { return null; });
+      }
+      return null;
     });
+  }
+
+  /* dataURL / Blob → Blob（上传需要二进制，不能传 dataURL） */
+  function toBlob(dataUrl) {
+    try {
+      var i = dataUrl.indexOf(',');
+      var head = dataUrl.slice(0, i);
+      var b64 = dataUrl.slice(i + 1);
+      var mime = (head.match(/data:([^;]+)/) || [])[1] || 'application/octet-stream';
+      var bin = atob(b64);
+      var n = bin.length, u8 = new Uint8Array(n);
+      for (var k = 0; k < n; k++) u8[k] = bin.charCodeAt(k);
+      return new Blob([u8], { type: mime });
+    } catch (e) { return null; }
   }
 
   function del(id) {
@@ -123,7 +154,7 @@
   }
 
   g.Media = {
-    put: put, get: get, del: del,
+    put: put, get: get, del: del, setRemoteResolver: setRemoteResolver, toBlob: toBlob,
     compressImage: compressImage, readFile: readFile, videoPoster: videoPoster,
     fmtSize: fmtSize, dataUrlSize: dataUrlSize
   };
