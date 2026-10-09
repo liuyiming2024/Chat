@@ -429,28 +429,83 @@ end;
 $$;
 
 -- 登录
+
+-- ==================================================================
+-- 登录失败计数
+--
+-- 为什么单独建表、且 user_login 不再用 raise 报错：
+--   plpgsql 里 raise exception 会回滚同一函数内此前的写入，
+--   所以"先记一次失败再抛错"永远记不上 —— 计数必须是能提交的。
+--
+-- 做法：密码错误时【写入计数并 return ok:false】，而不是 raise。
+--       没有 raise，写入就提交了，计数才真正生效。
+-- ==================================================================
+
+create table if not exists login_attempts (
+  id         bigserial primary key,
+  nick       text not null,
+  ip_hint    text not null default '',
+  ok         boolean not null default false,
+  created_at timestamptz not null default now()
+);
+create index if not exists login_attempts_time_idx on login_attempts (created_at desc);
+create index if not exists login_attempts_nick_idx on login_attempts (lower(nick), created_at desc);
+
+/* 清理旧记录，顺带被 session_cleanup 调用 */
+create or replace function login_attempts_cleanup()
+returns void language sql volatile security definer
+set search_path = public, extensions, pg_temp as $$
+  delete from login_attempts where created_at < now() - interval '24 hours';
+$$;
+
+/* 登录。
+   注意契约变化：凭证类失败【返回 ok:false】而不是 raise ——
+   只有这样失败计数才提交得了（raise 会回滚写入）。
+   调用方必须检查返回值里的 ok 字段，不能只看"没抛异常"。 */
 create or replace function user_login(p_nick text, p_pwd text)
 returns json language plpgsql volatile security definer
 set search_path = public, extensions, pg_temp as $$
-declare u record; tk text;
+declare u record; tk text; v_fail int;
 begin
   if not gate_passed() then raise exception '请先通过站点保护密码'; end if;
-  select * into u from users where lower(nick) = lower(p_nick);
-  if not found then raise exception '昵称或密码错误'; end if;
 
-  /* 同上：失败计数在这里无效（raise 会回滚），不要再加。 */
+  /* 频率闸门：15 分钟内同一昵称失败 8 次即冻结 15 分钟。
+     这是数据库层唯一能做的登录限流位置。 */
+  select count(*) into v_fail from login_attempts
+   where lower(nick) = lower(p_nick) and ok = false
+     and created_at > now() - interval '15 minutes';
+  if v_fail >= 8 then
+    return json_build_object('ok', false, 'err', '尝试次数过多，请 15 分钟后再试');
+  end if;
+
+  select * into u from users where lower(nick) = lower(p_nick);
+  if not found then
+    insert into login_attempts (nick, ok) values (p_nick, false);
+    perform nextval('state_rev');
+    return json_build_object('ok', false, 'err', '昵称或密码错误');
+  end if;
+
   if u.pwd_hash <> crypt(p_pwd, u.pwd_hash) then
-    raise exception '昵称或密码错误';
+    insert into login_attempts (nick, ok) values (p_nick, false);
+    perform nextval('state_rev');
+    return json_build_object('ok', false, 'err', '昵称或密码错误');
   end if;
 
   -- 密码正确，再判状态（顺序不能反：否则能凭报错枚举"昵称是否存在/是否被封"）
-  if u.status = 'banned' then raise exception '该账号已被封禁'; end if;
-  if u.status = 'pending' then raise exception '账号待站长审核，请稍候'; end if;
+  if u.status = 'banned' then
+    return json_build_object('ok', false, 'err', '该账号已被封禁');
+  end if;
+  if u.status = 'pending' then
+    return json_build_object('ok', false, 'err', '账号待站长审核，请稍候');
+  end if;
+
+  insert into login_attempts (nick, ok) values (p_nick, true);
+  perform login_attempts_cleanup();
 
   update users set last_seen = now() where id = u.id;
   tk := issue_session(u.id, false);
   -- 不返回 real_name：前端无该字段，且避免实名信息随登录响应外泄
-  return json_build_object('token', tk, 'uid', u.id,
+  return json_build_object('ok', true, 'token', tk, 'uid', u.id,
     'nick', u.nick, 'role', u.role, 'status', u.status);
 end;
 $$;
@@ -910,6 +965,52 @@ begin
 end;
 $$;
 
+/* 按路径取媒体链接（前端拿到的 mediaId 若是 storage 路径就走这个）。
+   鉴权同 media_url：必须是该房间成员，或是上传者本人。 */
+create or replace function media_url_by_path(p_path text)
+returns text language plpgsql stable security definer
+set search_path = public, extensions, pg_temp as $$
+declare uid uuid; m record; v_url text;
+begin
+  uid := cur_user();
+  if uid is null then raise exception '请先登录'; end if;
+  select * into m from media_objects where path = p_path;
+  if not found then return null; end if;
+  if m.uploader <> uid then
+    if not exists (select 1 from rooms r where r.id = m.room_id and r.type = 'public')
+       and not exists (select 1 from room_members mm
+                       where mm.room_id = m.room_id and mm.user_id = uid) then
+      raise exception '无权访问该媒体';
+    end if;
+  end if;
+  v_url := null;
+  begin
+    execute 'select storage.create_signed_url($1, $2, $3)'
+      into v_url using 'media', m.path, 3600;
+  exception when others then
+    v_url := null;
+  end;
+  return v_url;
+end;
+$$;
+
+/* 回填消息的云端媒体路径（前端上传成功后再调）。
+   只有消息作者本人能改，且必须已经过发消息权限。 */
+create or replace function msg_media(p_msg uuid, p_media text)
+returns boolean language plpgsql volatile security definer
+set search_path = public, extensions, pg_temp as $$
+declare uid uuid;
+begin
+  uid := cur_user();
+  if uid is null then raise exception '请先登录'; end if;
+  update messages set media_path = p_media
+   where id = p_msg and from_id = uid;
+  if not found then raise exception '消息不存在或不是你发的'; end if;
+  perform nextval('state_rev');
+  return true;
+end;
+$$;
+
 -- 个人资料
 create or replace function profile_update(p_nick text default null, p_real text default null,
                                           p_bio text default null)
@@ -1323,13 +1424,152 @@ values ('media', 'media', false)
 on conflict (id) do nothing;
 update storage.buckets set public = false where id = 'media';
 
+
+-- ==================================================================
+-- 媒体上传（跨设备可见）
+--
+-- 背景：媒体原本只存 IndexedDB，换设备就看不到了。
+--
+-- 难点：桶已改成私有（防被当图床），但本项目用的是自建会话，
+--       没有 Supabase Auth 的 JWT，拿不到 authenticated 角色，
+--       因此不能直接靠 `to authenticated` 策略上传。
+--
+-- 方案：先过我们自己的鉴权申请一个"待上传"槽位，再让客户端拿 anon key
+--       往那个精确路径上传。storage 的插入策略调 media_upload_allowed()，
+--       只有"刚被服务端登记过、且还没提交"的路径才允许写入。
+--       攻击者无法绕过：他拿不到槽位，因为申请槽位要过门禁 + 房间成员 + 权限。
+-- ==================================================================
+
+create table if not exists media_objects (
+  id         uuid primary key default gen_random_uuid(),
+  room_id    text not null,
+  uploader   uuid references users(id) on delete cascade,
+  name       text not null default '',
+  size       bigint not null default 0,
+  path       text not null unique,
+  committed  boolean not null default false,
+  created_at timestamptz not null default now()
+);
+create index if not exists media_objects_path_idx on media_objects(path);
+create index if not exists media_objects_time_idx on media_objects(created_at desc);
+
+/* 申请上传槽位。返回 {id, path}。
+   鉴权：过了门禁 + 是该房间成员 + 有 media.send 权限 + 体积不超上限。 */
+create or replace function media_prepare(p_room text, p_name text, p_size bigint)
+returns json language plpgsql volatile security definer
+set search_path = public, extensions, pg_temp as $$
+declare uid uuid; v_path text; v_id uuid;
+begin
+  uid := cur_user();
+  if uid is null then raise exception '请先登录'; end if;
+  perform acl_require('media.send', p_room);
+
+  if not exists (select 1 from rooms r where r.id = p_room) then
+    raise exception '房间不存在';
+  end if;
+  if not exists (select 1 from rooms r where r.id = p_room and r.type = 'public')
+     and not exists (select 1 from room_members mm where mm.room_id = p_room and mm.user_id = uid) then
+    raise exception '不是该房间成员';
+  end if;
+
+  /* 免费版空间有限，单文件封顶 8MB */
+  if coalesce(p_size, 0) > 8 * 1024 * 1024 then
+    raise exception '文件超过 8MB 上限';
+  end if;
+  if coalesce(p_size, 0) <= 0 then raise exception '空文件'; end if;
+
+  v_id := gen_random_uuid();
+  v_path := p_room || '/' || uid::text || '/' || v_id::text;
+
+  insert into media_objects (id, room_id, uploader, name, size, path)
+  values (v_id, p_room, uid, coalesce(p_name, ''), coalesce(p_size, 0), v_path);
+
+  perform nextval('state_rev');
+  return json_build_object('id', v_id, 'path', v_path);
+end;
+$$;
+
+/* storage 插入策略用：只有刚登记过的路径可写。
+   security definer —— anon 只需 execute 权限，不需要直接读表。 */
+create or replace function media_upload_allowed(p_path text)
+returns boolean language sql stable security definer
+set search_path = public, extensions, pg_temp as $$
+  select exists (
+    select 1 from media_objects
+    where path = p_path
+      and committed = false
+      and created_at > now() - interval '15 minutes'
+  );
+$$;
+
+/* 上传完成后提交。提交后才算数，未提交的槽位 15 分钟自动作废。 */
+create or replace function media_commit(p_id uuid)
+returns boolean language plpgsql volatile security definer
+set search_path = public, extensions, pg_temp as $$
+declare uid uuid;
+begin
+  uid := cur_user();
+  if uid is null then raise exception '请先登录'; end if;
+  update media_objects set committed = true
+   where id = p_id and uploader = uid;
+  if not found then raise exception '槽位不存在或不是你申请的'; end if;
+  perform nextval('state_rev');
+  return true;
+end;
+$$;
+
+/* 取访问链接：仍是该房间成员才给。
+   桶是私有的，必须走签名 URL；签不出来就返回 null，前端退回本地。 */
+create or replace function media_url(p_id uuid, p_exp int default 3600)
+returns text language plpgsql stable security definer
+set search_path = public, extensions, pg_temp as $$
+declare uid uuid; m record; v_url text;
+begin
+  uid := cur_user();
+  if uid is null then raise exception '请先登录'; end if;
+  select * into m from media_objects where id = p_id;
+  if not found then return null; end if;
+  if m.uploader <> uid then
+    if not exists (select 1 from rooms r where r.id = m.room_id and r.type = 'public')
+       and not exists (select 1 from room_members mm
+                       where mm.room_id = m.room_id and mm.user_id = uid) then
+      raise exception '无权访问该媒体';
+    end if;
+  end if;
+
+  v_url := null;
+  begin
+    /* Supabase 的 storage 扩展提供 create_signed_url；
+       版本差异可能没有，异常吞掉，前端据此退回本地媒体。 */
+    execute 'select storage.create_signed_url($1, $2, $3)'
+      into v_url using 'media', m.path, greatest(60, least(coalesce(p_exp,3600), 86400));
+  exception when others then
+    v_url := null;
+  end;
+  return v_url;
+end;
+$$;
+
+grant execute on function media_upload_allowed(text) to anon, authenticated;
+
 -- 桶级策略：只允许登录用户读自己所在房间的媒体。
 -- 没有这层，私有桶只是"默认拒绝"，仍然要靠下面的函数取签名 URL。
 drop policy if exists media_read on storage.objects;
 create policy media_read on storage.objects
   for select to authenticated
   using (bucket_id = 'media' and auth_role() is not null);
+/* 上传策略：不要用 `to authenticated` —— 本项目是自建会话，
+   客户端拿 anon key 请求，角色永远是 anon，那条策略永远不生效，上传会全部失败。
+   改成 anon 可写，但写入路径必须是服务端刚登记过的槽位。
+   攻击者绕过不了：申请槽位要过门禁 + 房间成员 + media.send 权限 + 8MB 上限。 */
 drop policy if exists media_write on storage.objects;
 create policy media_write on storage.objects
-  for insert to authenticated
-  with check (bucket_id = 'media' and auth_role() is not null);
+  for insert to anon, authenticated
+  with check (bucket_id = 'media' and public.media_upload_allowed(name));
+
+-- 覆盖更新（同名重传）也走同一条校验
+drop policy if exists media_update on storage.objects;
+create policy media_update on storage.objects
+  for update to anon, authenticated
+  using (bucket_id = 'media' and public.media_upload_allowed(name))
+  with check (bucket_id = 'media' and public.media_upload_allowed(name));

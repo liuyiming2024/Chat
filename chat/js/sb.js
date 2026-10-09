@@ -189,9 +189,34 @@
     return url + '/storage/v1/object/public/media/' + id + '.' + (mime || 'bin');
   }
 
+  /* 往 storage 桶上传字节。
+     桶是私有的，但策略允许"服务端刚登记过的路径"写入（见 media_upload_allowed）。
+     这里用 anon key 直传，不经过我们的 RPC，避免大文件走 PostgREST 的 body 限制。 */
+  function uploadToStorage(path, blob) {
+    if (!isOn()) return Promise.reject(new Error('后端未配置'));
+    var ep = url + '/storage/v1/object/media/' + path.split('/').map(encodeURIComponent).join('/');
+    return fetch(ep, {
+      method: 'POST',
+      headers: {
+        'apikey': key,
+        'Authorization': 'Bearer ' + key,
+        'Content-Type': (blob && blob.type) || 'application/octet-stream',
+        'x-upsert': 'false'
+      },
+      body: blob
+    }).then(function (r) {
+      if (!r.ok) {
+        return r.text().then(function (t) {
+          throw new Error('上传失败 ' + r.status + '：' + String(t || '').slice(0, 120));
+        });
+      }
+      return true;
+    });
+  }
+
   g.SB = {
     loadCfg: loadCfg, configure: configure, isOn: isOn, clearCfg: clearCfg,
-    syncAcl: syncAcl, token: token, uid: uid, setSession: setSession, dropSession: dropSession,
+    syncAcl: syncAcl, uploadToStorage: uploadToStorage, token: token, uid: uid, setSession: setSession, dropSession: dropSession,
     rpc: rpc,
     gateCheck: gateCheck, login: login, register: register, initSite: initSite,
     changePwd: changePwd, setGate: setGate,
