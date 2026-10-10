@@ -1,10 +1,12 @@
 name: 构建诊断
 
-# 目的：把 APK / EXE 构建的报错正文写回 diag 分支的 build-log.txt。
+# 把 APK / EXE 构建的报错正文写回 diag 分支。
 #
 # 为什么需要它：沙箱访问 actions/runs/{id}/logs 被网络策略挡住（403），
-# 看不到报错，只能靠"猜原因 + 改一版再跑一遍"，已经空转了六轮。
-# 这里改成让构建自己把输出写出来 —— 跟 db-run.yml 写 report.txt 是同一条通道。
+# 看不到报错，只能靠"猜原因 + 改一版再跑一遍"。这里让构建自己把输出写出来。
+#
+# 关键设计：**每一步都 if: always() 且命令不中断**。
+# 第一版没这么做，安卓第一步失败后桌面段被整个跳过，等于白跑一轮。
 
 on:
   workflow_dispatch:
@@ -29,30 +31,24 @@ jobs:
           node-version: '20'
 
       - uses: actions/setup-java@v5
-        if: ${{ github.event.inputs.which != 'desktop' }}
         with:
           distribution: 'temurin'
           java-version: '21'
 
-      - name: 采集环境
+      - name: 环境
+        if: always()
         run: |
           {
             echo "===== 环境 ====="
             echo "date: $(date -u)"
-            echo "runner: $RUNNER_OS"
             node -v; npm -v
-            java -version 2>&1 | head -3
+            java -version 2>&1 | head -2
             echo "ANDROID_HOME=$ANDROID_HOME"
-            echo "--- SDK 内容 ---"
-            ls "$ANDROID_HOME" 2>&1 | head -20
-            echo "--- platforms ---"
-            ls "$ANDROID_HOME/platforms" 2>&1 | head
-            echo "--- build-tools ---"
-            ls "$ANDROID_HOME/build-tools" 2>&1 | head
+            ls "$ANDROID_HOME/platforms" 2>&1 | head -3
           } > build-log.txt 2>&1
 
-      - name: 诊断安卓
-        if: ${{ github.event.inputs.which != 'desktop' }}
+      - name: 安卓 cap add
+        if: ${{ always() && github.event.inputs.which != 'desktop' }}
         run: |
           {
             echo ""
@@ -60,52 +56,58 @@ jobs:
           } >> build-log.txt 2>&1
           npm i @capacitor/core @capacitor/cli @capacitor/android \
             --silent --no-fund --no-audit >> build-log.txt 2>&1
-          echo "-- 版本 --" >> build-log.txt
+          echo "-- cap 版本 --" >> build-log.txt
           npx cap --version >> build-log.txt 2>&1
+          echo "-- webDir 配置 --" >> build-log.txt
+          node -e "console.log(require('./capacitor.config.json').webDir)" >> build-log.txt 2>&1
+          echo "-- www 目录 --" >> build-log.txt
+          ls www 2>&1 | head -10 >> build-log.txt
           echo "-- add android --" >> build-log.txt
           CI=1 npx cap add android >> build-log.txt 2>&1
-          echo "退出码: $?" >> build-log.txt
-          echo "-- android 目录 --" >> build-log.txt
-          ls android 2>&1 | head -20 >> build-log.txt
-          ls -la android/gradlew 2>&1 >> build-log.txt
+          echo "exit=$?" >> build-log.txt
+          echo "-- sync --" >> build-log.txt
+          CI=1 npx cap sync android >> build-log.txt 2>&1
+          echo "exit=$?" >> build-log.txt
 
-      - name: 诊断安卓 gradle
-        if: ${{ github.event.inputs.which != 'desktop' }}
+      - name: 安卓 gradle
+        if: ${{ always() && github.event.inputs.which != 'desktop' }}
         run: |
           {
             echo ""
-            echo "===== 安卓：gradle ====="
+            echo "===== 安卓：gradle assembleDebug ====="
           } >> build-log.txt 2>&1
           if [ -f android/gradlew ]; then
             echo "sdk.dir=$ANDROID_HOME" > android/local.properties
             yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1
             cd android && chmod +x gradlew
             ./gradlew assembleDebug --no-daemon --stacktrace >> ../build-log.txt 2>&1
-            echo "退出码: $?" >> ../build-log.txt
+            echo "exit=$?" >> ../build-log.txt
             cd ..
+            echo "-- 产物 --" >> build-log.txt
+            find android/app/build/outputs -name '*.apk' 2>/dev/null >> build-log.txt || echo "无 apk" >> build-log.txt
           else
-            echo "gradlew 不存在，跳过" >> build-log.txt
+            echo "gradlew 不存在（cap add 失败），跳过 gradle" >> build-log.txt
           fi
 
-      - name: 诊断桌面
-        if: ${{ github.event.inputs.which != 'android' }}
+      - name: 桌面 electron-builder
+        if: ${{ always() && github.event.inputs.which != 'android' }}
         run: |
           {
             echo ""
-            echo "===== 桌面：electron-builder ====="
-            echo "说明：只在 ubuntu 上跑 dry-run，Windows 侧仅检查配置"
-            echo "-- package.json build 段 --"
-            node -e "console.log(JSON.stringify(require('./package.json').build,null,2))"
-            echo "-- 文件是否齐全 --"
-            ls -la electron/main.js
-            ls -la chat/icons/icon.ico 2>&1
-            echo "-- electron-builder 校验 --"
+            echo "===== 桌面：electron-builder（Linux 目标，抓配置类错误） ====="
+            npm i electron electron-builder --silent --no-fund --no-audit
+            echo "-- 版本 --"
+            npx electron-builder --version
+            echo "-- app 目录文件 --"
+            ls -la www/index.html electron/main.js
+            echo "-- 构建 --"
           } >> build-log.txt 2>&1
-          npm i electron electron-builder --silent --no-fund --no-audit >> build-log.txt 2>&1
-          npx electron-builder --help >> build-log.txt 2>&1
-          echo "退出码: $?" >> build-log.txt
+          # Linux 上只出 AppImage/zip，目的不是产物，而是把配置类错误暴露出来
+          npx electron-builder --linux --x64 --publish never >> build-log.txt 2>&1
+          echo "exit=$?" >> build-log.txt
+          echo "-- dist --" >> build-log.txt
+          ls dist 2>&1 | head >> build-log.txt
 
-      # 关键：本步骤必须总是执行，否则失败的诊断不会产出日志
       - name: 写回 diag 分支
         if: always()
         run: |
