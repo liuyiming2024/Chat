@@ -1,0 +1,20 @@
+{
+  "name": "聊天室",
+  "version": "1.4.0",
+  "desc": "三栏布局的网页聊天室，支持 Markdown 与 LaTeX 公式。已接云端后端，账号与消息存在服务端。",
+  "homepage": "https://liuyiming2024.github.io/Chat/",
+  "repo": "https://github.com/liuyiming2024/Chat",
+  "backend": "Supabase（PostgreSQL）。后端连不上时退回本机模式并提示。",
+  "endpoints": [
+    { "path": "/Chat/api/manifest.json",  "method": "GET", "desc": "本项目元信息与接口清单" },
+    { "path": "/Chat/api/platforms.json", "method": "GET", "desc": "各平台客户端与当前版本" }
+  ],
+  "related": [
+    { "path": "/Chat/chat/update/manifest.json", "desc": "客户端更新清单（版本 + 多镜像下载直链）" }
+  ],
+  "note": [
+    "站外只有这些只读的静态 JSON。聊天数据存在服务端，",
+    "受站点保护密码与账号权限双重保护，不会通过任何公开接口暴露。",
+    "GitHub Pages 是纯静态托管，没有服务端可以代理读写请求。"
+  ]
+}

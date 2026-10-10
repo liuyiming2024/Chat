@@ -1557,3 +1557,12 @@ body.dark .dl-prog > span { color: #8d97a8; }
   cursor: help;
 }
 body.dark .msg-edited { color: #6f7889; }
+
+/* 「待发送」角标：离线期间攒下的消息，联网后自动发出 */
+.msg-pending {
+  display: inline-block; margin-left: 6px;
+  font-size: 11px; color: #b8860b;
+  border: 1px solid currentColor; border-radius: 3px;
+  padding: 0 4px; cursor: help;
+}
+body.dark .msg-pending { color: #d8b34a; }
