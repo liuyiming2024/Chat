@@ -1,0 +1,31 @@
+  • electron-builder  version=26.15.3 os=10.0.26100
+  • loaded configuration  file=package.json ("build" field)
+  • Specified application directory equals to project dir — superfluous or wrong configuration  appDirectory=.
+  • executing @electron/rebuild  electronVersion=33.4.11 arch=x64 buildFromSource=false workspaceRoot=D:\a\Chat\Chat projectDir=./ appDir=./
+  • installing native dependencies  arch=x64
+  • completed installing native dependencies
+  • packaging       platform=win32 arch=x64 electron=33.4.11 appOutDir=dist\win-unpacked
+  • downloaded      label=electron progress=100%
+  • downloaded electron zip extracted successfully  output=D:\a\Chat\Chat\dist\win-unpacked
+  • searching for node modules  pm=npm searchDir=D:\a\Chat\Chat
+  • searching for node modules  pm=traversal searchDir=D:\a\Chat\Chat
+  • using manual traversal of node_modules to build dependency tree
+  • no node modules returned while searching directories  searchDirectories=[""]
+  • updating asar integrity executable resource  executablePath=dist\win-unpacked\聊天室.exe
+  • signing with signtool.exe  path=dist\win-unpacked\聊天室.exe
+  • building        target=nsis file=dist\chat-win-setup.exe archs=x64 oneClick=true perMachine=false
+  • downloaded      label=nsis-3.0.4.1.7z progress=100%
+  • downloaded      label=7zip-win-x64.tar.gz progress=100%
+  • signing with signtool.exe  path=dist\win-unpacked\resources\elevate.exe
+  • downloaded      label=nsis-resources-3.4.1.7z progress=100%
+  • signing with signtool.exe  path=dist\chat-win-setup.__uninstaller.exe
+  • signing with signtool.exe  path=dist\chat-win-setup.exe
+  • building block map  blockMapFile=dist\chat-win-setup.exe.blockmap
+  • building        target=portable file=dist\chat-win-portable.exe archs=x64
+  • signing with signtool.exe  path=dist\chat-win-portable.exe
+builder-debug.yml
+chat-win-portable.exe
+chat-win-setup.exe
+chat-win-setup.exe.blockmap
+latest.yml
+win-unpacked
