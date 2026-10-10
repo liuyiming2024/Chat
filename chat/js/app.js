@@ -339,7 +339,7 @@
     try {
       if (!g.ElectronBridge || !g.ElectronBridge.bridgePublish) return;
       if (!g.Online || !g.Online.isOnline || !g.Online.isOnline()) return;
-      g.Online.bridgeTicket().then(function (code) {
+      g.Online.bridgeTicket(g.Bridge && g.Bridge.origin ? g.Bridge.origin() : '').then(function (code) {
         g.ElectronBridge.bridgePublish(nick, code);
       }).catch(function () { });
     } catch (e) { }
@@ -395,11 +395,15 @@
       if (!r) return;                       // 没装 / 没登录 → 保持隐藏
       if (!box.isConnected) return;         // 页面已经切走了
 
+      /* 措辞要点：
+         · 不说"本机客户端"——那是内部术语，用户不知道指什么
+         · 说清"已登录"与"还要输保护密码"的关系，否则像自相矛盾：
+           一个是账号、一个是站点门禁，两回事 */
       box.innerHTML =
         '<div class="bridge-line"></div>' +
-        '<div class="bridge-title">本机客户端已登录</div>' +
-        '<button class="btn primary block" id="bGo">以 ' + g.UI.esc(r.nick) + ' 的身份直接进入</button>' +
-        '<div class="bridge-note">来自本机客户端。仍需通过上面的保护密码。</div>';
+        '<div class="bridge-title">检测到这台电脑上已登录 ' + g.UI.esc(r.nick) + '</div>' +
+        '<button class="btn primary block" id="bGo">直接以该身份进入</button>' +
+        '<div class="bridge-note">账号免密。站点保护密码是另一道门，仍需单独输入。</div>';
       box.classList.remove('hidden');
       box.querySelector('#bGo').onclick = function () {
         if (usedBridgeCode === r.code) {
@@ -409,7 +413,7 @@
         var btn = this;
         btn.disabled = true;
         btn.textContent = '正在进入…';
-        g.Online.bridgeRedeem(r.code).then(function (res) {
+        g.Online.bridgeRedeem(r.code, g.Bridge && g.Bridge.origin ? g.Bridge.origin() : '').then(function (res) {
           if (!res || res.ok === false) throw new Error((res && res.err) || '票据无效');
           g.SB.setSession(res.token, null);
           __bridgeUid = res.uid;

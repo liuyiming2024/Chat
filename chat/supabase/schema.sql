@@ -1118,14 +1118,20 @@ $$;
 create table if not exists bridge_ticket (
   code_hash  text primary key,
   user_id    uuid not null references users(id) on delete cascade,
+  origin     text not null default '',  -- 申领时的网页来源；兑换时校验，防止票据搬运
   expires_at timestamptz not null,
   used_at    timestamptz,
   created_at timestamptz not null default now()
 );
 create index if not exists bridge_ticket_user_idx on bridge_ticket(user_id);
 
+-- 老库补列：表已存在时 create table if not exists 不会加新列
+alter table bridge_ticket add column if not exists origin text not null default '';
+
 -- 客户端（已登录）申领一枚票据，返回明文；明文只在返回这一刻存在。
-create or replace function bridge_ticket_create()
+-- 申领时把网页来源一起记下来（p_origin）。
+-- 兑换端校验它 —— 票据即使被搬到别的机器上也换不出会话。
+create or replace function bridge_ticket_create(p_origin text default '')
 returns text language plpgsql volatile security definer
 set search_path = public, extensions, pg_temp as $$
 declare uid uuid; code text;
@@ -1139,11 +1145,19 @@ begin
   end if;
 
   code := encode(gen_random_bytes(24), 'hex');
-  insert into bridge_ticket (code_hash, user_id, expires_at)
-  values (encode(digest(code || '|br-v1', 'sha256'), 'hex'), uid, now() + interval '5 minutes');
+  insert into bridge_ticket (code_hash, user_id, origin, expires_at)
+  values (encode(digest(code || '|br-v1', 'sha256'), 'hex'), uid,
+          left(coalesce(p_origin, ''), 200), now() + interval '5 minutes');
   return code;
 end;
 $$;
+
+-- 先删旧签名。
+-- create or replace 对【不同参数列表】是新建重载而非替换，
+-- 不 drop 的话 select bridge_ticket_redeem(p_code) 会精确匹配到旧版本，
+-- 新加的来源校验静默失效 —— 不报错，只是没生效。
+drop function if exists bridge_ticket_create();
+drop function if exists bridge_ticket_redeem(text);
 
 -- 网页兑换票据。
 -- 【不】要求先过门禁：网页端的流程是「先输保护密码 → 再到登录页」，
@@ -1151,21 +1165,28 @@ $$;
 --
 -- 这条豁免的代价要记着：它给了"绕过门禁直接拿账号会话"一条路径，
 -- 所以票据必须是短时（5 分钟）、单次、且只能由已登录客户端申领。
-create or replace function bridge_ticket_redeem(p_code text)
+-- p_origin 必须与申领时一致（都为空也算一致，供无来源的场景使用）。
+-- 这一层校验的意义：票据即使用 curl 从本机 127.0.0.1 拿到，
+-- 搬到另一台机器上兑换也会因为来源不符被拒。
+create or replace function bridge_ticket_redeem(p_code text, p_origin text default '')
 returns json language plpgsql volatile security definer
 set search_path = public, extensions, pg_temp as $$
-declare uid uuid; tk text; u record;
+declare uid uuid; tk text; u record; o text;
 begin
   if coalesce(length(p_code), 0) < 32 then
     return json_build_object('ok', false, 'err', '票据无效');
   end if;
 
-  select t.user_id into uid from bridge_ticket t
+  select t.user_id, t.origin into uid, o from bridge_ticket t
   where t.code_hash = encode(digest(p_code || '|br-v1', 'sha256'), 'hex')
     and t.used_at is null and t.expires_at > now();
 
   if uid is null then
     return json_build_object('ok', false, 'err', '票据无效或已过期');
+  end if;
+
+  if coalesce(o, '') <> coalesce(p_origin, '') then
+    return json_build_object('ok', false, 'err', '票据与当前访问来源不符');
   end if;
 
   update bridge_ticket set used_at = now()
