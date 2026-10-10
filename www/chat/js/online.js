@@ -234,19 +234,72 @@
 
   function stopPoll() { if (timer) { clearInterval(timer); timer = null; } }
 
+  /* ---------------- 离线消息队列 ----------------
+     离线时发的消息先存本地，联网后按序补发。
+     时间戳由服务端给 —— 本机时钟可能不准，用它会导致消息乱序，
+     插在别人消息中间，看起来非常怪。
+
+     所以客户端只管排队，不自己造时间戳。 */
+  var OUTBOX_KEY = 'chat_outbox';
+
+  function outbox() {
+    try { return JSON.parse(localStorage.getItem(OUTBOX_KEY) || '[]'); }
+    catch (e) { return []; }
+  }
+
+  function outboxSave(list) {
+    try { localStorage.setItem(OUTBOX_KEY, JSON.stringify(list)); } catch (e) { }
+  }
+
+  /* 入队。返回本地临时 id，界面据此显示"待发送" */
+  function enqueue(item) {
+    var list = outbox();
+    item.qid = 'q_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+    item.queuedAt = Date.now();
+    list.push(item);
+    outboxSave(list);
+    return item.qid;
+  }
+
+  function dequeue(qid) {
+    var list = outbox().filter(function (x) { return x.qid !== qid; });
+    outboxSave(list);
+  }
+
+  /* 补发。按顺序逐条发，失败就停下等下次 ——
+     顺序错了比少发一条更糟，所以不能并发。 */
+  function flushOutbox() {
+    if (!online) return Promise.resolve(0);
+    var list = outbox();
+    if (!list.length) return Promise.resolve(0);
+    var n = 0;
+    var chain = Promise.resolve();
+    list.slice().forEach(function (it) {
+      chain = chain.then(function () {
+        return g.SB.rpc('msg_send', {
+          p_room: it.room, p_type: it.type, p_body: it.body,
+          p_media: it.media || null, p_name: it.name || '',
+          p_size: it.size || 0, p_reply: it.replyTo || null
+        }).then(function () { dequeue(it.qid); n++; })
+          .catch(function () { /* 失败保留，下次再试 */ });
+      });
+    });
+    return chain.then(function () { return n; });
+  }
+
   /* ---------------- 写操作：只走带鉴权的 RPC ---------------- */
 
   function sendMsg(room, type, body, media, name, size, replyTo) {
-    /* 编辑自己的消息。服务端只允许本人改自己的 —— 改别人的属于伪造发言。 */
-    function editMsg(id, body) {
-      return g.SB.rpc('msg_edit', { p_id: id, p_body: body }).then(function () { return true; });
-    }
-
     return g.SB.rpc('msg_send', {
       p_room: room, p_type: type, p_body: body || '',
       p_media: media || null, p_name: name || '', p_size: size || 0,
       p_reply: replyTo || null
     });
+  }
+
+  /* 编辑自己的消息。服务端只允许本人改自己的 —— 改别人的属于伪造发言。 */
+  function editMsg(id, body) {
+    return g.SB.rpc('msg_edit', { p_id: id, p_body: body }).then(function () { return true; });
   }
 
   /* ---------------- 房间 ----------------
@@ -346,6 +399,7 @@
     setMute: setMute, setPerms: setPerms, setRole: setRole,
     prepareMedia: prepareMedia, commitMedia: commitMedia, mediaUrl: mediaUrl,
     uploadMedia: uploadMedia,
-    sendMsg: sendMsg, editMsg: editMsg, convert: convert
+    sendMsg: sendMsg, editMsg: editMsg, convert: convert,
+    enqueue: enqueue, flushOutbox: flushOutbox, outbox: outbox, dequeue: dequeue
   };
 })(window);

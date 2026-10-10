@@ -1,0 +1,48 @@
+{
+  "version": "1.4.0",
+  "updated": "2026-10-10",
+  "platforms": [
+    {
+      "id": "web",
+      "name": "网页版",
+      "url": "https://liuyiming2024.github.io/Chat/",
+      "install": false
+    },
+    {
+      "id": "win",
+      "name": "Windows",
+      "file": "chat-win-setup.exe",
+      "size": 80117760,
+      "install": true
+    },
+    {
+      "id": "mac",
+      "name": "macOS",
+      "file": "chat-mac.dmg",
+      "size": 98271232,
+      "install": true
+    },
+    {
+      "id": "linux",
+      "name": "Linux",
+      "file": "chat-linux.AppImage",
+      "size": 108086886,
+      "install": true
+    },
+    {
+      "id": "android",
+      "name": "Android",
+      "file": "chat-android.apk",
+      "size": 4295000,
+      "install": true
+    },
+    {
+      "id": "ios",
+      "name": "iPhone / iPad",
+      "install": false,
+      "note": "App Store 上架需付费开发者账号。用 Safari 打开网页版「添加到主屏幕」即可当应用用。"
+    }
+  ],
+  "downloadBase": "https://github.com/liuyiming2024/Chat/releases/latest/download/",
+  "signing": "所有安装包均未签名（代码签名证书需年费）。首次安装需手动确认。"
+}

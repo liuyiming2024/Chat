@@ -270,6 +270,16 @@
           if (r && r.uid) setMeId(r.uid, rememberOn());
           return g.Online.pull().then(function (inS) {
             if (inS && mergeState(inS)) save(true);
+            /* 回到在线：先把离线期间攒的消息补发出去。
+               时间戳由服务端给 —— 本机时钟可能不准，用它会导致乱序。 */
+            if (g.Online.flushOutbox) {
+              g.Online.flushOutbox().then(function (n) {
+                if (n > 0) {
+                  g.UI.toast('已补发 ' + n + ' 条离线消息', 'ok');
+                  save(); renderChatSoon();
+                }
+              });
+            }
             g.Online.startPoll();
             afterGate();
           });
@@ -1119,6 +1129,13 @@
       } else if (m.type === 'image' || m.type === 'video') {
         bubble.appendChild(mediaNode(m));
       }
+      /* 待发送：离线期间攒下的消息。
+         不标的话用户以为发出去了，其实还在本机排队。 */
+      if (m.pending) {
+        var pd = elc('span', 'msg-pending', '待发送');
+        pd.title = '联网后自动发出';
+        bubble.appendChild(pd);
+      }
       /* 已编辑角标：不标的话，别人看到的内容和记忆里不一样却无从察觉，
          还以为是自己的问题。 */
       if (m.editedAt) {
@@ -1297,13 +1314,22 @@
     pushMsg(m);
     ta.style.height = 'auto';
 
-    /* 在线模式：真发到服务端。
-       先本地插入（乐观更新，界面不卡），服务端成功后会被下次 pull 覆盖为权威版本。 */
-    if (g.Online && g.Online.isOnline()) {
+    /* 发送：在线就直接发，离线就进队列等联网补发。
+       两条路都先在界面上显示出来（乐观更新），
+       离线那条标「待发送」，别让用户以为发出去了。 */
+    if (g.Online && g.Online.isOnline && g.Online.isOnline()) {
       g.Online.sendMsg(cur, 'text', text, null, '', 0, m.replyTo || null)
         .catch(function (e) {
           g.UI.toast('发送失败：' + (e && e.message ? e.message : '网络错误'), 'err');
         });
+    } else if (g.Online && g.Online.enqueue) {
+      m.pending = true;
+      g.Online.enqueue({
+        room: cur, type: 'text', body: text, media: null,
+        name: '', size: 0, replyTo: m.replyTo || null
+      });
+      save(); renderChat();
+      g.UI.toast('已存入待发送队列，联网后自动发出', 'ok');
     }
   }
 
