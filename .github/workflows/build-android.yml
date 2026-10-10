@@ -42,16 +42,26 @@ jobs:
           echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
           ls "$ANDROID_HOME" || echo "镜像未预装 SDK，将依赖 gradle 自动下载"
 
+      # 之前每一步都写 `|| true`，结果 cap add 失败也吞掉，
+      # 一路滑到 gradlew 才炸，报的错跟真正的原因八竿子打不着。
+      # 现在：平台目录必须真的生成出来，否则当场失败并报错。
       - name: 装 Capacitor 并添加安卓平台
         run: |
-          npm init -y --silent
-          npm i @capacitor/core @capacitor/cli --silent --no-fund --no-audit
-          # 仓库根目录没有 package.json 会被 init 覆盖，先确认
-          node -e "const p=require('./package.json'); p.name='chat-shell'; p.private=true; require('fs').writeFileSync('package.json', JSON.stringify(p,null,2));"
-          npx cap init "聊天室" io.github.liuyiming2024.chat --web-dir=. || true
-          npm i @capacitor/android --silent --no-fund --no-audit
-          npx cap add android || true
-          npx cap sync android || true
+          npm i @capacitor/core @capacitor/cli @capacitor/android --silent --no-fund --no-audit
+          npx cap init "聊天室" io.github.liuyiming2024.chat --web-dir=.
+          npx cap add android
+          test -d android && echo "android 平台已生成" || { echo "::error::cap add android 未生成 android/ 目录"; exit 1; }
+          npx cap sync android
+          test -f android/gradlew || { echo "::error::gradlew 缺失，平台模板不完整"; exit 1; }
+
+      - name: 报告环境（失败时用于定位）
+        if: always()
+        run: |
+          echo "JAVA_HOME=$JAVA_HOME"; java -version 2>&1 | head -3
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          ls "$ANDROID_HOME" 2>/dev/null | head -20 || echo "SDK 目录不存在"
+          ls "$ANDROID_HOME/platforms" 2>/dev/null || echo "无 platforms"
+          ls "$ANDROID_HOME/build-tools" 2>/dev/null || echo "无 build-tools"
 
       - name: 生成签名密钥（仅 release 需要）
         if: ${{ github.event.inputs.build_type == 'release' }}
@@ -77,9 +87,9 @@ jobs:
           cd android
           chmod +x gradlew
           if [ "${{ github.event.inputs.build_type }}" = "release" ]; then
-            ./gradlew assembleRelease --no-daemon
+            ./gradlew assembleRelease --no-daemon --stacktrace --info
           else
-            ./gradlew assembleDebug --no-daemon
+            ./gradlew assembleDebug --no-daemon --stacktrace --info
           fi
         continue-on-error: false
 
