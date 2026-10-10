@@ -1509,3 +1509,21 @@ body.dark .remember-row { color: #aaa; }
 .newpwd-box code { font-size: 20px; font-weight: 700; letter-spacing: 1px; color: #2b5cb8; }
 body.dark .newpwd-box { background: #1d2536; border-color: #3a4a66; }
 body.dark .newpwd-box code { color: #9dc0ff; }
+
+
+/* 本机桥接入口：探测到客户端才显示，平时不占地方 */
+.bridge-box { margin-top: 14px; }
+.bridge-box.hidden { display: none; }
+.bridge-line {
+  height: 1px; background: var(--line, #eceef1);
+  margin: 0 0 12px; position: relative;
+}
+.bridge-line::after {
+  content: '或'; position: absolute; left: 50%; top: -9px;
+  transform: translateX(-50%);
+  background: #fff; padding: 0 8px;
+  font-size: 12px; color: #aaa;
+}
+body.dark .bridge-line::after { background: #171c22; }
+.bridge-title { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+.bridge-note { font-size: 12px; color: #999; margin-top: 6px; }

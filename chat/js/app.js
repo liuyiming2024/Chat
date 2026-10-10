@@ -332,6 +332,19 @@
     card.querySelector('#gP').onkeydown = function (e) { if (e.key === 'Enter') ok(); };
   }
 
+  /* 把已登录身份交给本机桥接服务（仅桌面版/APP 有意义）。
+     票据由服务端签发并绑定 uid —— 网页端造不出来，只能兑换到这个身份。
+     失败完全静默：桥接是便利功能，不是登录的必经路径。 */
+  function publishBridge(nick) {
+    try {
+      if (!g.ElectronBridge || !g.ElectronBridge.bridgePublish) return;
+      if (!g.Online || !g.Online.isOnline || !g.Online.isOnline()) return;
+      g.Online.bridgeTicket().then(function (code) {
+        g.ElectronBridge.bridgePublish(nick, code);
+      }).catch(function () { });
+    } catch (e) { }
+  }
+
   /* 回到前台时门禁已失效：把应用盖上门禁层重新验证。
      直接复用 enterGate —— 验证通过会走 afterGate，
      账号凭据还在的话能直接回到界面，不用再输一遍账号密码。 */
@@ -373,6 +386,51 @@
   }
 
   /* ================= 登录 / 注册 ================= */
+  /* 本机桥接入口：桌面版/APP 已登录时，给一个"直接进"的按钮。
+     探测不到就什么都不显示 —— 没装客户端是常态，不是异常。 */
+  function renderBridge(pane) {
+    var box = pane && pane.querySelector('#bridgeBox');
+    if (!box || !g.Bridge) return;
+    g.Bridge.probe().then(function (r) {
+      if (!r) return;                       // 没装 / 没登录 → 保持隐藏
+      if (!box.isConnected) return;         // 页面已经切走了
+
+      box.innerHTML =
+        '<div class="bridge-line"></div>' +
+        '<div class="bridge-title">本机客户端已登录</div>' +
+        '<button class="btn primary block" id="bGo">以 ' + g.UI.esc(r.nick) + ' 的身份直接进入</button>' +
+        '<div class="bridge-note">来自本机客户端。仍需通过上面的保护密码。</div>';
+      box.classList.remove('hidden');
+      box.querySelector('#bGo').onclick = function () {
+        var btn = this;
+        btn.disabled = true;
+        btn.textContent = '正在进入…';
+        g.Online.bridgeRedeem(r.code).then(function (res) {
+          if (!res || res.ok === false) throw new Error((res && res.err) || '票据无效');
+          g.SB.setSession(res.token, null);
+          __bridgeUid = res.uid;
+          setMeId(res.uid, rememberOn());
+          return g.Online.pull();
+        }).then(function (inS) {
+          if (inS && mergeState(inS)) save(true);
+          var u = S.users.filter(function (x) { return x.id === res_uid(); })[0];
+          me = u || null;
+          if (!me) { location.reload(); return; }
+          setGateOk();
+          enterApp();
+        }).catch(function (e) {
+          btn.disabled = false;
+          btn.textContent = '以 ' + r.nick + ' 的身份直接进入';
+          g.UI.toast(e.message || '进入失败，请手动登录', 'err');
+        });
+      };
+    }).catch(function () { });
+  }
+
+  /* 兑换成功后 uid 的临时存放（回调链里要跨 then 用） */
+  var __bridgeUid = null;
+  function res_uid() { return __bridgeUid; }
+
   function loginView() {
     var wrap = $('gate');
     wrap.innerHTML = '';
@@ -407,6 +465,7 @@
             g.Online.login(ln, lp).then(function (r) {
               var rem = !!(card.querySelector('#lRemember') && card.querySelector('#lRemember').checked);
               setMeId(r.uid, rem);
+              publishBridge(card.querySelector('#lNick').value.trim());
               return g.Online.pull().then(function (inS) {
                 if (inS && mergeState(inS)) save(true);
                 me = findUser(r.uid) || me;
@@ -429,10 +488,13 @@
             g.UI.toast('申请未通过：' + (u.rejectReason || '站长未说明理由'), 'err'); return;
           }
           setMeId(u.id, typeof __rem !== 'undefined' ? __rem : rememberOn());
+          publishBridge(u.nick);
           me = u; touch(me); me.lastSeen = now(); save(true);
           enterApp();
         };
         card.querySelector('#lOk').onclick = ok;
+        /* 探测本机客户端。没装就是 null，面板保持隐藏，不打扰。 */
+        if (g.Bridge && !g.Bridge.isApp()) renderBridge(p);
         card.querySelector('#lPwd').onkeydown = function (e) { if (e.key === 'Enter') ok(); };
       } else {
         if (!S.allowRegister) {
@@ -486,6 +548,8 @@
           } else {
             joinRoom('public', u, true);
             setMeId(u.id, typeof __rem !== 'undefined' ? __rem : rememberOn());
+          publishBridge(u.nick);
+            publishBridge(u.nick);
             me = u;
             enterApp();
           }
@@ -3415,6 +3479,7 @@
            账号可以记住，保护密码不记 —— 这是两套东西，别混在一起。 */
         clrMe();
         clrGate();
+        try { if (g.ElectronBridge) g.ElectronBridge.bridgeClear(); } catch (e) { }
         me = null; cur = 'public';
         $('app').classList.add('hidden');
         $('app').style.display = 'none';

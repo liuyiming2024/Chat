@@ -1105,6 +1105,80 @@ begin
 end;
 $$;
 
+-- ---------- 本机桥接票据 ----------
+-- 场景：桌面版/安卓版已经登录，网页端想"直接进"，不再输一遍账号密码。
+-- 链路：客户端（已登录）向服务端申领票据 → 通过本机 HTTP 服务交给网页
+--      → 网页拿票据换会话。
+--
+-- 为什么安全：
+--   · 票据由【已登录的客户端】申领，服务端绑定 uid —— 网页造不出来
+--   · 库里只存哈希，泄露也换不出可用票据
+--   · 单次使用 + 5 分钟过期
+--   · 客户端只把票据交给 Origin 白名单内的网页（见 electron/local-bridge.js）
+create table if not exists bridge_ticket (
+  code_hash  text primary key,
+  user_id    uuid not null references users(id) on delete cascade,
+  expires_at timestamptz not null,
+  used_at    timestamptz,
+  created_at timestamptz not null default now()
+);
+create index if not exists bridge_ticket_user_idx on bridge_ticket(user_id);
+
+-- 客户端（已登录）申领一枚票据，返回明文；明文只在返回这一刻存在。
+create or replace function bridge_ticket_create()
+returns text language plpgsql volatile security definer
+set search_path = public, extensions, pg_temp as $$
+declare uid uuid; code text;
+begin
+  uid := cur_user();
+  if uid is null then raise exception '请先登录'; end if;
+
+  delete from bridge_ticket where user_id = uid and (expires_at < now() or used_at is not null);
+  if (select count(*) from bridge_ticket where user_id = uid) >= 5 then
+    raise exception '待使用的票据过多';
+  end if;
+
+  code := encode(gen_random_bytes(24), 'hex');
+  insert into bridge_ticket (code_hash, user_id, expires_at)
+  values (encode(digest(code || '|br-v1', 'sha256'), 'hex'), uid, now() + interval '5 minutes');
+  return code;
+end;
+$$;
+
+-- 网页兑换票据。不要求先过门禁 —— 网页端会先输保护密码再到登录页；
+-- 且换到的只是账号身份，所有数据接口仍要求门禁。
+create or replace function bridge_ticket_redeem(p_code text)
+returns json language plpgsql volatile security definer
+set search_path = public, extensions, pg_temp as $$
+declare uid uuid; tk text; u record;
+begin
+  if coalesce(length(p_code), 0) < 32 then
+    return json_build_object('ok', false, 'err', '票据无效');
+  end if;
+
+  select t.user_id into uid from bridge_ticket t
+  where t.code_hash = encode(digest(p_code || '|br-v1', 'sha256'), 'hex')
+    and t.used_at is null and t.expires_at > now();
+
+  if uid is null then
+    return json_build_object('ok', false, 'err', '票据无效或已过期');
+  end if;
+
+  update bridge_ticket set used_at = now()
+  where code_hash = encode(digest(p_code || '|br-v1', 'sha256'), 'hex');
+
+  select * into u from users where id = uid;
+  if u.status <> 'active' then
+    return json_build_object('ok', false, 'err', '账号未激活或已被停用');
+  end if;
+
+  tk := issue_session(u.id, false);
+  update users set last_seen = now() where id = u.id;
+  insert into logs (who_id, act, detail) values (u.id, 'login_bridge', '本机桥接免密登录');
+  return json_build_object('ok', true, 'token', tk, 'uid', u.id, 'nick', u.nick);
+end;
+$$;
+
 create or replace function gate_set(p_old text, p_new text)
 returns boolean language plpgsql volatile security definer
 set search_path = public, extensions, pg_temp as $$
