@@ -125,6 +125,7 @@ jobs:
 
       - name: 日志写回 diag 分支
         if: always()
+        continue-on-error: true
         run: |
           git config user.name  "diag-bot"
           git config user.email "diag@local"
@@ -135,7 +136,10 @@ jobs:
           git commit -m "安卓构建日志 $(date -u +%Y%m%d-%H%M%S)" || echo "无变化"
           git push -f origin diag
 
+      # 必须 always：上一轮 APK 构建成功，但"日志写回"这步失败，
+      # 导致默认的 success() 依赖把上传整个跳过了 —— 包打出来了却拿不到。
       - name: 上传 APK
+        if: always()
         uses: actions/upload-artifact@v5
         with:
           name: chat-apk-${{ github.event.inputs.build_type || 'debug' }}
