@@ -211,13 +211,13 @@
        都通过 Sync 层收敛——收到任何一份 state 都用同一套 merge 合并。 */
     g.Sync.init({
       onState: function (inS) {
-        if (mergeState(inS)) renderAll();
+        if (mergeState(inS)) renderAllSoon();
       },
       onPatch: function () {
         /* 别的标签改了数据：重读快照并合并 */
         try {
           var raw = localStorage.getItem(KEY);
-          if (raw && mergeState(JSON.parse(raw))) renderAll();
+          if (raw && mergeState(JSON.parse(raw))) renderAllSoon();
         } catch (err) { }
       }
     });
@@ -802,6 +802,14 @@
     renderMe(); renderSidebar(); renderChat();
   }
 
+  /* 服务端数据变了才用的重绘入口。
+     增量同步可能在一帧里来好几次（消息 + 成员 + 房间），
+     每次都全量重建会卡，所以走节流版。 */
+  function renderAllSoon() {
+    if (!me) return;
+    renderMe(); renderSidebar(); renderChatSoon();
+  }
+
   function renderMe() {
     var c = $('meCard');
     if (!c) return;
@@ -950,6 +958,19 @@
     }
     renderChat();
     if (!silent) g.UI.toast(m === 'simple' ? '已切到极简模式' : '已切到专业模式', 'ok');
+  }
+
+  /* 渲染节流：连续多次触发只渲染最后一次。
+     轮询、输入、成员变动可能在同一帧里各叫一次 renderChat，
+     每次都重建几百个消息 DOM 的话，低端机会明显卡顿。 */
+  var _renderPending = false;
+  function renderChatSoon() {
+    if (_renderPending) return;
+    _renderPending = true;
+    (typeof requestAnimationFrame === 'function' ? requestAnimationFrame : setTimeout)(function () {
+      _renderPending = false;
+      renderChat();
+    }, 0);
   }
 
   function renderChat() {
@@ -2594,86 +2615,84 @@
     d.innerHTML = '<div class="form-tip">' + t('update.checking') + '</div>';
     var mo = g.UI.modal({ title: t('update.checking'), body: d, okText: null, cancelText: t('common.close') });
 
-    g.Updater.check().then(function (r) {
-      if (!r || !r.sources || !r.sources.length) {
-        d.innerHTML = '<div class="form-tip">' + t('update.failed') + '：' +
-          g.UI.esc((r && r.reason) || t('common.unknownReason')) + '</div>';
-        mo.setTitle(t('update.failed'));
-        return;
-      }
+    g.Updater.check(null, true).then(function (r) {
+      if (!r) { fail(t('common.unknownReason')); return; }
+
       if (!r.hasUpdate) {
         d.innerHTML = '<div class="form-tip">' + t('update.upToDate') +
-          '（' + g.UI.esc(r.version) + '）</div>';
+          (r.latest ? '（' + g.UI.esc(r.latest) + '）' : '') + '</div>';
         mo.setTitle(t('update.upToDate'));
         return;
       }
 
+      var a = r.asset;
       mo.setTitle(t('update.available'));
       d.innerHTML =
-        '<div class="form-tip">' + t('update.latest') + '：<b>' + g.UI.esc(r.version) + '</b>' +
+        '<div class="form-tip">' + t('update.latest') + '：<b>' + g.UI.esc(r.latest) + '</b>' +
         (r.current ? '　' + t('update.current') + '：' + g.UI.esc(r.current) : '') + '</div>' +
-        '<div class="form-note">' + g.UI.esc(r.file) + ' · ' + g.Updater.fmtSize(r.size) + '</div>' +
-        '<div id="srcBox" class="form-note">' + t('update.speed') + '…</div>';
+        '<div class="form-note">' + g.UI.esc(a.name) + ' · ' + g.Updater.fmtSize(a.size) + '</div>' +
+        '<div id="srcBox" class="form-note">' + t('update.speed') + '</div>';
 
-      /* 测速：并发探测所有源，按速度排序，选最快的 */
-      g.Updater.bestSource(r.sources).then(function (best) {
+      var btn = elc('button', 'btn primary block', t('update.download'));
+      btn.type = 'button';
+      btn.disabled = true;   /* 测速完再放开，避免用户点了个慢源 */
+
+      g.Updater.bestSource(a.mirrors).then(function (best) {
         var box = d.querySelector('#srcBox');
-        if (!box) return;
-        if (!best) {
-          box.textContent = t('update.failed') + '：' + t('common.networkError');
-          return;
+        if (best) {
+          box.innerHTML = '<div class="field-label">' + t('update.source') + '</div>' +
+            best.ranked.slice(0, 4).map(function (x, i) {
+              return '<div class="src-item">' + (i === 0 ? '▶ ' : '　') +
+                g.UI.esc(shortHost(x.url)) + ' — ' + x.ms + ' ms</div>';
+            }).join('');
+          btn.disabled = false;
+        } else {
+          box.textContent = t('update.fail') + '：' + t('common.networkError');
+          btn.disabled = false;   /* 全测不到也给个能点的，至少能试 */
         }
-        var list = best.ranked.map(function (x, i) {
-          var nm = best.ranked.length && r.sources.filter(function (s2) { return s2.url === x.url; })[0];
-          return '<div class="src-item">' + (i === 0 ? '▶ ' : '　') +
-            g.UI.esc(nm ? nm.name : x.url) + ' — ' + Math.round(x.speed / 1024) + ' KB/s</div>';
-        }).join('');
-        box.innerHTML = '<div class="field-label">' + t('update.source') + '</div>' + list;
+      });
 
-        var btn = elc('button', 'btn primary block', t('update.download'));
-        btn.type = 'button';
-        btn.onclick = function () {
-          btn.disabled = true;
-          btn.textContent = t('update.downloading');
-          var u = best.source.url;
+      btn.onclick = function () {
+        var url = null;
+        btn.disabled = true;
+        btn.textContent = t('update.downloading');
+        g.Updater.bestSource(a.mirrors).then(function (best) {
+          url = best ? best.url : a.mirrors[0];
           if (g.ElectronBridge && g.ElectronBridge.downloadUpdate) {
-            /* 进度条：分片下载时给个百分比，不然大文件干等着像卡死 */
             var pg = elc('div', 'dl-prog');
             pg.innerHTML = '<div class="dl-bar"><i style="width:0%"></i></div><span>' + t('update.downloading') + '</span>';
             d.appendChild(pg);
-            var off = null;
-            if (g.ElectronBridge.onDownloadProgress) {
-              off = g.ElectronBridge.onDownloadProgress(function (p2) {
-                var bar = pg.querySelector('i'); if (bar) bar.style.width = (p2.pct || 0) + '%';
-                var sp = pg.querySelector('span');
-                if (sp) sp.textContent = (p2.pct || 0) + '%　' +
-                  g.Updater.fmtSize(p2.loaded) + ' / ' + g.Updater.fmtSize(p2.total);
-              });
-            }
-            g.ElectronBridge.downloadUpdate(u, r.file).then(function (res) {
+            var off = g.ElectronBridge.onDownloadProgress ? g.ElectronBridge.onDownloadProgress(function (p) {
+              var bar = pg.querySelector('i'); if (bar) bar.style.width = (p.pct || 0) + '%';
+              var sp = pg.querySelector('span');
+              if (sp) sp.textContent = (p.pct || 0) + '%　' + g.Updater.fmtSize(p.loaded) + ' / ' + g.Updater.fmtSize(p.total);
+            }) : null;
+            return g.ElectronBridge.downloadUpdate(url, a.name).then(function (res) {
               if (off) off();
               if (res && res.ok) {
-                g.UI.toast('已下载（' + (res.chunks || 1) + ' 个分片' +
-                  (res.fellBack ? '，该源不支持分片' : '') + '），请在弹出的文件夹里安装');
-                mo.close();
+                g.UI.toast('已下载，请在弹出的文件夹里安装'); mo.close();
               } else {
-                btn.disabled = false; btn.textContent = t('common.retry') || t('update.retry');
-                g.UI.toast((res && res.err) || t('update.failed'), 'err');
+                btn.disabled = false; btn.textContent = t('retry');
+                g.UI.toast((res && res.err) || t('update.fail'), 'err');
               }
             });
-          } else {
-            /* 网页版：直接给文件直链，不跳网页 */
-            window.open(u, '_blank');
-            mo.close();
           }
-        };
-        d.appendChild(btn);
-      });
-    }).catch(function (e) {
-      d.innerHTML = '<div class="form-tip">' + t('update.failed') + '：' +
-        g.UI.esc(e && e.message || t('common.unknownReason')) + '</div>';
-      mo.setTitle(t('update.failed'));
-    });
+          /* 网页版：直接开文件直链，不跳网页 */
+          window.open(url, '_blank'); mo.close();
+        });
+      };
+      d.appendChild(btn);
+    }).catch(function (e) { fail((e && e.message) || t('common.unknownReason')); });
+
+    function fail(why) {
+      d.innerHTML = '<div class="form-tip">' + t('update.fail') + '：' + g.UI.esc(why) + '</div>';
+      mo.setTitle(t('update.fail'));
+    }
+  }
+
+  /* 只显示域名，不把整个长地址糊在界面上 */
+  function shortHost(u) {
+    try { return new URL(u).host; } catch (e) { return u; }
   }
 
   /* ================= 用户卡 / 资料 ================= */
@@ -3134,11 +3153,11 @@
     [['zh', t('lang.zh')], ['en', t('lang.en')]].forEach(function (o) {
       var op = document.createElement('option');
       op.value = o[0]; op.textContent = o[1];
-      if (g.I18N.cur() === o[0]) op.selected = true;
+      if (g.I18n.cur() === o[0]) op.selected = true;
       lSel.appendChild(op);
     });
     lSel.onchange = function () {
-      g.I18N.load(lSel.value);
+      g.I18n.load(lSel.value);
       g.UI.toast(lSel.value === 'zh' ? '已切换为简体中文' : 'Switched to English');
     };
     lBar.appendChild(lSel);
@@ -3923,7 +3942,7 @@
 
   function boot() {
     /* 多语言：先按"用户选过 → 浏览器语言 → 中文"定语种，再渲染界面 */
-    try { if (g.I18N) g.I18N.load(g.I18N.detect()); } catch (e) { }
+    try { if (g.I18n) g.I18n.load(g.I18n.detect()); } catch (e) { }
     initTheme();
     /* 通知模块需要知道"当前在看哪个房间"，才能判断该不该弹 */
     if (g.Notifier) {
