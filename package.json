@@ -1,0 +1,51 @@
+{
+  "name": "chat-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "main": "electron/main.js",
+  "description": "聊天室桌面版（Electron 壳，复用同一份前端代码）",
+  "scripts": {
+    "dist": "electron-builder --win --x64 --publish never"
+  },
+  "build": {
+    "appId": "io.github.liuyiming2024.chat",
+    "productName": "聊天室",
+    "files": [
+      "index.html",
+      "assets/**",
+      "chat/**",
+      "tieba/**",
+      "docs/**",
+      "electron/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "chat/icons/icon-512.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "聊天室"
+    },
+    "portable": {
+      "artifactName": "聊天室-便携版.exe"
+    },
+    "directories": {
+      "output": "dist"
+    }
+  }
+}

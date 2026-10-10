@@ -7,6 +7,15 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%233b7ff2'/%3E%3Cpath d='M8 11h16M8 16h11' stroke='%23fff' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E">
 <title>聊天室</title>
 <link rel="stylesheet" href="css/style.css">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#3b7ff2">
+<meta name="color-scheme" content="light dark">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="聊天室">
+<!-- 桌面 Chrome / Edge「安装」按钮用 -->
+<meta name="mobile-web-app-capable" content="yes">
 
   <style>
     /* 录音取消出口：原来文案写着"点 ✕ 取消"，但那个 ✕ 根本不存在，
@@ -197,5 +206,54 @@
 <script src="js/net.js"></script>
 <script src="js/ui.js"></script>
 <script src="js/app.js"></script>
+
+<!-- ================= PWA 安装与更新 =================
+     注册 service worker，并在拿到新版本时提示刷新。
+     不提示的话，用户会一直用着缓存里的旧版，而我们还以为已经上线了。 -->
+<script>
+(function () {
+  if (!('serviceWorker' in navigator)) return;
+  /* file:// 下注册会直接抛错，本地双击打开时跳过 */
+  if (location.protocol === 'file:') return;
+
+  function showUpdate(worker) {
+    var bar = document.createElement('div');
+    bar.className = 'sw-update';
+    bar.innerHTML = '<span>有新版本</span>' +
+      '<button type="button" class="sw-upd-ok">刷新</button>' +
+      '<button type="button" class="sw-upd-no" aria-label="稍后">×</button>';
+    bar.querySelector('.sw-upd-ok').onclick = function () {
+      if (worker) worker.postMessage('SKIP_WAITING');
+      location.reload();
+    };
+    bar.querySelector('.sw-upd-no').onclick = function () { bar.remove(); };
+    document.body.appendChild(bar);
+  }
+
+  navigator.serviceWorker.register('sw.js').then(function (reg) {
+    if (reg.waiting && navigator.serviceWorker.controller) showUpdate(reg.waiting);
+    reg.addEventListener('updatefound', function () {
+      var nw = reg.installing;
+      if (!nw) return;
+      nw.addEventListener('statechange', function () {
+        if (nw.state === 'installed' && navigator.serviceWorker.controller) {
+          showUpdate(nw);
+        }
+      });
+    });
+  }).catch(function () { /* 注册失败不影响正常使用 */ });
+
+  /* 安装按钮：浏览器支持时显示，让用户知道能装成应用 */
+  window.addEventListener('beforeinstallprompt', function (e) {
+    e.preventDefault();
+    var evt = e;
+    var btn = document.createElement('button');
+    btn.className = 'sw-install';
+    btn.innerHTML = '<svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg> 安装到桌面';
+    btn.onclick = function () { btn.remove(); evt.prompt(); };
+    document.body.appendChild(btn);
+  });
+})();
+</script>
 </body>
 </html>

@@ -1,0 +1,48 @@
+name: 构建桌面版
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 打包目标
+        type: choice
+        options: [all, win, mac, linux]
+        default: win
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest]
+        include:
+          - os: windows-latest
+            target: win
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 装 Electron 打包工具
+        run: |
+          npm init -y --silent
+          node -e "const p=require('./package.json'); p.name='chat-desktop'; p.version='1.0.0'; p.main='electron/main.js'; require('fs').writeFileSync('package.json', JSON.stringify(p,null,2));"
+          npm i electron electron-builder --silent --no-fund --no-audit
+
+      - name: 构建
+        shell: bash
+        run: |
+          npx electron-builder --win --x64 --publish never
+
+      - name: 上传安装包
+        uses: actions/upload-artifact@v4
+        with:
+          name: chat-desktop-win
+          path: |
+            dist/*.exe
+            dist/*.msi
+          if-no-files-found: warn
+          retention-days: 30
