@@ -1366,3 +1366,48 @@ button:active,
   cursor: pointer;
 }
 .media-retry:active { transform: translateY(1px); }
+
+
+/* ================= PWA 更新提示 / 安装按钮 =================
+ * 拿到新版本必须告诉用户。不提示的话，用户一直用缓存里的旧版，
+ * 而我们以为已经上线了 —— 这正是"幽灵版本"那个坑的缓存版。 */
+.sw-update {
+  position: fixed;
+  left: 50%; bottom: 18px;
+  transform: translateX(-50%);
+  z-index: 1200;
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 14px;
+  border-radius: 22px;
+  background: #2b6cd4; color: #fff;
+  font-size: 13px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.22);
+}
+.sw-update button {
+  font: inherit; color: inherit; cursor: pointer;
+}
+.sw-upd-ok {
+  padding: 4px 12px; border-radius: 14px;
+  background: #fff; color: #2b6cd4; border: 0; font-weight: 600;
+}
+.sw-upd-no {
+  background: transparent; border: 0; font-size: 16px;
+  padding: 0 2px; opacity: .8;
+}
+.sw-install {
+  position: fixed;
+  right: 14px; bottom: 18px;
+  z-index: 1200;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 14px;
+  border: 1px solid var(--pri, #3b7ff2);
+  border-radius: 22px;
+  background: #fff; color: var(--pri, #3b7ff2);
+  font-size: 13px; cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0,0,0,.12);
+}
+.sw-install .ic { width: 16px; height: 16px; }
+@media (max-width: 560px) {
+  .sw-install { bottom: 62px; }   /* 给「← 首页」让位 */
+  .sw-update  { bottom: 62px; }
+}
