@@ -76,19 +76,17 @@ jobs:
           done
           exit $RC
 
-      # 诊断步骤：不影响结论，但没有它就只能盲改
-      - name: 日志写回
+      # 诊断步骤：不影响结论，但没有它就只能盲改。
+      # 用 artifact 而不是 git push —— push 失败会被 `|| echo` 吞掉，
+      # 表面 success 而分支根本不存在，日志照样拿不到（踩过一次）。
+      - name: 日志存为产物
         if: always()
-        continue-on-error: true
-        run: |
-          git config user.name  "diag-bot"
-          git config user.email "diag@local"
-          git checkout --orphan diag-migrate 2>/dev/null || git checkout diag-migrate
-          git rm -rf --cached . >/dev/null 2>&1 || true
-          [ -f migrate-log.txt ] || echo "(无输出)" > migrate-log.txt
-          git add -f migrate-log.txt
-          git commit -m "迁移日志 $(date -u +%Y%m%d-%H%M%S)" || echo "无变化"
-          git push -f origin diag-migrate || echo "推送失败"
+        uses: actions/upload-artifact@v5
+        with:
+          name: migrate-log
+          path: migrate-log.txt
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: 校验
         if: always()
