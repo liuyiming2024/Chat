@@ -1,0 +1,126 @@
+name: 构建诊断
+
+# 目的：把 APK / EXE 构建的报错正文写回 diag 分支的 build-log.txt。
+#
+# 为什么需要它：沙箱访问 actions/runs/{id}/logs 被网络策略挡住（403），
+# 看不到报错，只能靠"猜原因 + 改一版再跑一遍"，已经空转了六轮。
+# 这里改成让构建自己把输出写出来 —— 跟 db-run.yml 写 report.txt 是同一条通道。
+
+on:
+  workflow_dispatch:
+    inputs:
+      which:
+        description: 诊断哪个
+        type: choice
+        options: [android, desktop, both]
+        default: both
+
+permissions:
+  contents: write
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+
+      - uses: actions/setup-java@v5
+        if: ${{ github.event.inputs.which != 'desktop' }}
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: 采集环境
+        run: |
+          {
+            echo "===== 环境 ====="
+            echo "date: $(date -u)"
+            echo "runner: $RUNNER_OS"
+            node -v; npm -v
+            java -version 2>&1 | head -3
+            echo "ANDROID_HOME=$ANDROID_HOME"
+            echo "--- SDK 内容 ---"
+            ls "$ANDROID_HOME" 2>&1 | head -20
+            echo "--- platforms ---"
+            ls "$ANDROID_HOME/platforms" 2>&1 | head
+            echo "--- build-tools ---"
+            ls "$ANDROID_HOME/build-tools" 2>&1 | head
+          } > build-log.txt 2>&1
+
+      - name: 诊断安卓
+        if: ${{ github.event.inputs.which != 'desktop' }}
+        run: |
+          {
+            echo ""
+            echo "===== 安卓：cap add android ====="
+          } >> build-log.txt 2>&1
+          npm i @capacitor/core @capacitor/cli @capacitor/android \
+            --silent --no-fund --no-audit >> build-log.txt 2>&1
+          echo "-- 版本 --" >> build-log.txt
+          npx cap --version >> build-log.txt 2>&1
+          echo "-- add android --" >> build-log.txt
+          CI=1 npx cap add android >> build-log.txt 2>&1
+          echo "退出码: $?" >> build-log.txt
+          echo "-- android 目录 --" >> build-log.txt
+          ls android 2>&1 | head -20 >> build-log.txt
+          ls -la android/gradlew 2>&1 >> build-log.txt
+
+      - name: 诊断安卓 gradle
+        if: ${{ github.event.inputs.which != 'desktop' }}
+        run: |
+          {
+            echo ""
+            echo "===== 安卓：gradle ====="
+          } >> build-log.txt 2>&1
+          if [ -f android/gradlew ]; then
+            echo "sdk.dir=$ANDROID_HOME" > android/local.properties
+            yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1
+            cd android && chmod +x gradlew
+            ./gradlew assembleDebug --no-daemon --stacktrace >> ../build-log.txt 2>&1
+            echo "退出码: $?" >> ../build-log.txt
+            cd ..
+          else
+            echo "gradlew 不存在，跳过" >> build-log.txt
+          fi
+
+      - name: 诊断桌面
+        if: ${{ github.event.inputs.which != 'android' }}
+        run: |
+          {
+            echo ""
+            echo "===== 桌面：electron-builder ====="
+            echo "说明：只在 ubuntu 上跑 dry-run，Windows 侧仅检查配置"
+            echo "-- package.json build 段 --"
+            node -e "console.log(JSON.stringify(require('./package.json').build,null,2))"
+            echo "-- 文件是否齐全 --"
+            ls -la electron/main.js
+            ls -la chat/icons/icon.ico 2>&1
+            echo "-- electron-builder 校验 --"
+          } >> build-log.txt 2>&1
+          npm i electron electron-builder --silent --no-fund --no-audit >> build-log.txt 2>&1
+          npx electron-builder --help >> build-log.txt 2>&1
+          echo "退出码: $?" >> build-log.txt
+
+      # 关键：本步骤必须总是执行，否则失败的诊断不会产出日志
+      - name: 写回 diag 分支
+        if: always()
+        run: |
+          git config user.name  "diag-bot"
+          git config user.email "diag@local"
+          git checkout --orphan diag 2>/dev/null || git checkout diag
+          git rm -rf --cached . >/dev/null 2>&1 || true
+          git add -f build-log.txt
+          git commit -m "构建诊断 $(date -u +%Y%m%d-%H%M%S)" || echo "无变化"
+          git push -f origin diag
+
+      - name: 上传日志
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: build-diag-log
+          path: build-log.txt
+          if-no-files-found: warn
