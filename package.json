@@ -33,7 +33,7 @@
           ]
         }
       ],
-      "icon": "chat/icons/icon-512.png"
+      "icon": "chat/icons/icon.ico"
     },
     "nsis": {
       "oneClick": false,
