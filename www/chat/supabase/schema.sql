@@ -1145,8 +1145,12 @@ begin
 end;
 $$;
 
--- 网页兑换票据。不要求先过门禁 —— 网页端会先输保护密码再到登录页；
--- 且换到的只是账号身份，所有数据接口仍要求门禁。
+-- 网页兑换票据。
+-- 【不】要求先过门禁：网页端的流程是「先输保护密码 → 再到登录页」，
+-- 门禁在前面已经过过了。且换到的只是账号身份，所有数据接口仍各自校验门禁。
+--
+-- 这条豁免的代价要记着：它给了"绕过门禁直接拿账号会话"一条路径，
+-- 所以票据必须是短时（5 分钟）、单次、且只能由已登录客户端申领。
 create or replace function bridge_ticket_redeem(p_code text)
 returns json language plpgsql volatile security definer
 set search_path = public, extensions, pg_temp as $$
@@ -1257,6 +1261,11 @@ declare n int;
 begin
   delete from sessions where expires_at < now();
   get diagnostics n = row_count;
+
+  /* 所有会自然过期/堆积的凭据表都要在这里清，不能只清 sessions。
+     bridge_ticket 刚加时就漏了 —— 跟门禁会话堆积是同一类缺陷。 */
+  delete from bridge_ticket where expires_at < now() or used_at is not null;
+
   return n;
 end;
 $$;

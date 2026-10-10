@@ -14,9 +14,21 @@
  *   Access-Control-Allow-Origin            （CORS）
  *   Access-Control-Allow-Private-Network   （PNA 预检：公网页面访问 localhost 必过这道）
  *
- * ⚠ 安全上唯一不能省的一步：Origin 白名单。
- *   端口一开，任何网页都能来探。白名单不是可选项，它正是"自己认自己"那一步。
- *   用 "*" 等于给本机开一个可被任意网站探测的口子。
+ * ⚠ 暴露面必须说准（之前我低估了）：
+ *
+ *   Origin 白名单【只防网页，不防本机进程】。
+ *   CORS 与 PNA 都是【浏览器强制】的机制 —— curl、任何本机程序发请求时
+ *   既不带 Origin 也不做预检，直接就能拿到明文票据：
+ *
+ *       curl http://127.0.0.1:37821/identity   →  {"nick":"...","code":"..."}
+ *
+ *   所以白名单是必需的，但它防的范围是"任意网站"，不是"任意本机程序"。
+ *   本机已失守时这套机制本就不该被信任 —— 那时能做的破坏远多于此。
+ *
+ *   剩下能做的减损：
+ *     · 票据 5 分钟过期、单次使用（拿到也很快失效）
+ *     · 只在【客户端真的登录着】的时间窗内才有票据可给
+ *     · 退出登录立刻 clear()
  * ------------------------------------------------------------------ */
 'use strict';
 const http = require('http');
@@ -88,8 +100,15 @@ function createServer() {
     res.end(JSON.stringify({ err: 'not found' }));
   });
 
-  /* 端口被占用时静默失败：不能因为桥接起不来就让应用打不开 */
-  srv.on('error', () => { });
+  /* 端口被别的程序占了，必须【明确失败】而不是静默。
+     静默的后果：网页端照样探测成功，拿到的是攻击者给的票据，
+     兑换后进了别人的账号，而用户以为进的是自己。
+     所以这里要置一个失败标记，让 publish() 干脆不发票据。 */
+  srv.on('error', (err) => {
+    srv.failed = true;
+    srv.failCode = err && err.code;
+    state = { nick: '', code: '', at: 0 };   // 立刻清空，别留着给人拿
+  });
 
   srv.listen(PORT, HOST);
   return srv;
@@ -98,7 +117,13 @@ function createServer() {
 module.exports = {
   PORT,
   createServer,
-  publish(nick, code) { state = { nick: nick || '', code: code || '', at: Date.now() }; },
+  /* 端口没拿到手就不发票据 —— 宁可这个功能不生效，也不能给错身份 */
+  publish(nick, code, srv) {
+    if (srv && srv.failed) return false;
+    state = { nick: nick || '', code: code || '', at: Date.now() };
+    return true;
+  },
   clear() { state = { nick: '', code: '', at: 0 }; },
-  current() { return state; }
+  current() { return state; },
+  isReady(srv) { return !!(srv && !srv.failed); }
 };
