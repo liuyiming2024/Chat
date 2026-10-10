@@ -2529,10 +2529,29 @@
           btn.textContent = t('update.downloading');
           var u = best.source.url;
           if (g.ElectronBridge && g.ElectronBridge.downloadUpdate) {
+            /* 进度条：分片下载时给个百分比，不然大文件干等着像卡死 */
+            var pg = elc('div', 'dl-prog');
+            pg.innerHTML = '<div class="dl-bar"><i style="width:0%"></i></div><span>' + t('update.downloading') + '</span>';
+            d.appendChild(pg);
+            var off = null;
+            if (g.ElectronBridge.onDownloadProgress) {
+              off = g.ElectronBridge.onDownloadProgress(function (p2) {
+                var bar = pg.querySelector('i'); if (bar) bar.style.width = (p2.pct || 0) + '%';
+                var sp = pg.querySelector('span');
+                if (sp) sp.textContent = (p2.pct || 0) + '%　' +
+                  g.Updater.fmtSize(p2.loaded) + ' / ' + g.Updater.fmtSize(p2.total);
+              });
+            }
             g.ElectronBridge.downloadUpdate(u, r.file).then(function (res) {
-              if (res && res.ok) { g.UI.toast('已下载，请在弹出的文件夹里安装'); mo.close(); }
-              else { btn.disabled = false; btn.textContent = t('common.retry') || t('update.retry');
-                     g.UI.toast((res && res.err) || t('update.failed'), 'err'); }
+              if (off) off();
+              if (res && res.ok) {
+                g.UI.toast('已下载（' + (res.chunks || 1) + ' 个分片' +
+                  (res.fellBack ? '，该源不支持分片' : '') + '），请在弹出的文件夹里安装');
+                mo.close();
+              } else {
+                btn.disabled = false; btn.textContent = t('common.retry') || t('update.retry');
+                g.UI.toast((res && res.err) || t('update.failed'), 'err');
+              }
             });
           } else {
             /* 网页版：直接给文件直链，不跳网页 */

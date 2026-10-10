@@ -1536,3 +1536,16 @@ body.dark .bridge-line::after { background: #171c22; }
 .src-item:first-of-type { color: var(--pri, #2b5cb8); font-weight: 600; }
 body.dark .src-item { color: #8d97a8; }
 body.dark .src-item:first-of-type { color: #9dc0ff; }
+
+/* 下载进度条 */
+.dl-prog { margin-top: 10px; }
+.dl-bar {
+  height: 6px; border-radius: 3px; overflow: hidden;
+  background: rgba(127,127,127,.18); margin-bottom: 6px;
+}
+.dl-bar > i {
+  display: block; height: 100%; width: 0;
+  background: var(--pri, #3b7ff2); transition: width .2s linear;
+}
+.dl-prog > span { font-size: 12px; color: #888; font-variant-numeric: tabular-nums; }
+body.dark .dl-prog > span { color: #8d97a8; }

@@ -9,6 +9,7 @@
 const { app, BrowserWindow, Menu, shell, ipcMain, nativeImage } = require('electron');
 const path = require('path');
 const bridge = require('./local-bridge');
+const chunked = require('./chunked-download');
 
 /* 网页是纯静态的，装了也没有 nodeIntegration 的必要。
    开着只会把整个 Node 能力暴露给页面内容，属于自找风险。 */
@@ -114,42 +115,25 @@ function startBridge() {
 const { ipcMain: ipc } = require('electron');
 
 ipc.handle('chat:downloadUpdate', async (e, url, file) => {
-  const https = require('https');
-  const fs = require('fs');
   const os = require('os');
   const path = require('path');
-  const { URL } = require('url');
-
   const dest = path.join(os.tmpdir(), file);
-  const out = fs.createWriteStream(dest);
-
-  /* 跟着重定向：GitHub release 直链会 302 到对象存储 */
-  async function get(u, hops) {
-    if (hops > 5) throw new Error('too many redirects');
-    return new Promise((resolve, reject) => {
-      https.get(u, (res) => {
-        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          res.resume();
-          return resolve(get(new URL(res.headers.location, u).href, hops + 1));
-        }
-        if (res.statusCode !== 200) {
-          res.resume();
-          return reject(new Error('HTTP ' + res.statusCode));
-        }
-        res.pipe(out);
-        out.on('finish', () => resolve(dest));
-        out.on('error', reject);
-      }).on('error', reject);
-    });
-  }
 
   try {
-    const p = await get(url, 0);
-    /* 打开所在文件夹，让用户自己点安装 —— 不代他执行 */
-    shell.showItemInFolder(p);
-    return { ok: true, path: p };
+    const res = await chunked.download({
+      url,
+      dest,
+      onProgress: (p) => {
+        /* 进度推回渲染进程，界面上能显示百分比和速度 */
+        if (e && e.sender && !e.sender.isDestroyed()) {
+          e.sender.send('chat:downloadProgress', p);
+        }
+      }
+    });
+    shell.showItemInFolder(res.path);
+    return { ok: true, path: res.path, bytes: res.bytes, chunks: res.chunks, fellBack: !!res.fellBack };
   } catch (err) {
-    return { ok: false, err: String(err && err.message || err) };
+    return { ok: false, err: String((err && err.message) || err) };
   }
 });
 
