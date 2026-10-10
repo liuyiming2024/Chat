@@ -42,12 +42,13 @@
       "artifactName": "聊天室-便携版.exe"
     },
     "directories": {
+      "app": ".",
       "output": "dist"
     }
   },
-  "directories": {
-    "app": ".",
-    "output": "dist"
-  },
-  "author": "liuyiming2024"
+  "author": "liuyiming2024",
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^26.0.0"
+  }
 }

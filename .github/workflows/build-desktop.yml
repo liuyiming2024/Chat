@@ -42,7 +42,7 @@ jobs:
             p.main='electron/main.js';
             fs.writeFileSync('package.json', JSON.stringify(p,null,2));
           "
-          npm i electron electron-builder --silent --no-fund --no-audit
+          npm i --save-dev electron electron-builder --silent --no-fund --no-audit
           node -e "console.log('build 配置:', JSON.stringify(require('./package.json').build))"
 
       - name: 构建
