@@ -33,13 +33,10 @@
       "icon": "chat/icons/icon.ico"
     },
     "nsis": {
-      "oneClick": false,
-      "perMachine": false,
-      "allowToChangeInstallationDirectory": true,
-      "shortcutName": "聊天室"
+      "artifactName": "chat-win-setup.${ext}"
     },
     "portable": {
-      "artifactName": "聊天室-便携版.exe"
+      "artifactName": "chat-win-portable.${ext}"
     },
     "directories": {
       "app": ".",
@@ -65,7 +62,8 @@
       "icon": "chat/icons/icon-512.png",
       "category": "public.app-category.social-networking",
       "identity": null,
-      "darkModeSupport": true
+      "darkModeSupport": true,
+      "artifactName": "chat-mac.${ext}"
     },
     "linux": {
       "target": [
@@ -74,16 +72,11 @@
           "arch": [
             "x64"
           ]
-        },
-        {
-          "target": "deb",
-          "arch": [
-            "x64"
-          ]
         }
       ],
       "icon": "chat/icons/icon-512.png",
-      "category": "Network"
+      "category": "Network",
+      "artifactName": "chat-linux.${ext}"
     }
   },
   "author": "liuyiming2024",

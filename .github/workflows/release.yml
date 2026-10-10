@@ -72,7 +72,25 @@ jobs:
         shell: bash
         run: |
           npm i --save-dev electron electron-builder --silent --no-fund --no-audit
-          npx electron-builder --win --x64 --publish never
+          npx electron-builder --win --x64 --publish never 2>&1 | tee build-log.txt
+          echo "exit=${PIPESTATUS[0]}"
+          ls dist >> build-log.txt 2>&1 || echo "dist 为空" >> build-log.txt
+
+      # 诊断步骤：失败也不影响结论，但必须留线索 ——
+      # 这一轮 linux 构建失败就是因为没有任何日志，只能盲改。
+      - name: 日志写回
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          git config user.name  "diag-bot"
+          git config user.email "diag@local"
+          git checkout --orphan diag-rel-win 2>/dev/null || git checkout diag-rel-win
+          git rm -rf --cached . >/dev/null 2>&1 || true
+          [ -f build-log.txt ] || echo "(无输出)" > build-log.txt
+          git add -f build-log.txt
+          git commit -m "发布构建日志 win $(date -u +%Y%m%d-%H%M%S)" || echo "无变化"
+          git push -f origin diag-rel-win || echo "推送失败（不影响产物）"
       - uses: actions/upload-artifact@v5
         if: always()
         with: { name: exe, path: dist/*.exe }
@@ -86,7 +104,25 @@ jobs:
       - name: 构建
         run: |
           npm i --save-dev electron electron-builder --silent --no-fund --no-audit
-          npx electron-builder --linux --x64 --publish never
+          npx electron-builder --linux --x64 --publish never 2>&1 | tee build-log.txt
+          echo "exit=${PIPESTATUS[0]}"
+          ls dist >> build-log.txt 2>&1 || echo "dist 为空" >> build-log.txt
+
+      # 诊断步骤：失败也不影响结论，但必须留线索 ——
+      # 这一轮 linux 构建失败就是因为没有任何日志，只能盲改。
+      - name: 日志写回
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          git config user.name  "diag-bot"
+          git config user.email "diag@local"
+          git checkout --orphan diag-rel-linux 2>/dev/null || git checkout diag-rel-linux
+          git rm -rf --cached . >/dev/null 2>&1 || true
+          [ -f build-log.txt ] || echo "(无输出)" > build-log.txt
+          git add -f build-log.txt
+          git commit -m "发布构建日志 linux $(date -u +%Y%m%d-%H%M%S)" || echo "无变化"
+          git push -f origin diag-rel-linux || echo "推送失败（不影响产物）"
       - uses: actions/upload-artifact@v5
         if: always()
         with:
@@ -105,7 +141,25 @@ jobs:
       - name: 构建
         run: |
           npm i --save-dev electron electron-builder --silent --no-fund --no-audit
-          npx electron-builder --mac --x64 --arm64 --publish never
+          npx electron-builder --mac --x64 --arm64 --publish never 2>&1 | tee build-log.txt
+          echo "exit=${PIPESTATUS[0]}"
+          ls dist >> build-log.txt 2>&1 || echo "dist 为空" >> build-log.txt
+
+      # 诊断步骤：失败也不影响结论，但必须留线索 ——
+      # 这一轮 linux 构建失败就是因为没有任何日志，只能盲改。
+      - name: 日志写回
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          git config user.name  "diag-bot"
+          git config user.email "diag@local"
+          git checkout --orphan diag-rel-mac 2>/dev/null || git checkout diag-rel-mac
+          git rm -rf --cached . >/dev/null 2>&1 || true
+          [ -f build-log.txt ] || echo "(无输出)" > build-log.txt
+          git add -f build-log.txt
+          git commit -m "发布构建日志 mac $(date -u +%Y%m%d-%H%M%S)" || echo "无变化"
+          git push -f origin diag-rel-mac || echo "推送失败（不影响产物）"
       - uses: actions/upload-artifact@v5
         if: always()
         with:
@@ -129,12 +183,13 @@ jobs:
       - name: 整理文件名
         run: |
           mkdir -p pkg
-          find out -name '*.apk'         -exec cp {} pkg/chat-android.apk       \; 2>/dev/null || true
-          find out -name '*Setup*.exe'   -exec cp {} pkg/chat-win-setup.exe     \; 2>/dev/null || true
-          find out -name '*portable*.exe' -exec cp {} pkg/chat-win-portable.exe \; 2>/dev/null || true
-          find out -name '*.dmg'         -exec cp {} pkg/chat-mac.dmg           \; 2>/dev/null || true
-          find out -name '*.AppImage'    -exec cp {} pkg/chat-linux.AppImage    \; 2>/dev/null || true
-          find out -name '*.deb'         -exec cp {} pkg/chat-linux.deb         \; 2>/dev/null || true
+          # 文件名已在 package.json 的 artifactName 里写死，
+          # 这里按名拷即可 —— 不再靠 find 通配去猜（便携版就曾因中文名漏掉）
+          for f in chat-android.apk chat-win-setup.exe chat-win-portable.exe \
+                   chat-mac.dmg chat-mac.zip chat-linux.AppImage; do
+            FOUND=$(find out -name "$f" | head -1)
+            if [ -n "$FOUND" ]; then cp "$FOUND" "pkg/$f"; echo "  ✓ $f"; else echo "  - $f 缺失"; fi
+          done
           echo "===== 待发布 ====="
           ls -la pkg
 
