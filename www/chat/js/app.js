@@ -2617,6 +2617,43 @@
       });
     }
 
+    /* ---- 网页版的边界，必须说清楚 ----
+       用户的核心诉求是"不盯着页面时也能被提醒"。
+       网页关掉之后浏览器根本不在运行，无从提醒 —— 这是网页的硬限制，
+       不是没做出来。与其让人反复试，不如直说，并给出真正管用的路径。 */
+    d.appendChild(elc('div', 'pref-sec-title', '想彻底关掉网页也能收到'));
+    var note = elc('div', 'pref-row');
+    note.innerHTML =
+      '<span><i class="pref-note">网页关掉后浏览器就不运行了，此时无法提醒 —— ' +
+      '这是网页的硬限制。要做到这一点，需要把它装成应用：</i></span>';
+    d.appendChild(note);
+
+    var rowInstall = elc('div', 'pref-row');
+    var instBtns = elc('div', '');
+    instBtns.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap';
+    var bWin = elc('a', 'btn ghost sm', '装到电脑');
+    bWin.href = 'https://github.com/liuyiming2024/Chat/releases/latest';
+    bWin.target = '_blank'; bWin.rel = 'noopener';
+    var bAnd = elc('a', 'btn ghost sm', '装到手机');
+    bAnd.href = 'https://github.com/liuyiming2024/Chat/releases/latest';
+    bAnd.target = '_blank'; bAnd.rel = 'noopener';
+    instBtns.appendChild(bWin); instBtns.appendChild(bAnd);
+    rowInstall.appendChild(instBtns);
+    d.appendChild(rowInstall);
+
+    /* 手机/桌面浏览器支持 PWA 时，给个更近的一键入口 */
+    var bPwa = elc('div', 'pref-row');
+    var pwaSpan = elc('span', '', '或者用浏览器自带「安装」（免下载）');
+    bPwa.appendChild(pwaSpan);
+    var bPwaBtn = elc('button', 'btn ghost sm', '添加到桌面');
+    bPwaBtn.type = 'button';
+    bPwaBtn.onclick = function () {
+      if (g.__installPrompt) { g.__installPrompt.prompt(); }
+      else { g.UI.toast('当前浏览器不支持直接安装，请用上面的下载链接', 'err'); }
+    };
+    bPwa.appendChild(bPwaBtn);
+    d.appendChild(bPwa);
+
     /* ---- 测试 ---- */
     var rowT = elc('div', 'pref-row');
     rowT.innerHTML = '<span>试一下效果</span>';

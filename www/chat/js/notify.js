@@ -229,6 +229,9 @@
     if (n > 0 && hidden) startFlash();
     else apply(FLASH_A);
 
+    /* 标签页图标红点 */
+    drawFavicon(n);
+
     /* 桌面版：任务栏角标 */
     try {
       if (g.ElectronBridge && g.ElectronBridge.setBadge) g.ElectronBridge.setBadge(n);
@@ -239,6 +242,80 @@
     if (t === lastTitle) return;
     try { g.document.title = t; } catch (e) { }
     lastTitle = t;
+  }
+
+  /* ---------------- 标签页 favicon 红点 ----------------
+   * 这是"没在看这个页面"时最有效的信号。
+   *
+   * 浏览器标签那么窄，标题文字会被截断成一两个词，闪烁未必看得见；
+   * 但图标右上角一个红点，一眼就能扫到 —— 主流聊天工具在网页端都这么做。
+   *
+   * 用 canvas 现场画，不引外部图片，离线也能用。 */
+  var canvas = null, faviconLink = null, origIcon = null;
+
+  function drawFavicon(n) {
+    try {
+      if (!canvas) {
+        canvas = document.createElement('canvas');
+        canvas.width = canvas.height = 32;
+      }
+      var c = canvas.getContext('2d');
+      if (!c) return;
+      c.clearRect(0, 0, 32, 32);
+
+      /* 底：和站点图标一致的圆角蓝块 + 两条白线 */
+      c.fillStyle = '#3b7ff2';
+      roundRect(c, 0, 0, 32, 32, 7);
+      c.fill();
+      c.strokeStyle = '#fff';
+      c.lineWidth = 2.4;
+      c.lineCap = 'round';
+      c.beginPath();
+      c.moveTo(7, 11); c.lineTo(23, 11);
+      c.moveTo(7, 16); c.lineTo(18, 16);
+      c.stroke();
+
+      /* 红点：有未读才画 */
+      if (n > 0) {
+        c.fillStyle = '#e5453a';
+        c.beginPath();
+        c.arc(24, 8, 7, 0, Math.PI * 2);
+        c.fill();
+        c.fillStyle = '#fff';
+        c.font = 'bold 10px sans-serif';
+        c.textAlign = 'center';
+        c.textBaseline = 'middle';
+        c.fillText(n > 9 ? '9+' : String(n), 24, 8.5);
+      }
+
+      if (!faviconLink) {
+        var links = document.getElementsByTagName('link');
+        for (var i = 0; i < links.length; i++) {
+          if (links[i].getAttribute('rel') === 'icon') { faviconLink = links[i]; break; }
+        }
+        if (!faviconLink) {
+          faviconLink = document.createElement('link');
+          faviconLink.rel = 'icon';
+          document.head.appendChild(faviconLink);
+        }
+        origIcon = faviconLink.href;
+      }
+      faviconLink.href = canvas.toDataURL('image/png');
+    } catch (e) { }
+  }
+
+  function roundRect(c, x, y, w, h, r) {
+    c.beginPath();
+    c.moveTo(x + r, y);
+    c.arcTo(x + w, y, x + w, y + h, r);
+    c.arcTo(x + w, y + h, x, y + h, r);
+    c.arcTo(x, y + h, x, y, r);
+    c.arcTo(x, y, x + w, y, r);
+    c.closePath();
+  }
+
+  function restoreFavicon() {
+    try { if (faviconLink && origIcon) faviconLink.href = origIcon; } catch (e) { }
   }
 
   /* @我 的优先级高于普通未读 —— 主流聊天工具都是这么分级的 */
@@ -258,7 +335,12 @@
   }
 
   /* 回到前台立刻停闪并恢复正常标题 */
-  function onFocus() { stopFlash(); apply(FLASH_A); }
+  function onFocus() {
+    stopFlash();
+    apply(FLASH_A);
+    /* 已经回到前台了，红点没意义 —— 但不清掉会一直挂着，看着像还有未读 */
+    restoreFavicon();
+  }
 
   g.Notifier = {
     get: get, set: set, save: save,

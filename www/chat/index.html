@@ -263,6 +263,7 @@
   window.addEventListener('beforeinstallprompt', function (e) {
     e.preventDefault();
     var evt = e;
+    window.__installPrompt = e;
     var btn = document.createElement('button');
     btn.className = 'sw-install';
     btn.innerHTML = '<svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg> 安装到桌面';
