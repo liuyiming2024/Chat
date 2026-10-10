@@ -44,6 +44,46 @@
     "directories": {
       "app": ".",
       "output": "dist"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "chat/icons/icon-512.png",
+      "category": "public.app-category.social-networking",
+      "identity": null,
+      "darkModeSupport": true
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "chat/icons/icon-512.png",
+      "category": "Network"
     }
   },
   "author": "liuyiming2024",

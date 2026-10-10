@@ -1,11 +1,15 @@
 name: 发布客户端
 
-# 把 APK 与 Windows 安装包打成 GitHub Release。
+# 把各平台安装包打成 GitHub Release。
 #
 # 为什么必须用 Release 而不是只留 Actions artifacts：
 #   artifacts 下载必须登录 GitHub 账号，而且 30 天就过期。
 #   用户不知道有这东西，就算翻到了也下不了 —— 等于没发布。
 # Release 的资产是免登录直链，不过期。
+#
+# 覆盖：Windows / macOS / Linux / Android。
+#   iOS 不在此列 —— App Store 必须付费开发者账号，与"零成本"冲突，
+#   那边的正解是网页版「添加到主屏幕」，落地页已写明。
 
 on:
   workflow_dispatch:
@@ -14,6 +18,10 @@ on:
         description: 版本号（如 v1.0.0）
         required: true
         default: v1.0.0
+      with_mac:
+        description: 是否构建 macOS（公开仓库免费，但耗 10 倍计分钟、耗时更长）
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -52,76 +60,133 @@ jobs:
           cd android && chmod +x gradlew && ./gradlew assembleDebug --no-daemon
       - uses: actions/upload-artifact@v5
         if: always()
-        with:
-          name: apk
-          path: android/app/build/outputs/apk/debug/*.apk
+        with: { name: apk, path: android/app/build/outputs/apk/debug/*.apk }
 
-  desktop:
+  windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with: { node-version: '20' }
-      - name: 装 Electron 打包工具
-        run: npm i --save-dev electron electron-builder --silent --no-fund --no-audit
       - name: 构建
         shell: bash
-        run: npx electron-builder --win --x64 --publish never
+        run: |
+          npm i --save-dev electron electron-builder --silent --no-fund --no-audit
+          npx electron-builder --win --x64 --publish never
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with: { name: exe, path: dist/*.exe }
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version: '20' }
+      - name: 构建
+        run: |
+          npm i --save-dev electron electron-builder --silent --no-fund --no-audit
+          npx electron-builder --linux --x64 --publish never
       - uses: actions/upload-artifact@v5
         if: always()
         with:
-          name: exe
+          name: linux
           path: |
-            dist/*.exe
+            dist/*.AppImage
+            dist/*.deb
+
+  macos:
+    if: ${{ github.event.inputs.with_mac }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version: '20' }
+      - name: 构建
+        run: |
+          npm i --save-dev electron electron-builder --silent --no-fund --no-audit
+          npx electron-builder --mac --x64 --arm64 --publish never
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: mac
+          path: |
+            dist/*.dmg
+            dist/*.zip
 
   publish:
-    needs: [android, desktop]
+    needs: [android, windows, linux]
     runs-on: ubuntu-latest
+    # 关键：publish 永远要跑，哪怕某个平台构建失败。
+    # 之前 mac 缺失会让 needs 卡住，导致"部分成功"变成"整体失败"。
+    if: always()
     steps:
       - uses: actions/download-artifact@v5
         with: { path: out, merge-multiple: true }
 
-      # 文件名一律用英文：中文名在上传资产这一步容易出编码问题，
-      # 而失败信息又不明确，排查成本太高。
+      # 文件名固定为英文，且不带版本号 ——
+      # 落地页才能用 releases/latest/download/xxx 这种永久直链。
       - name: 整理文件名
         run: |
           mkdir -p pkg
-          find out -name '*.apk'      -exec cp {} pkg/chat-android.apk   \;
-          find out -name '*Setup*.exe' -exec cp {} pkg/chat-setup.exe    \;
-          find out -name '*portable*.exe' -exec cp {} pkg/chat-portable.exe \;
-          find out -name '*.exe' | grep -v Setup | grep -v portable | head -1 | xargs -r -I{} cp {} pkg/chat-portable.exe
+          find out -name '*.apk'         -exec cp {} pkg/chat-android.apk       \; 2>/dev/null || true
+          find out -name '*Setup*.exe'   -exec cp {} pkg/chat-win-setup.exe     \; 2>/dev/null || true
+          find out -name '*portable*.exe' -exec cp {} pkg/chat-win-portable.exe \; 2>/dev/null || true
+          find out -name '*.dmg'         -exec cp {} pkg/chat-mac.dmg           \; 2>/dev/null || true
+          find out -name '*.AppImage'    -exec cp {} pkg/chat-linux.AppImage    \; 2>/dev/null || true
+          find out -name '*.deb'         -exec cp {} pkg/chat-linux.deb         \; 2>/dev/null || true
+          echo "===== 待发布 ====="
           ls -la pkg
 
-      # 用 API 直接发，不走第三方 action：
-      # 出错时能看到 GitHub 返回的正文，而不是只有一个红叉。
-      - name: 发 Release
+      # 幂等：tag 已存在就先删掉旧 Release 再重建。
+      # 之前用固定 tag 重跑会撞「tag 已存在」—— 把一个成功的事搞成真失败。
+      # 用户看到红叉第一反应是重跑，所以这个必须能吃住重跑。
+      - name: 发 Release（可重复运行）
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.event.inputs.tag }}
         run: |
-          set -e
           API=https://api.github.com/repos/${{ github.repository }}
           AUTH="Authorization: Bearer $GH_TOKEN"
           {
+            echo "== 检查是否已存在 =="
+            OLD=$(curl -s "$API/releases/tags/$TAG" -H "$AUTH")
+            OLDID=$(echo "$OLD" | python3 -c "import sys,json;print(json.load(sys.stdin).get('id',''))" 2>/dev/null)
+            if [ -n "$OLDID" ] && [ "$OLDID" != "None" ]; then
+              echo "发现旧 Release id=$OLDID，删除以重建"
+              curl -s -X DELETE "$API/releases/$OLDID" -H "$AUTH" > /dev/null
+              # 同名资产会在 recreate 后重新上传，旧 tag 的 ref 保留即可
+            else
+              echo "无旧 Release，直接新建"
+            fi
+
             echo "== 创建 Release =="
             REL=$(curl -s -X POST "$API/releases" -H "$AUTH" \
               -H "Accept: application/vnd.github+json" \
-              -d "{\"tag_name\":\"$TAG\",\"name\":\"聊天室 $TAG\",\"body\":\"网页版 / Windows / Android 三端安装包。\\n\\n未签名：安装时点「仍要运行」或允许「未知来源」即可，不影响功能。\"}")
-            echo "$REL" | head -c 400
-            UP=$(echo "$REL" | python3 -c "import sys,json;print(json.load(sys.stdin).get('upload_url','').split('{')[0])")
+              -d "{\"tag_name\":\"$TAG\",\"name\":\"聊天室 $TAG\",\"body\":\"各平台安装包。未签名：Windows 点「仍要运行」、macOS 右键「打开」、安卓允许「未知来源」。\\n\\niPhone / iPad 无独立 App（App Store 需付费开发者账号），请用 Safari「添加到主屏幕」。\"}")
+            echo "$REL" | head -c 500
+            UP=$(echo "$REL" | python3 -c "import sys,json;print(json.load(sys.stdin).get('upload_url','').split('{')[0])" 2>/dev/null)
             echo ""
             echo "upload_url: $UP"
+            if [ -z "$UP" ] || [ "$UP" = "None" ]; then
+              echo "!! upload_url 解析为空，跳过上传（避免产出 -.apk 这类坏资产）"
+              exit 1
+            fi
             for f in pkg/*; do
+              [ -e "$f" ] || continue
               N=$(basename "$f")
-              echo "-- 上传 $N --"
+              echo "-- 上传 $N ($(du -h "$f" | cut -f1)) --"
               curl -s -X POST "$UP?name=$N&label=$N" \
                 -H "$AUTH" -H "Content-Type: application/octet-stream" \
-                --data-binary @"$f" | head -c 300
+                --data-binary @"$f" | head -c 200
               echo ""
             done
+            echo "== 完成 =="
           } 2>&1 | tee release-log.txt
 
+      # 诊断步骤永远不影响结论 —— 它失败过三次，把成功的事拖成红叉
       - name: 日志写回
+        continue-on-error: true
         if: always()
         run: |
           git config user.name  "diag-bot"
@@ -131,4 +196,4 @@ jobs:
           [ -f release-log.txt ] || echo "(无输出)" > release-log.txt
           git add -f release-log.txt
           git commit -m "发布日志 $(date -u +%Y%m%d-%H%M%S)" || echo "无变化"
-          git push -f origin diag-release || echo "推送失败" 
+          git push -f origin diag-release || echo "推送失败（不影响产物）"

@@ -74,12 +74,13 @@ jobs:
           fi
 
       - name: 2. 结果写回 diag 分支
+        continue-on-error: true
         run: |
           set -euo pipefail
           git config user.name  "diag-bot"
           git config user.email "diag@local"
-          git checkout --orphan diag 2>/dev/null || git checkout diag
+          git checkout --orphan diag-db-check 2>/dev/null || git checkout diag-db-check
           git rm -rf --cached . >/dev/null 2>&1 || true
           git add -f report.txt
           git commit -m "诊断结果 $(date -u +%Y%m%d-%H%M%S)" || echo "无变化"
-          git push -f origin diag
+          git push -f origin diag-db-check

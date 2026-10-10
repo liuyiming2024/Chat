@@ -134,7 +134,7 @@ jobs:
           [ -f android-log.txt ] || echo "(无 gradle 输出)" > android-log.txt
           git add -f android-log.txt
           git commit -m "安卓构建日志 $(date -u +%Y%m%d-%H%M%S)" || echo "无变化"
-          git push -f origin diag
+          git push -f origin diag-android
 
       # 必须 always：上一轮 APK 构建成功，但"日志写回"这步失败，
       # 导致默认的 success() 依赖把上传整个跳过了 —— 包打出来了却拿不到。
