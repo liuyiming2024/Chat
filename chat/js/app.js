@@ -8,6 +8,81 @@
 
   var KEY = 'wxlg_state_v1', ME_KEY = 'wxlg_me', GATE_KEY = 'wxlg_gate_ok';
 
+  /* ============ 凭据：多端共用一份 cookie ============
+   *
+   * 原来放在 sessionStorage —— 它是按标签页隔离的，开个新标签页就要重新输
+   * 一遍保护密码。改成 cookie 之后，同一浏览器的所有标签页共用同一份凭据，
+   * 这才是"多端共用"。
+   *
+   * 两类凭据的有效期刻意做得不一样：
+   *   门禁（gate）：短。切到后台立刻作废 —— 回到前台必须重新输保护密码。
+   *   账号（me）  ：可选记住。勾了就长期有效，不勾关掉标签页就没了。
+   */
+  function ckSet(name, val, days) {
+    try {
+      var d = new Date();
+      d.setTime(d.getTime() + (days || 1) * 86400000);
+      document.cookie = name + '=' + encodeURIComponent(val) +
+        ';path=/;expires=' + d.toUTCString() + ';SameSite=Lax';
+    } catch (e) { }
+  }
+  function ckGet(name) {
+    try {
+      var m = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
+      return m ? decodeURIComponent(m[1]) : '';
+    } catch (e) { return ''; }
+  }
+  function ckDel(name) {
+    try { document.cookie = name + '=;path=/;expires=Thu, 01 Jan 1970 00:00:00 GMT'; } catch (e) { }
+  }
+
+  /* 门禁：默认只给 1 天；切后台时会被清掉 */
+  function setGateOk() { ckSet(GATE_KEY, '1', 1); }
+  function gateOk() { return ckGet(GATE_KEY) === '1'; }
+  function clrGate() { ckDel(GATE_KEY); }
+
+  /* 账号凭据：三档有效期，互相独立
+   *
+   *   记住（勾选）  → 30 天，关掉浏览器也在
+   *   没记住        → 在线期间有效，离开后再留 30 分钟
+   *
+   * "没记住"不是"关掉标签就没了"——那太苛刻：切个后台回来就要重登。
+   * 也不是永久——那跟记住没区别。取中间：只要页面还在活动就一直续期，
+   * 真的离开一会儿（超过 IDLE_MIN）才失效。
+   *
+   * 注意：这跟门禁是两回事。门禁每次切到前台都要重输，账号不用。 */
+  var REMEMBER_KEY = 'wxlg_remember';
+  var IDLE_MIN = 30;            /* 非记住模式：离开后还能用多久 */
+  var REMEMBER_DAYS = 30;
+
+  function ckSetMin(name, val, minutes) {
+    try {
+      var d = new Date();
+      d.setTime(d.getTime() + minutes * 60000);
+      document.cookie = name + '=' + encodeURIComponent(val) +
+        ';path=/;expires=' + d.toUTCString() + ';SameSite=Lax';
+    } catch (e) { }
+  }
+
+  function setMeId(id, remember) {
+    try { localStorage.setItem(REMEMBER_KEY, remember ? '1' : '0'); } catch (e) { }
+    if (remember) ckSet(ME_KEY, id, REMEMBER_DAYS);
+    else ckSetMin(ME_KEY, id, IDLE_MIN);
+  }
+  function meId() { return ckGet(ME_KEY); }
+  function clrMe() { ckDel(ME_KEY); }
+  function rememberOn() {
+    try { return localStorage.getItem(REMEMBER_KEY) === '1'; } catch (e) { return false; }
+  }
+
+  /* 续期：页面还在活动时把有效期往后推。
+     记住模式不用续（本来就长期）；没记住的才需要靠它维持"在线即有效"。 */
+  function tickMe() {
+    if (rememberOn()) return;
+    var id = ckGet(ME_KEY);
+    if (id) ckSetMin(ME_KEY, id, IDLE_MIN);
+  }
+
   var S = null, me = null, cur = 'public';
   /* atMe 原本根本没声明 —— 有人 @ 我时这行会抛 "atMe is not defined"，
      整个 noteIncoming 中断：未读数不累加、renderRooms 不执行、通知也不发。
@@ -191,8 +266,8 @@
       /* 在线模式：交给服务端建站（保护密码与站长密码都在服务端 bcrypt） */
       if (g.Online && g.Online.isReachable()) {
         g.Online.setup(gp, nick, pwd).then(function (r) {
-          sessionStorage.setItem(GATE_KEY, '1');
-          if (r && r.uid) sessionStorage.setItem(ME_KEY, r.uid);
+          setGateOk();
+          if (r && r.uid) setMeId(r.uid, rememberOn());
           return g.Online.pull().then(function (inS) {
             if (inS && mergeState(inS)) save(true);
             g.Online.startPoll();
@@ -214,8 +289,8 @@
       ensurePublic();
       log('init', '创建站点与站长账号 ' + nick);
       save(true);
-      sessionStorage.setItem(GATE_KEY, '1');
-      sessionStorage.setItem(ME_KEY, u.id);
+      setGateOk();
+      setMeId(u.id, rememberOn());
       me = u;
       enterApp();
     };
@@ -233,8 +308,11 @@
       if (!p) { g.UI.toast('请输入密码'); return; }
       /* 在线模式：保护密码由服务端校验，本地根本不存这个哈希 */
       if (g.Online && g.Online.isOnline()) {
-        g.Online.gate(p).then(function () {
-          sessionStorage.setItem(GATE_KEY, '1');
+        g.Online.gate(p).then(function (r) {
+          setGateOk();
+          /* 用旧密码进来的：服务端把新密码解出来给前端，
+             必须当场展示并让用户记住 —— 这一次之后旧密码就作废了。 */
+          if (r && r.show_new) { showNewGate(r.show_new); }
           return g.Online.pull();
         }).then(function (inS) {
           if (inS && mergeState(inS)) save(true);
@@ -247,15 +325,49 @@
       var gv = verifyPwd(p, S.gate.salt, S.gate.hash);
       if (!gv.ok) { g.UI.toast('密码错误', 'err'); return; }
       if (gv.legacy) { S.gate.hash = hashPwd(p, S.gate.salt); save(); }
-      sessionStorage.setItem(GATE_KEY, '1');
+      setGateOk();
       afterGate();
     }
     card.querySelector('#gOk').onclick = ok;
     card.querySelector('#gP').onkeydown = function (e) { if (e.key === 'Enter') ok(); };
   }
 
+  /* 回到前台时门禁已失效：把应用盖上门禁层重新验证。
+     直接复用 enterGate —— 验证通过会走 afterGate，
+     账号凭据还在的话能直接回到界面，不用再输一遍账号密码。 */
+  /* 新保护密码展示页。
+     改密码后第一次用旧密码进来会走到这里：新密码必须让用户当场看到并记住，
+     因为旧密码这一次之后就作废了 —— 不展示，等于把人锁在门外。 */
+  function showNewGate(newPwd) {
+    var d = elc('div', '');
+    d.innerHTML =
+      '<div class="form-tip">你用的是<b>旧的保护密码</b>，已进入。' +
+      '这是旧密码最后一次可用 —— 之后只能用下面的新密码。</div>' +
+      '<label class="field-label">新的保护密码</label>' +
+      '<div class="newpwd-box"><code>' + g.UI.esc(newPwd) + '</code></div>' +
+      '<label class="remember-row"><input type="checkbox" id="npOk"> 我已经记住这个密码</label>' +
+      '<div class="form-note">建议现在就存进备忘录。忘了只能让管理员再改一次。</div>';
+    g.UI.modal({
+      title: '保护密码已更新', body: d, okText: '进入',
+      onOk: function (body) {
+        var c = body.querySelector('#npOk');
+        if (c && !c.checked) { g.UI.toast('请先确认已记住新密码'); return false; }
+      }
+    });
+  }
+
+  function reenterGate() {
+    if (!me) return;                 /* 还没登录，本来就在门禁/登录页 */
+    var wrap = $('gate');
+    if (!wrap) return;
+    wrap.classList.remove('hidden');
+    wrap.style.display = '';
+    wrap.innerHTML = '';
+    enterGate();
+  }
+
   function afterGate() {
-    var id = sessionStorage.getItem(ME_KEY);
+    var id = meId();
     if (id) { var u = findUser(id); if (u && !u.banned) { me = u; enterApp(); return; } }
     loginView();
   }
@@ -279,6 +391,10 @@
         p.innerHTML =
           '<label class="field-label">昵称</label><input class="field" id="lNick" placeholder="你的昵称">' +
           '<label class="field-label">登录密码</label><input class="field" id="lPwd" type="password">' +
+          /* 账号可以记住；保护密码不记（它每次回前台都要重输）。
+             这两个是两套凭据，混在一起就会变成"记住了却还是要输"的困惑。 */
+          '<label class="remember-row"><input type="checkbox" id="lRemember"' + (rememberOn() ? ' checked' : '') +
+          '> 记住账号（30 天内不用再输账号密码）</label>' +
           '<button class="btn primary block" id="lOk">登录</button>';
         var ok = function () {
           /* 在线模式：登录走服务端。本地根本没有 pwdHash（服务端从不返回）。
@@ -289,7 +405,8 @@
             var lp = card.querySelector('#lPwd').value;
             if (!ln || !lp) { g.UI.toast('请填写昵称与密码'); return; }
             g.Online.login(ln, lp).then(function (r) {
-              sessionStorage.setItem(ME_KEY, r.uid);
+              var rem = !!(card.querySelector('#lRemember') && card.querySelector('#lRemember').checked);
+              setMeId(r.uid, rem);
               return g.Online.pull().then(function (inS) {
                 if (inS && mergeState(inS)) save(true);
                 me = findUser(r.uid) || me;
@@ -311,7 +428,7 @@
           if (u.status === 'rejected') {
             g.UI.toast('申请未通过：' + (u.rejectReason || '站长未说明理由'), 'err'); return;
           }
-          sessionStorage.setItem(ME_KEY, u.id);
+          setMeId(u.id, typeof __rem !== 'undefined' ? __rem : rememberOn());
           me = u; touch(me); me.lastSeen = now(); save(true);
           enterApp();
         };
@@ -368,7 +485,7 @@
             pane('login');
           } else {
             joinRoom('public', u, true);
-            sessionStorage.setItem(ME_KEY, u.id);
+            setMeId(u.id, typeof __rem !== 'undefined' ? __rem : rememberOn());
             me = u;
             enterApp();
           }
@@ -431,10 +548,16 @@
     syncBadge();
     /* 回到前台时重算标题栏未读（进过房间的已清零，剩下的才显示） */
     document.addEventListener('visibilitychange', function () {
-      if (!document.hidden) {
-        if (g.Notifier) g.Notifier.onFocus();
-        syncBadge();
+      if (document.hidden) {
+        /* 切到后台就作废门禁：回来要重新输保护密码。
+           账号凭据保留（如果勾了记住），所以只需补一次保护密码。 */
+        clrGate();
+        return;
       }
+      if (g.Notifier) g.Notifier.onFocus();
+      syncBadge();
+      /* 回到前台：门禁没了就重新弹，不能让界面停在一个已失效的状态 */
+      if (!gateOk()) reenterGate();
     });
     window.addEventListener('focus', function () {
       if (g.Notifier) g.Notifier.onFocus();
@@ -697,6 +820,8 @@
       try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { }
       /* 轻量广播，让其他标签刷新在线状态 */
       g.Sync.ping();
+      /* 账号凭据续期：只要还在线，"在线即有效"就一直成立 */
+      tickMe();
       /* 只刷新在线人数，不整屏重绘 */
       refreshOnline();
     };
@@ -3205,7 +3330,7 @@
               role: 'owner', perms: [], banned: false, mutedUntil: 0, bio: '', createdAt: now(), updatedAt: now(), lastSeen: now()
             };
             S.users.push(me);
-            sessionStorage.setItem(ME_KEY, me.id);
+            setMeId(me.id);
             save(); mo.close(); g.UI.toast('已重置，站长密码为 admin，请立即修改', 'ok');
             renderAll();
           });
@@ -3286,7 +3411,10 @@
     $('btnAdmin').onclick = adminPanel;
     $('btnLogout').onclick = function () {
       g.UI.confirm('退出登录？', function () {
-        sessionStorage.removeItem(ME_KEY);
+        /* 门禁一并作废：退出后再进来要重新输保护密码。
+           账号可以记住，保护密码不记 —— 这是两套东西，别混在一起。 */
+        clrMe();
+        clrGate();
         me = null; cur = 'public';
         $('app').classList.add('hidden');
         $('app').style.display = 'none';
@@ -3502,7 +3630,7 @@
       if (handled) { g.Online.startPoll(); return; }   /* 在线模式已接管 */
       /* 后端不可用 → 纯本地模式，行为与改动前一致 */
       if (!S.gate) { setupGate(); return; }
-      if (sessionStorage.getItem(GATE_KEY) !== '1') { enterGate(); return; }
+      if ((gateOk() ? '1' : '') !== '1') { enterGate(); return; }
       afterGate();
     });
   }
@@ -3511,6 +3639,7 @@
   else boot();
 
   g.APP = {
+    tickMe: tickMe,
     state: function () { return S; },
     me: function () { return me; },
     openRoom: openRoom,

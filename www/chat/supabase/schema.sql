@@ -39,9 +39,22 @@ create table if not exists site (
   site_name     text not null default '聊天室',
   gate_hash     text,                       -- 站点保护密码（bcrypt），为空表示未初始化
   allow_register boolean not null default true,
-  created_at    timestamptz not null default now()
+  created_at    timestamptz not null default now(),
+
+  -- 改保护密码后的宽限：旧密码仍可登录一次。
+  -- 为什么需要：改密码的人自己也可能还没记住新密码，一刀切把自己锁在外面。
+  -- gate_new_enc 用旧密码派生的密钥加密新密码 —— 服务端不存明文，
+  -- 只有拿旧密码登录（宽限期内）那一刻才解得出来，用来把新密码展示给他看。
+  gate_prev_hash text,                      -- 旧密码的 bcrypt，宽限结束后清空
+  gate_new_enc   bytea,                     -- 新密码密文（密钥 = 旧密码派生）
+  gate_grace     int not null default 0     -- 剩余宽限次数，新/旧密码登录都消耗
 );
 insert into site (id) values (true) on conflict (id) do nothing;
+
+-- 老库补列（幂等）
+alter table site add column if not exists gate_prev_hash text;
+alter table site add column if not exists gate_new_enc   bytea;
+alter table site add column if not exists gate_grace     int not null default 0;
 
 -- ---------- 用户 ----------
 create table if not exists users (
@@ -62,7 +75,6 @@ create table if not exists users (
 );
 create index if not exists users_nick_idx on users (lower(nick));
 
--- ---------- 会话 ----------
 create table if not exists sessions (
   -- 只存 sha256(token)，不存明文。
   -- 理由：token 即身份。明文入库意味着任何拿到数据库读权限的人（备份泄露、
@@ -381,10 +393,15 @@ end;
 $fn$;
 
 -- 校验保护密码（通过后会话可读取站点公开信息）
+-- 保护密码校验。返回 json：{ok, token, show_new}
+--   ok       ：是否通过
+--   token    ：会话
+--   show_new ：非 null 时表示"你是用旧密码进来的"，值为新密码明文 ——
+--              前端必须把它显示出来并强制用户记住，因为这次之后旧密码就作废了。
 create or replace function gate_check(p text)
-returns text language plpgsql volatile security definer
+returns json language plpgsql volatile security definer
 set search_path = public, extensions, pg_temp as $$
-declare tk text; st record;
+declare tk text; st record; ok_new boolean; ok_old boolean; plain text;
 begin
   select * into st from site where id = true;
   if st.gate_hash is null then raise exception '站点尚未初始化'; end if;
@@ -392,12 +409,40 @@ begin
   /* 这里【不能】做失败计数：plpgsql 的 raise exception 会回滚同一函数内
      此前的所有写入，raise 前 update 计数永远累加不上去。
      真实限流必须在网关层做，见文件头「限流」一节。 */
-  if not exists (select 1 from site where id = true and gate_hash = crypt(p, gate_hash)) then
+
+  ok_new := exists (select 1 from site where id = true and gate_hash = crypt(p, gate_hash));
+  ok_old := false;
+
+  if not ok_new and st.gate_grace > 0 and st.gate_prev_hash is not null then
+    ok_old := exists (select 1 from site where id = true and gate_prev_hash = crypt(p, gate_prev_hash));
+  end if;
+
+  if not ok_new and not ok_old then
     raise exception '保护密码错误';
   end if;
 
+  /* 宽限次数：新密码登录也消耗 ——
+     只要有人用新密码成功进来过，就说明新密码已经在流通，旧密码没必要继续留。 */
+  if st.gate_grace > 0 then
+    update site set gate_grace = gate_grace - 1 where id = true;
+    if st.gate_grace - 1 <= 0 then
+      update site set gate_prev_hash = null, gate_new_enc = null, gate_grace = 0 where id = true;
+    end if;
+  end if;
+
+  /* 用旧密码进来：解密出新密码，交前端展示 */
+  plain := null;
+  if ok_old and st.gate_new_enc is not null then
+    begin
+      plain := pgp_sym_decrypt(st.gate_new_enc,
+                 encode(digest(p || '|gate-grace-v1', 'sha256'), 'hex'));
+    exception when others then
+      plain := null;   -- 解不出来也不能挡住登录，只是展示不了
+    end;
+  end if;
+
   tk := issue_session(null, true);
-  return tk;
+  return json_build_object('ok', true, 'token', tk, 'show_new', plain);
 end;
 $$;
 
@@ -1076,8 +1121,21 @@ begin
     raise exception '原保护密码错误';
   end if;
   if length(p_new) < 4 then raise exception '新密码至少 4 位'; end if;
-  update site set gate_hash = crypt(p_new, gen_salt('bf', 10)) where id = true;
-  insert into logs (who_id, act, detail) values (uid, 'gate', '修改保护密码');
+  if p_new = p_old then raise exception '新密码不能与旧密码相同'; end if;
+
+  /* 宽限：留一次用旧密码登录的机会。
+     新密码用旧密码派生的密钥加密后暂存 —— 这样服务端不存明文，
+     只有拿旧密码进来那一刻才解得开，用来把新密码展示给他看。
+     注意：改密码的人如果自己也没记住，旧密码这次就是他的退路。 */
+  update site set
+    gate_hash      = crypt(p_new, gen_salt('bf', 10)),
+    gate_prev_hash = crypt(p_old, gen_salt('bf', 10)),
+    gate_new_enc   = pgp_sym_encrypt(p_new,
+                       encode(digest(p_old || '|gate-grace-v1', 'sha256'), 'hex')),
+    gate_grace     = 1
+  where id = true;
+
+  insert into logs (who_id, act, detail) values (uid, 'gate', '修改保护密码（保留 1 次旧密码宽限）');
   return true;
 end;
 $$;

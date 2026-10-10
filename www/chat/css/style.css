@@ -1489,3 +1489,23 @@ body.dark .notify-cta {
   background: transparent; border: 0; cursor: pointer;
   color: inherit; opacity: .6; font-size: 15px; padding: 0 2px;
 }
+
+
+/* 登录页「记住账号」 */
+.remember-row {
+  display: flex; align-items: center; gap: 7px;
+  margin: 10px 0 2px;
+  font-size: 13px; color: #666; cursor: pointer;
+}
+.remember-row input { width: 16px; height: 16px; }
+body.dark .remember-row { color: #aaa; }
+
+
+/* 改密码后展示新密码：字号要大，要能一眼看清 */
+.newpwd-box {
+  background: #f3f6fb; border: 1px dashed #b9c9e3; border-radius: 6px;
+  padding: 12px; text-align: center; margin: 6px 0 10px;
+}
+.newpwd-box code { font-size: 20px; font-weight: 700; letter-spacing: 1px; color: #2b5cb8; }
+body.dark .newpwd-box { background: #1d2536; border-color: #3a4a66; }
+body.dark .newpwd-box code { color: #9dc0ff; }
