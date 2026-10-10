@@ -1,10 +1,7 @@
--- 列出可能被 create or replace 拒绝的函数：同名但参数或返回类型不同
-select p.proname as 函数名,
-       pg_get_function_identity_arguments(p.oid) as 参数,
-       pg_get_function_result(p.oid) as 返回类型
+-- 列出所有 public 函数的：名字 | 参数 | 返回类型
+-- 用来和 schema.sql 对比，找出"同名同参但返回类型不同"的致命冲突
+select p.proname || ' | ' || pg_get_function_identity_arguments(p.oid)
+       || ' => ' || pg_get_function_result(p.oid) as sig
 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
 where n.nspname = 'public'
-  and p.proname in ('gate_check','gate_set','user_login','user_register',
-                    'bridge_ticket_create','bridge_ticket_redeem',
-                    'state_get','state_peek','msg_send','device_trust')
-order by p.proname, 参数;
+order by p.proname;
