@@ -30,6 +30,22 @@
 | 图片 / 视频 / 语音上传 | 媒体仍存 IndexedDB，未走 storage 桶 |
 | 登录失败限流 | 数据库层做不了（`raise` 会回滚计数），需在网关层配 |
 
+### 客户端
+
+| 平台 | 产物 | 说明 |
+| --- | --- | --- |
+| Windows | `chat-win-setup.exe` / `chat-win-portable.exe` | 未签名，SmartScreen 点「仍要运行」 |
+| macOS | `chat-mac.dmg` / `chat-mac.zip` | 未签名，首次需右键「打开」 |
+| Linux | `chat-linux.AppImage` | **只出 AppImage**。deb 曾尝试过，需要 fpm/dpkg 工具链，在 runner 上易失败 |
+| Android | `chat-android.apk` | 未签名，需允许「未知来源」 |
+| iOS / iPadOS | **无独立 App** | App Store 需付费开发者账号；用 Safari「添加到主屏幕」 |
+
+桌面版登录后会在 `127.0.0.1:37821` 开一个本机服务，
+网页版探测到后可凭票据免输账号密码直接进入（票据 5 分钟、单次、绑来源）。
+
+**改数据库后必须手动跑一次「数据库迁移」** —— `build-*.yml` 只管打包，不含迁移。
+只推代码不跑迁移，功能不会生效。
+
 改动数据库不必手动粘 SQL：推 `supabase/*.sql` 进仓库后，
 在 Actions 里点「数据库迁移」即可，凭据存 GitHub Secrets，不进代码。
 
