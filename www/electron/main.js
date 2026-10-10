@@ -8,6 +8,7 @@
 'use strict';
 const { app, BrowserWindow, Menu, shell, ipcMain, nativeImage } = require('electron');
 const path = require('path');
+const bridge = require('./local-bridge');
 
 /* 网页是纯静态的，装了也没有 nodeIntegration 的必要。
    开着只会把整个 Node 能力暴露给页面内容，属于自找风险。 */
@@ -97,7 +98,30 @@ ipcMain.on('chat:badge', (e, n) => {
   win.setOverlayIcon(img, `${txt} 条未读`);
 });
 
-app.whenReady().then(createWindow);
+/* 本机桥接：起一个只听 127.0.0.1 的服务，供网页版探测已登录身份。
+   起不来（端口被占）也不能影响应用本身，所以错误在模块内部已吞掉。 */
+let bridgeSrv = null;
+function startBridge() {
+  if (bridgeSrv) return;
+  try { bridgeSrv = bridge.createServer(); } catch (e) { bridgeSrv = null; }
+}
+
+/* 页面申领票据成功后，把昵称与票据交给桥接服务 */
+ipcMain.on('bridge:publish', (e, nick, code) => {
+  bridge.publish(nick, code);
+  startBridge();
+});
+ipcMain.on('bridge:clear', () => bridge.clear());
+
+app.whenReady().then(() => {
+  startBridge();
+  createWindow();
+});
+
+app.on('before-quit', () => {
+  bridge.clear();
+  try { if (bridgeSrv) bridgeSrv.close(); } catch (e) { }
+});
 
 app.on('window-all-closed', () => {
   /* Windows / Linux 关窗即退出；macOS 保留习惯 */

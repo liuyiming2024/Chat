@@ -12,5 +12,11 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('ElectronBridge', {
   setBadge: (n) => ipcRenderer.send('chat:badge', n),
-  focus: () => ipcRenderer.send('chat:focus')
+  focus: () => ipcRenderer.send('chat:focus'),
+
+  /* 本机桥接：把已登录身份交给本地服务，供网页版免密进入。
+     只有"真的在 Electron 里"才有这个对象 —— 网页端据此判断要不要去探测。 */
+  isApp: true,
+  bridgePublish: (nick, code) => ipcRenderer.send('bridge:publish', nick, code),
+  bridgeClear: () => ipcRenderer.send('bridge:clear')
 });
