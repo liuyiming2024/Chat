@@ -1445,3 +1445,47 @@ body.dark .dnd-tip {
 .pref-row:last-child { border-bottom: 0; }
 .pref-row input[type="checkbox"] { width: 18px; height: 18px; flex: none; }
 .pref-note { font-style: normal; color: #999; font-size: 12px; }
+
+
+/* ================= 会话提醒（模仿微信 / QQ 的分级） =================
+ * 分级：普通未读 = 红点数字；被 @ = 红色文字标签，优先级高于未读。
+ * 免打扰的会话不显红点（既然说了不提醒就别制造焦虑），但静音图标必须可见。 */
+.badge.at {
+  background: #e5453a;
+  color: #fff;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.room-mute {
+  display: flex; align-items: center;
+  color: #b0b6be;
+  margin-bottom: 3px;
+}
+.room-mute .ic { width: 14px; height: 14px; }
+
+/* 未读时会话名加粗 —— 微信的做法，一眼扫出哪条有新消息 */
+.room-item.has-unread .room-name { font-weight: 600; }
+.room-item.has-unread .room-preview { color: #666; }
+body.dark .room-item.has-unread .room-preview { color: #aaa; }
+
+/* 通知授权引导条 */
+.notify-cta {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px;
+  background: #eef4ff;
+  color: #2b5cb8;
+  font-size: 12px;
+  border-bottom: 1px solid #d5e3fb;
+}
+body.dark .notify-cta {
+  background: #1d2536; color: #9dc0ff; border-bottom-color: #2c3648;
+}
+.notify-cta.hidden { display: none; }
+.notify-cta .btn { flex: none; }
+.notify-cta-x {
+  margin-left: auto; flex: none;
+  background: transparent; border: 0; cursor: pointer;
+  color: inherit; opacity: .6; font-size: 15px; padding: 0 2px;
+}

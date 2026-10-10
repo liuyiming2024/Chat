@@ -9,7 +9,10 @@
   var KEY = 'wxlg_state_v1', ME_KEY = 'wxlg_me', GATE_KEY = 'wxlg_gate_ok';
 
   var S = null, me = null, cur = 'public';
-  var unread = {}, replyTo = null, roomFilter = '';
+  /* atMe 原本根本没声明 —— 有人 @ 我时这行会抛 "atMe is not defined"，
+     整个 noteIncoming 中断：未读数不累加、renderRooms 不执行、通知也不发。
+     这正是"提醒看起来没反应"的根源之一。 */
+  var unread = {}, atMe = {}, replyTo = null, roomFilter = '';
   var drafts = {};        /* 草稿：房间 id -> 输入内容 */
   var typingAt = 0;       /* 正在输入：上次按键时间 */
 
@@ -424,10 +427,17 @@
     bindEvents();
     renderAll();
     renderDndTip();
+    renderNotifyCta();
     syncBadge();
     /* 回到前台时重算标题栏未读（进过房间的已清零，剩下的才显示） */
     document.addEventListener('visibilitychange', function () {
-      if (!document.hidden) syncBadge();
+      if (!document.hidden) {
+        if (g.Notifier) g.Notifier.onFocus();
+        syncBadge();
+      }
+    });
+    window.addEventListener('focus', function () {
+      if (g.Notifier) g.Notifier.onFocus();
     });
     g.Net.loadAccel().then(function (ok) { if (ok) g.UI.toast('已启用 C++/WASM 哈希加速', 'ok'); });
     startHeartbeat();
@@ -508,6 +518,8 @@
     } else if (isAtMe(m)) {
       g.UI.toast('有人 @ 了你', 'ok');
     }
+    /* @我 的提醒优先级更高：标题闪烁文案直接换成这个 */
+    if (isAtMe(m) && g.Notifier) g.Notifier.setFlashText('🔔 有人 @ 了你');
     /* 系统消息不通知：那是自己操作的回显，弹出来只会莫名其妙 */
     if (m.type === 'sys') { syncBadge(); return; }
     if (g.Notifier) {
@@ -635,8 +647,26 @@
       item.appendChild(mid);
       var right = elc('div', 'room-right');
       if (last) right.appendChild(elc('div', 'room-time', g.UI.fmtTime(last.ts)));
+
       var n = unread[r.id] || 0;
-      if (n > 0 && r.id !== cur) right.appendChild(elc('div', 'badge', n > 99 ? '99+' : String(n)));
+      /* 免打扰要有可见标识：静音了却看不出来，用户会以为消息丢了。
+         主流聊天工具多用铃铛加斜杠，这里沿用这个约定。 */
+      if (g.Notifier && g.Notifier.roomMuted(r.id)) {
+        var muteIc = elc('div', 'room-mute');
+        muteIc.title = '已免打扰';
+        muteIc.innerHTML = '<svg class="ic" aria-hidden="true"><use href="#i-bell-off"/></svg>';
+        right.appendChild(muteIc);
+      }
+      /* 免打扰时不显红点：既然说了"不提醒"，就别再用红点制造焦虑。
+         但 @我 仍然要显示 —— 那是明确指向本人的，不该被静音吞掉。 */
+      var at = atMe[r.id] || 0;
+      if (at > 0 && r.id !== cur) {
+        right.appendChild(elc('div', 'badge at', '[有人@我]'));
+      } else if (n > 0 && r.id !== cur) {
+        if (!(g.Notifier && g.Notifier.roomMuted(r.id))) {
+          right.appendChild(elc('div', 'badge', n > 99 ? '99+' : String(n)));
+        }
+      }
       item.appendChild(right);
       item.onclick = function () { openRoom(r.id); };
       item.oncontextmenu = function (e) {
@@ -2015,11 +2045,11 @@
         var rv = verifyPwd(v, r.pwd.salt, r.pwd.hash);
         if (!rv.ok) { g.UI.toast('密码错误', 'err'); return; }
         if (rv.legacy) { r.pwd.hash = hashPwd(v, r.pwd.salt); save(); }
-        joinRoom(rid, me); save(); cur = rid; unread[rid] = 0; syncBadge(); renderAll(); scrollBottom();
+        joinRoom(rid, me); save(); cur = rid; unread[rid] = 0; atMe[rid] = 0; syncBadge(); renderAll(); scrollBottom();
       }, { password: true });
       return;
     }
-    cur = rid; unread[rid] = 0; syncBadge();
+    cur = rid; unread[rid] = 0; atMe[rid] = 0; syncBadge();
     renderAll(); scrollBottom();
     $('input').focus();
   }
@@ -2448,6 +2478,42 @@
     }
     if (txt) { el.textContent = txt; el.classList.remove('hidden'); }
     else el.classList.add('hidden');
+  }
+
+  /* 授权引导条。
+     不授权的话，页面切到后台就只剩标题栏计数在动 —— 太弱了。
+     这里给一个温和的一次性引导，用户可以关掉，关了不再烦他。 */
+  var CTA_KEY = 'wxlg_notify_cta_dismiss';
+  function renderNotifyCta() {
+    var el = document.getElementById('notifyCta');
+    var N = g.Notifier;
+    if (!el || !N) return;
+    try { if (localStorage.getItem(CTA_KEY) === '1') { el.classList.add('hidden'); return; } } catch (e) { }
+    if (!N.supported() || N.permission() !== 'default') { el.classList.add('hidden'); return; }
+
+    el.innerHTML = '';
+    var ic = elc('span', '');
+    ic.innerHTML = '<svg class="ic" aria-hidden="true"><use href="#i-bell-off"/></svg>';
+    el.appendChild(ic);
+    el.appendChild(elc('span', '', '开启通知后，切到别的页面也能收到消息提醒'));
+    var b = elc('button', 'btn ghost sm', '开启');
+    b.type = 'button';
+    b.onclick = function () {
+      N.request(function (st) {
+        g.UI.toast(st === 'granted' ? '已开启通知' : '未获授权', st === 'granted' ? 'ok' : 'err');
+        renderNotifyCta();
+      });
+    };
+    el.appendChild(b);
+    var x = elc('button', 'notify-cta-x', '×');
+    x.type = 'button';
+    x.setAttribute('aria-label', '不再提示');
+    x.onclick = function () {
+      try { localStorage.setItem(CTA_KEY, '1'); } catch (e) { }
+      el.classList.add('hidden');
+    };
+    el.appendChild(x);
+    el.classList.remove('hidden');
   }
 
   function notifySettings() {
