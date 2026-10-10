@@ -25,5 +25,11 @@ contextBridge.exposeInMainWorld('ElectronBridge', {
      下载交给主进程 —— 渲染进程没有写文件的能力。 */
   version: APP_VERSION,
   openDownload: (url) => ipcRenderer.send('chat:openDownload', url),
-  downloadUpdate: (url, file) => ipcRenderer.invoke('chat:downloadUpdate', url, file)
+  downloadUpdate: (url, file) => ipcRenderer.invoke('chat:downloadUpdate', url, file),
+  /* 下载进度回调。返回取消函数 —— 组件卸载时必须调，否则重复监听会叠加。 */
+  onDownloadProgress: (cb) => {
+    const h = (_e, p) => cb(p);
+    ipcRenderer.on('chat:downloadProgress', h);
+    return () => ipcRenderer.removeListener('chat:downloadProgress', h);
+  }
 });

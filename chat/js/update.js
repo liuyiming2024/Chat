@@ -162,7 +162,93 @@
     return pickFastest(urls);
   }
 
+  /* ---------- 网页端分片下载 ----------
+     网页端没有文件系统，但可以用 Range 并行拉取分片再拼成 Blob。
+     目的和桌面端一样：单条连接打不满带宽，分片能提速；
+     且单片失败只需重传该片，不必整个文件重来。
+
+     注意内存：桌面端是边下边写盘，网页端只能全装在内存里。
+     所以分片数按文件大小收着来，避免小内存设备上崩掉。 */
+  function downloadChunked(url, opts) {
+    opts = opts || {};
+    var bytes = opts.bytes || 0;
+    var onProgress = opts.onProgress || function () { };
+    var concurrency = opts.concurrency || 4;
+
+    return new Promise(function (resolve, reject) {
+      probe(url).then(function (info) {
+        var size = bytes || info.len;
+        if (!size || !info.acceptRange) {
+          /* 不支持 Range 就整段拉，别硬分 */
+          return fetch(url).then(function (r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.blob();
+          }).then(function (b) {
+            onProgress({ loaded: b.size, total: b.size, pct: 100 });
+            resolve({ blob: b, chunks: 1, fellBack: true });
+          });
+        }
+
+        var piece = Math.ceil(size / concurrency);
+        var parts = [];
+        for (var i = 0; i < concurrency; i++) {
+          var s0 = i * piece;
+          var e0 = Math.min(size - 1, s0 + piece - 1);
+          if (s0 <= e0) parts.push([s0, e0]);
+        }
+
+        var loaded = 0;
+        function tick() {
+          onProgress({ loaded: loaded, total: size, pct: Math.round(loaded / size * 100) });
+        }
+
+        Promise.all(parts.map(function (r) {
+          return fetchRange(url, r[0], r[1]).then(function (buf) {
+            loaded += buf.length;
+            tick();
+            return { start: r[0], buf: buf };
+          });
+        })).then(function (chunks) {
+          chunks.sort(function (a, b) { return a.start - b.start; });
+          var out = new Uint8Array(size);
+          var off = 0;
+          chunks.forEach(function (c) {
+            out.set(new Uint8Array(c.buf), off);
+            off += c.buf.length;
+          });
+          tick();
+          resolve({ blob: new Blob([out]), chunks: chunks.length, fellBack: false });
+        }).catch(reject);
+      }).catch(reject);
+    });
+  }
+
+  function probe(url) {
+    return fetch(url, { method: 'GET', headers: { Range: 'bytes=0-0' } })
+      .then(function (r) {
+        var cr = r.headers.get('content-range') || '';
+        var m = cr.match(/\/(\d+)$/);
+        var len = m ? parseInt(m[1], 10) : (parseInt(r.headers.get('content-length'), 10) || 0);
+        return { len: len, acceptRange: r.status === 206 || /bytes/i.test(r.headers.get('accept-ranges') || '') };
+      });
+  }
+
+  function fetchRange(url, start, end, tries) {
+    tries = tries || 0;
+    return fetch(url, { headers: { Range: 'bytes=' + start + '-' + end } })
+      .then(function (r) {
+        if (r.status !== 206 && r.status !== 200) throw new Error('HTTP ' + r.status);
+        return r.arrayBuffer();
+      })
+      .catch(function (e) {
+        if (tries < 3) return fetchRange(url, start, end, tries + 1);
+        throw e;
+      });
+  }
+
   g.Updater = {
+    downloadChunked: downloadChunked,
+    probe: probe,
     check: check,
     platform: platform,
     resolveDownload: resolveDownload,
