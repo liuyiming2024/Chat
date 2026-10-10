@@ -45,7 +45,7 @@ jobs:
             java -version 2>&1 | head -2
             echo "ANDROID_HOME=$ANDROID_HOME"
             ls "$ANDROID_HOME/platforms" 2>&1 | head -3
-          } > build-log.txt 2>&1
+          } > diag-log.txt 2>&1
 
       - name: 安卓 cap add
         if: ${{ always() && github.event.inputs.which != 'desktop' }}
@@ -53,21 +53,21 @@ jobs:
           {
             echo ""
             echo "===== 安卓：cap add android ====="
-          } >> build-log.txt 2>&1
+          } >> diag-log.txt 2>&1
           npm i @capacitor/core @capacitor/cli @capacitor/android \
-            --silent --no-fund --no-audit >> build-log.txt 2>&1
-          echo "-- cap 版本 --" >> build-log.txt
-          npx cap --version >> build-log.txt 2>&1
-          echo "-- webDir 配置 --" >> build-log.txt
-          node -e "console.log(require('./capacitor.config.json').webDir)" >> build-log.txt 2>&1
-          echo "-- www 目录 --" >> build-log.txt
-          ls www 2>&1 | head -10 >> build-log.txt
-          echo "-- add android --" >> build-log.txt
-          CI=1 npx cap add android >> build-log.txt 2>&1
-          echo "exit=$?" >> build-log.txt
-          echo "-- sync --" >> build-log.txt
-          CI=1 npx cap sync android >> build-log.txt 2>&1
-          echo "exit=$?" >> build-log.txt
+            --silent --no-fund --no-audit >> diag-log.txt 2>&1
+          echo "-- cap 版本 --" >> diag-log.txt
+          npx cap --version >> diag-log.txt 2>&1
+          echo "-- webDir 配置 --" >> diag-log.txt
+          node -e "console.log(require('./capacitor.config.json').webDir)" >> diag-log.txt 2>&1
+          echo "-- www 目录 --" >> diag-log.txt
+          ls www 2>&1 | head -10 >> diag-log.txt
+          echo "-- add android --" >> diag-log.txt
+          CI=1 npx cap add android >> diag-log.txt 2>&1
+          echo "exit=$?" >> diag-log.txt
+          echo "-- sync --" >> diag-log.txt
+          CI=1 npx cap sync android >> diag-log.txt 2>&1
+          echo "exit=$?" >> diag-log.txt
 
       - name: 安卓 gradle
         if: ${{ always() && github.event.inputs.which != 'desktop' }}
@@ -75,18 +75,18 @@ jobs:
           {
             echo ""
             echo "===== 安卓：gradle assembleDebug ====="
-          } >> build-log.txt 2>&1
+          } >> diag-log.txt 2>&1
           if [ -f android/gradlew ]; then
             echo "sdk.dir=$ANDROID_HOME" > android/local.properties
             yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1
             cd android && chmod +x gradlew
-            ./gradlew assembleDebug --no-daemon --stacktrace >> ../build-log.txt 2>&1
-            echo "exit=$?" >> ../build-log.txt
+            ./gradlew assembleDebug --no-daemon --stacktrace >> ../diag-log.txt 2>&1
+            echo "exit=$?" >> ../diag-log.txt
             cd ..
-            echo "-- 产物 --" >> build-log.txt
-            find android/app/build/outputs -name '*.apk' 2>/dev/null >> build-log.txt || echo "无 apk" >> build-log.txt
+            echo "-- 产物 --" >> diag-log.txt
+            find android/app/build/outputs -name '*.apk' 2>/dev/null >> diag-log.txt || echo "无 apk" >> diag-log.txt
           else
-            echo "gradlew 不存在（cap add 失败），跳过 gradle" >> build-log.txt
+            echo "gradlew 不存在（cap add 失败），跳过 gradle" >> diag-log.txt
           fi
 
       - name: 桌面 electron-builder
@@ -101,12 +101,12 @@ jobs:
             echo "-- app 目录文件 --"
             ls -la www/index.html electron/main.js
             echo "-- 构建 --"
-          } >> build-log.txt 2>&1
+          } >> diag-log.txt 2>&1
           # Linux 上只出 AppImage/zip，目的不是产物，而是把配置类错误暴露出来
-          npx electron-builder --linux --x64 --publish never >> build-log.txt 2>&1
-          echo "exit=$?" >> build-log.txt
-          echo "-- dist --" >> build-log.txt
-          ls dist 2>&1 | head >> build-log.txt
+          npx electron-builder --linux --x64 --publish never >> diag-log.txt 2>&1
+          echo "exit=$?" >> diag-log.txt
+          echo "-- dist --" >> diag-log.txt
+          ls dist 2>&1 | head >> diag-log.txt
 
       - name: 写回 diag 分支
         if: always()
@@ -115,7 +115,7 @@ jobs:
           git config user.email "diag@local"
           git checkout --orphan diag 2>/dev/null || git checkout diag
           git rm -rf --cached . >/dev/null 2>&1 || true
-          git add -f build-log.txt
+          git add -f diag-log.txt
           git commit -m "构建诊断 $(date -u +%Y%m%d-%H%M%S)" || echo "无变化"
           git push -f origin diag
 
@@ -124,5 +124,5 @@ jobs:
         uses: actions/upload-artifact@v5
         with:
           name: build-diag-log
-          path: build-log.txt
+          path: diag-log.txt
           if-no-files-found: warn

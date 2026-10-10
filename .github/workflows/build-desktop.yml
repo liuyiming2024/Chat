@@ -50,9 +50,9 @@ jobs:
         shell: bash
         run: |
           # 完整输出留档。沙箱拿不到 Actions 日志，只能自己写回来。
-          npx electron-builder --win --x64 --publish never 2>&1 | tee build-log.txt
+          npx electron-builder --win --x64 --publish never 2>&1 | tee desktop-log.txt
           echo "exit=${PIPESTATUS[0]}"
-          ls dist 2>/dev/null | head -20 >> build-log.txt || echo "dist 为空" >> build-log.txt
+          ls dist 2>/dev/null | head -20 >> desktop-log.txt || echo "dist 为空" >> desktop-log.txt
           exit ${PIPESTATUS[0]}
 
       # 必须 always：构建失败时这份日志才是唯一线索
@@ -64,8 +64,8 @@ jobs:
           git config user.email "diag@local"
           git checkout --orphan diag 2>/dev/null || git checkout diag
           git rm -rf --cached . >/dev/null 2>&1 || true
-          [ -f build-log.txt ] && git add -f build-log.txt || echo "无日志" > build-log.txt
-          git add -f build-log.txt
+          [ -f desktop-log.txt ] && git add -f desktop-log.txt || echo "无日志" > desktop-log.txt
+          git add -f desktop-log.txt
           git commit -m "桌面构建日志 $(date -u +%Y%m%d-%H%M%S)" || echo "无变化"
           git push -f origin diag
 
