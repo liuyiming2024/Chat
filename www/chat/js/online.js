@@ -65,11 +65,14 @@
       });
   }
 
+  /* gate_check 现在返回 json {ok, token, show_new}。
+     show_new 非空表示"用旧密码进来的"，值是新密码明文，交给前端展示。 */
   function gate(pwd) {
-    return g.SB.rpc('gate_check', { p: pwd }).then(function (t) {
+    return g.SB.rpc('gate_check', { p: pwd }).then(function (r) {
+      var t = r && r.token;
       if (!t) throw new Error('保护密码错误');
       g.SB.setSession(t, null);
-      return t;
+      return r;
     });
   }
 
