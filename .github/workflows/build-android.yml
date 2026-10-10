@@ -21,6 +21,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      CI: '1'
     steps:
       - uses: actions/checkout@v4
 
@@ -48,7 +50,8 @@ jobs:
       - name: 装 Capacitor 并添加安卓平台
         run: |
           npm i @capacitor/core @capacitor/cli @capacitor/android --silent --no-fund --no-audit
-          npx cap init "聊天室" io.github.liuyiming2024.chat --web-dir=.
+          # 不跑 cap init：capacitor.config.json 已在仓库里，
+          # 而且 init 在配置已存在时会交互式询问"是否覆盖"，在 CI 里直接卡死。
           npx cap add android
           test -d android && echo "android 平台已生成" || { echo "::error::cap add android 未生成 android/ 目录"; exit 1; }
           npx cap sync android

@@ -26,11 +26,21 @@ jobs:
         with:
           node-version: '20'
 
+      # 不要 npm init -y：它会覆盖仓库里已写好的 package.json，
+      # 把 electron-builder 的 build 配置（win 目标、NSIS/portable）冲掉，
+      # 结果 electron-builder 不知道该怎么打包，自然出不了 exe。
       - name: 装 Electron 打包工具
         run: |
-          npm init -y --silent
-          node -e "const p=require('./package.json'); p.name='chat-desktop'; p.version='1.0.0'; p.main='electron/main.js'; require('fs').writeFileSync('package.json', JSON.stringify(p,null,2));"
+          test -f package.json || npm init -y --silent
+          node -e "
+            const fs=require('fs');
+            const p=JSON.parse(fs.readFileSync('package.json','utf8'));
+            p.name=p.name||'chat-desktop'; p.version=p.version||'1.0.0';
+            p.main='electron/main.js';
+            fs.writeFileSync('package.json', JSON.stringify(p,null,2));
+          "
           npm i electron electron-builder --silent --no-fund --no-audit
+          node -e "console.log('build 配置:', JSON.stringify(require('./package.json').build))"
 
       - name: 构建
         shell: bash
