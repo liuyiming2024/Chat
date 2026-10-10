@@ -1527,3 +1527,12 @@ body.dark .newpwd-box code { color: #9dc0ff; }
 body.dark .bridge-line::after { background: #171c22; }
 .bridge-title { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
 .bridge-note { font-size: 12px; color: #999; margin-top: 6px; }
+
+/* 更新对话框里的下载源速度列表 */
+.src-item {
+  font-size: 12px; line-height: 1.9; color: #666;
+  font-variant-numeric: tabular-nums;
+}
+.src-item:first-of-type { color: var(--pri, #2b5cb8); font-weight: 600; }
+body.dark .src-item { color: #8d97a8; }
+body.dark .src-item:first-of-type { color: #9dc0ff; }

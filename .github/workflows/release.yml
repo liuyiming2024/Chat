@@ -53,14 +53,39 @@ jobs:
             }
           }
           EOF
+      - name: 准备签名密钥（自签名）
+        run: |
+          cd android/app
+          if [ -n "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]; then
+            echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > keystore.jks
+            echo "storeFile=keystore.jks" >> ../keystore.properties
+            echo "storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" >> ../keystore.properties
+            echo "keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}" >> ../keystore.properties
+            echo "keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}" >> ../keystore.properties
+          else
+            keytool -genkeypair -v \
+              -keystore keystore.jks -storetype JKS \
+              -alias chat -keyalg RSA -keysize 2048 -validity 10950 \
+              -storepass chat1234 -keypass chat1234 \
+              -dname "CN=Chat, OU=Personal, O=Chat, L=X, ST=X, C=CN"
+            printf 'storeFile=keystore.jks\nstorePassword=chat1234\nkeyAlias=chat\nkeyPassword=chat1234\n' > ../keystore.properties
+          fi
+          cd ../..
+          if ! grep -q signingConfigs android/app/build.gradle; then
+            cat .github/android/signing.gradle >> android/app/build.gradle
+          fi
       - name: 构建 APK
         run: |
           echo "sdk.dir=$ANDROID_HOME" > android/local.properties
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
-          cd android && chmod +x gradlew && ./gradlew assembleDebug --no-daemon
+          cd android && chmod +x gradlew && ./gradlew assembleRelease --no-daemon
       - uses: actions/upload-artifact@v5
         if: always()
-        with: { name: apk, path: android/app/build/outputs/apk/debug/*.apk }
+        with:
+          name: apk
+          path: |
+            android/app/build/outputs/apk/release/*.apk
+            android/app/build/outputs/apk/debug/*.apk
 
   windows:
     runs-on: windows-latest
@@ -188,7 +213,9 @@ jobs:
           # 桌面端的名字在 artifactName 里写死了，按名拷。
           # 但安卓是 gradle 产出的 app-debug.apk，不走 electron-builder，
           # 名字不受 artifactName 控制 —— 只能按扩展名找（逐个目标都打印，缺哪个一眼可见）。
-          APK=$(find out -name '*.apk' | head -1)
+          # 安卓文件名随构建类型变：debug→app-debug.apk，release→app-release.apk
+          # 统一收成 chat-android.apk
+          APK=$(find out -name 'app-release.apk' -o -name 'app-debug.apk' -o -name '*.apk' | head -1)
           if [ -n "$APK" ]; then cp "$APK" pkg/chat-android.apk; echo "  ✓ chat-android.apk"; else echo "  - apk 缺失"; fi
           for f in chat-win-setup.exe chat-win-portable.exe \
                    chat-mac.dmg chat-mac.zip chat-linux.AppImage; do
@@ -263,6 +290,34 @@ jobs:
             done
             echo "== 完成 =="
           } 2>&1 | tee release-log.txt
+
+      # 把版本号写回在线清单。
+      # 客户端启动时读它来判断有没有更新 —— 不同步的话，
+      # 用户点了"检查更新"永远看到旧版本号，更新功能等于没有。
+      # 这一步必须成功，所以它【不加】continue-on-error。
+      - name: 同步更新清单版本
+        env:
+          TAG: ${{ github.event.inputs.tag }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          tag = os.environ['TAG']
+          p = 'update.json'
+          d = json.load(open(p, encoding='utf-8'))
+          old = d.get('version')
+          d['version'] = tag
+          json.dump(d, open(p, 'w', encoding='utf-8'), ensure_ascii=False, indent=2)
+          print('update.json version: %s -> %s' % (old, tag))
+          PY
+          git config user.name  "release-bot"
+          git config user.email "release@local"
+          git add update.json
+          if git diff --cached --quiet; then
+            echo "清单版本无变化"
+          else
+            git commit -m "更新清单版本号 ${{ github.event.inputs.tag }}"
+            git push origin HEAD:main || echo "推送失败"
+          fi
 
       # 诊断步骤永远不影响结论 —— 它失败过三次，把成功的事拖成红叉
       - name: 日志写回

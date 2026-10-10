@@ -87,6 +87,8 @@
       <a href="docs/index.html" data-nav="docs">使用手册</a>
     </div>
     <div class="nav-tools">
+      <!-- 语言切换。文案靠 data-i18n，切换时整页重刷一遍，不需改结构。 -->
+      <button class="icon-btn lang-btn" id="btnLang" title="Language / 语言" aria-label="切换语言">文</button>
       <button class="icon-btn" id="btnTheme" title="切换深色 / 浅色" aria-label="切换深色 / 浅色"><svg class="ic" aria-hidden="true"><use href="#i-moon"/></svg></button>
       <a class="icon-btn" href="https://github.com/liuyiming2024/Chat" title="GitHub 仓库" target="_blank" rel="noopener">↗</a>
     </div>
@@ -112,7 +114,30 @@
     <b>提示：</b>聊天室的网址已调整为 <code>/Chat/chat/</code>。
     你在旧地址的数据仍在原来那个浏览器里，直接访问下面的入口即可继续。
   </div>
+  <script src="chat/js/i18n.js"></script>
+  <script src="chat/js/update.js"></script>
+
   <script>
+  /* 语言切换：点一下在 简体中文 / English 之间切，切换后整页文案重刷。
+     只影响界面文案，不动任何用户内容。 */
+  (function () {
+    var btn = document.getElementById('btnLang');
+    if (!btn || !window.I18n) return;
+    function sync() {
+      var c = I18n.get();
+      btn.textContent = c === 'zh-CN' ? '文' : 'A';
+      btn.title = c === 'zh-CN' ? 'English' : '简体中文';
+    }
+    btn.onclick = function () {
+      I18n.set(I18n.get() === 'zh-CN' ? 'en' : 'zh-CN');
+      sync();
+    };
+    sync();
+    /* 页面加载后按当前语言刷一遍静态文案 */
+    I18n.apply();
+  })();
+
+
     (function () {
       try {
         /* 旧地址会写入这个标记；没写过就说明是新访客，不必看这条公告 */

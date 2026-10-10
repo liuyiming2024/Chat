@@ -72,14 +72,53 @@ jobs:
           ls "$ANDROID_HOME/platforms" 2>/dev/null || echo "无 platforms"
           ls "$ANDROID_HOME/build-tools" 2>/dev/null || echo "无 build-tools"
 
-      - name: 生成签名密钥（仅 release 需要）
+      # 签名：优先用 Secrets 里的证书；没有就现场生成【自签名】证书。
+      #
+      # 自签名能解决：出真正的 release 包（更小、不可调试、能覆盖升级安装）。
+      # 自签名解决不了：仍会提示"未知来源"。消掉只能买证书，不在零成本范围内。
+      #
+      # ⚠ 每次运行生成的是新证书，所以【跨版本升级会签名不匹配】。
+      #   要稳定升级就把生成好的 keystore 存进 ANDROID_KEYSTORE_BASE64，
+      #   之后每次复用同一把钥匙。开关已留好。
+      - name: 准备签名密钥
         if: ${{ github.event.inputs.build_type == 'release' }}
         run: |
-          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android/app/keystore.jks || true
-          echo "storeFile=keystore.jks" >> android/keystore.properties || true
-          echo "storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" >> android/keystore.properties || true
-          echo "keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}" >> android/keystore.properties || true
-          echo "keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}" >> android/keystore.properties || true
+          cd android/app
+          if [ -n "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]; then
+            echo "用 Secrets 里的现有证书"
+            echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > keystore.jks
+            echo "storeFile=keystore.jks" >> ../keystore.properties
+            echo "storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" >> ../keystore.properties
+            echo "keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}" >> ../keystore.properties
+            echo "keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}" >> ../keystore.properties
+          else
+            echo "未配置证书，现场生成自签名密钥"
+            keytool -genkeypair -v \
+              -keystore keystore.jks -storetype JKS \
+              -alias chat -keyalg RSA -keysize 2048 -validity 10950 \
+              -storepass chat1234 -keypass chat1234 \
+              -dname "CN=Chat, OU=Personal, O=Chat, L=X, ST=X, C=CN"
+            test -f keystore.jks || { echo "::error::keystore 生成失败"; exit 1; }
+            echo "storeFile=keystore.jks" >> ../keystore.properties
+            echo "storePassword=chat1234" >> ../keystore.properties
+            echo "keyAlias=chat"           >> ../keystore.properties
+            echo "keyPassword=chat1234"    >> ../keystore.properties
+          fi
+          cd ../..
+          echo "---- keystore.properties（密码已遮蔽）----"
+          sed 's/Password=.*/Password=***/' android/keystore.properties
+
+      # release 变体默认没有 signingConfig，不加会出【未签名】的 release 包，装不上
+      - name: 挂上签名配置
+        if: ${{ github.event.inputs.build_type == 'release' }}
+        run: |
+          if grep -q signingConfigs android/app/build.gradle; then
+            echo "已存在，跳过"
+          else
+            cat .github/android/signing.gradle >> android/app/build.gradle
+            echo "已追加"
+          fi
+          grep -n "signingConfigs" android/app/build.gradle | head -2
 
       # kotlin-stdlib 1.8.22 与 kotlin-stdlib-jdk7/jdk8 1.6.21 重复类，
       # checkDebugDuplicateClasses 直接判失败。

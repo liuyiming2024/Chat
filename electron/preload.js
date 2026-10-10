@@ -9,6 +9,7 @@
  * ------------------------------------------------------------------ */
 'use strict';
 const { contextBridge, ipcRenderer } = require('electron');
+const APP_VERSION = require('./version');
 
 contextBridge.exposeInMainWorld('ElectronBridge', {
   setBadge: (n) => ipcRenderer.send('chat:badge', n),
@@ -18,5 +19,11 @@ contextBridge.exposeInMainWorld('ElectronBridge', {
      只有"真的在 Electron 里"才有这个对象 —— 网页端据此判断要不要去探测。 */
   isApp: true,
   bridgePublish: (nick, code) => ipcRenderer.send('bridge:publish', nick, code),
-  bridgeClear: () => ipcRenderer.send('bridge:clear')
+  bridgeClear: () => ipcRenderer.send('bridge:clear'),
+
+  /* 更新相关。版本由主进程给出（读 app.getVersion），
+     下载交给主进程 —— 渲染进程没有写文件的能力。 */
+  version: APP_VERSION,
+  openDownload: (url) => ipcRenderer.send('chat:openDownload', url),
+  downloadUpdate: (url, file) => ipcRenderer.invoke('chat:downloadUpdate', url, file)
 });

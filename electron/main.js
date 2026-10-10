@@ -107,6 +107,57 @@ function startBridge() {
 }
 
 /* 页面申领票据成功后，把昵称与票据交给桥接服务 */
+/* ---- 更新：下载安装包到临时目录，然后交给用户自己点开安装 ----
+ * 为什么不静默替换正在运行的程序：
+ *   一是做不到（文件被占用），二是用户在不知情时被换掉程序属于越界。
+ *   这里只负责"把正确的文件下载下来并打开它"。 */
+const { ipcMain: ipc } = require('electron');
+
+ipc.handle('chat:downloadUpdate', async (e, url, file) => {
+  const https = require('https');
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const { URL } = require('url');
+
+  const dest = path.join(os.tmpdir(), file);
+  const out = fs.createWriteStream(dest);
+
+  /* 跟着重定向：GitHub release 直链会 302 到对象存储 */
+  async function get(u, hops) {
+    if (hops > 5) throw new Error('too many redirects');
+    return new Promise((resolve, reject) => {
+      https.get(u, (res) => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          res.resume();
+          return resolve(get(new URL(res.headers.location, u).href, hops + 1));
+        }
+        if (res.statusCode !== 200) {
+          res.resume();
+          return reject(new Error('HTTP ' + res.statusCode));
+        }
+        res.pipe(out);
+        out.on('finish', () => resolve(dest));
+        out.on('error', reject);
+      }).on('error', reject);
+    });
+  }
+
+  try {
+    const p = await get(url, 0);
+    /* 打开所在文件夹，让用户自己点安装 —— 不代他执行 */
+    shell.showItemInFolder(p);
+    return { ok: true, path: p };
+  } catch (err) {
+    return { ok: false, err: String(err && err.message || err) };
+  }
+});
+
+ipc.on('chat:openDownload', (e, url) => {
+  /* 只在浏览器里打开下载链接，不自己接管。 */
+  if (url) shell.openExternal(url);
+});
+
 ipcMain.on('bridge:publish', (e, nick, code) => {
   startBridge();                                  // 先确保服务起来了
   const ok = bridge.publish(nick, code, bridgeSrv);

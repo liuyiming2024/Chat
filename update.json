@@ -1,0 +1,46 @@
+{
+  "_comment": [
+    "在线维护的更新清单。改这个文件就能换版本、换下载源，",
+    "不需要重新发布客户端 —— 客户端每次启动来这里读。",
+    "",
+    "mirrors 里的 tpl 必须拼出【文件直链】（以 .exe/.dmg/.apk/AppImage 结尾），",
+    "不能指向网页地址（如 /releases/latest），否则下载到的是 HTML。",
+    "",
+    "加新镜像：往 mirrors 里加一项即可，客户端会自动测速选最快的，",
+    "某个源挂了自动切下一个。顺序不代表优先级，实际以测速结果为准。"
+  ],
+
+  "version": "1.3.0",
+  "notes": {
+    "zh": "全平台客户端（Win / macOS / Linux / Android）",
+    "en": "Clients for all platforms"
+  },
+
+  "files": {
+    "win":     { "file": "chat-win-setup.exe",     "size": 80089088 },
+    "mac":     { "file": "chat-mac.dmg",           "size": 98251520 },
+    "linux":   { "file": "chat-linux.AppImage",    "size": 108086784 },
+    "android": { "file": "chat-android.apk",       "size": 4296704 }
+  },
+
+  "mirrors": [
+    {
+      "id": "github",
+      "name": "GitHub 官方",
+      "tpl": "https://github.com/liuyiming2024/Chat/releases/download/{tag}/{file}"
+    },
+    {
+      "id": "github-objects",
+      "name": "GitHub 对象存储",
+      "tpl": "https://objects.githubusercontent.com/github-production-release-asset/{tag}/{file}"
+    }
+  ],
+
+  "_mirrors_note": [
+    "上面两个源实际都指向 GitHub，第二个可能需要签名参数、不一定可用。",
+    "要真正提速，请在这里加入你能访问的第三方加速镜像，例如：",
+    "  { \"id\": \"my-proxy\", \"name\": \"自建加速\", \"tpl\": \"https://你的域名/{tag}/{file}\" }",
+    "客户端会自动对全部源测速，哪个快用哪个，挂了的自动跳过。",
+    "注意：第三方代理可用性我无法在沙箱里实测，加完请自己验证一次。"
+  ]
+}
