@@ -111,13 +111,13 @@ jobs:
           chmod +x gradlew
           # 只抓错误段：gradle --info 输出上万行，全量写日志反而找不到重点。
           if [ "${{ github.event.inputs.build_type }}" = "release" ]; then
-            ./gradlew assembleRelease --no-daemon 2>&1 | tee ../build-log.txt
+            ./gradlew assembleRelease --no-daemon 2>&1 | tee ../android-log.txt
           else
-            ./gradlew assembleDebug --no-daemon 2>&1 | tee ../build-log.txt
+            ./gradlew assembleDebug --no-daemon 2>&1 | tee ../android-log.txt
           fi
           cd ..
-          echo "---- 产物 ----" >> build-log.txt
-          find android/app/build/outputs -name '*.apk' >> build-log.txt 2>/dev/null || echo "无 apk" >> build-log.txt
+          echo "---- 产物 ----" >> android-log.txt
+          find android/app/build/outputs -name '*.apk' >> android-log.txt 2>/dev/null || echo "无 apk" >> android-log.txt
         continue-on-error: false
 
       - name: 日志写回 diag 分支
@@ -127,8 +127,8 @@ jobs:
           git config user.email "diag@local"
           git checkout --orphan diag 2>/dev/null || git checkout diag
           git rm -rf --cached . >/dev/null 2>&1 || true
-          [ -f build-log.txt ] || echo "(无 gradle 输出)" > build-log.txt
-          git add -f build-log.txt
+          [ -f android-log.txt ] || echo "(无 gradle 输出)" > android-log.txt
+          git add -f android-log.txt
           git commit -m "安卓构建日志 $(date -u +%Y%m%d-%H%M%S)" || echo "无变化"
           git push -f origin diag
 
