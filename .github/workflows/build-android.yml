@@ -62,15 +62,26 @@ jobs:
           echo "keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}" >> android/keystore.properties || true
           echo "keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}" >> android/keystore.properties || true
 
+      - name: 准备 Android 构建环境
+        run: |
+          # gradle 靠 local.properties 找 SDK，缺了它第一步就报 "SDK location not found"
+          echo "sdk.dir=$ANDROID_HOME" > android/local.properties
+          # 未接受许可时 gradle 会在下载组件那一步卡住并失败
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+          mkdir -p "$ANDROID_HOME/licenses"
+          printf '\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n' > "$ANDROID_HOME/licenses/android-sdk-license" || true
+          printf '\n84831b9409646a918e30573bab4c9c91346d8abd\n' > "$ANDROID_HOME/licenses/android-sdk-preview-license" || true
+
       - name: 构建 APK
         run: |
           cd android
           chmod +x gradlew
           if [ "${{ github.event.inputs.build_type }}" = "release" ]; then
-            ./gradlew assembleRelease --no-daemon -q
+            ./gradlew assembleRelease --no-daemon
           else
-            ./gradlew assembleDebug --no-daemon -q
+            ./gradlew assembleDebug --no-daemon
           fi
+        continue-on-error: false
 
       - name: 上传 APK
         uses: actions/upload-artifact@v4
