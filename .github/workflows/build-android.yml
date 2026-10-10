@@ -18,6 +18,9 @@ on:
       - 'capacitor.config.json'
       - '.github/workflows/build-android.yml'
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -106,12 +109,28 @@ jobs:
         run: |
           cd android
           chmod +x gradlew
+          # 只抓错误段：gradle --info 输出上万行，全量写日志反而找不到重点。
           if [ "${{ github.event.inputs.build_type }}" = "release" ]; then
-            ./gradlew assembleRelease --no-daemon --stacktrace --info
+            ./gradlew assembleRelease --no-daemon 2>&1 | tee ../build-log.txt
           else
-            ./gradlew assembleDebug --no-daemon --stacktrace --info
+            ./gradlew assembleDebug --no-daemon 2>&1 | tee ../build-log.txt
           fi
+          cd ..
+          echo "---- 产物 ----" >> build-log.txt
+          find android/app/build/outputs -name '*.apk' >> build-log.txt 2>/dev/null || echo "无 apk" >> build-log.txt
         continue-on-error: false
+
+      - name: 日志写回 diag 分支
+        if: always()
+        run: |
+          git config user.name  "diag-bot"
+          git config user.email "diag@local"
+          git checkout --orphan diag 2>/dev/null || git checkout diag
+          git rm -rf --cached . >/dev/null 2>&1 || true
+          [ -f build-log.txt ] || echo "(无 gradle 输出)" > build-log.txt
+          git add -f build-log.txt
+          git commit -m "安卓构建日志 $(date -u +%Y%m%d-%H%M%S)" || echo "无变化"
+          git push -f origin diag
 
       - name: 上传 APK
         uses: actions/upload-artifact@v5
