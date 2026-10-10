@@ -138,7 +138,8 @@
       id: m.id, room: m.room, from: m.from, type: m.type,
       text: m.text || '', mediaId: m.mediaId || null,
       name: m.name || '', size: m.size || 0,
-      replyTo: m.replyTo || null, deleted: !!m.deleted, ts: m.ts || 0
+      replyTo: m.replyTo || null, deleted: !!m.deleted, ts: m.ts || 0,
+      editedAt: m.edited ? Date.parse(m.edited) || 0 : 0
     };
   }
 
@@ -210,6 +211,11 @@
   /* ---------------- 写操作：只走带鉴权的 RPC ---------------- */
 
   function sendMsg(room, type, body, media, name, size, replyTo) {
+    /* 编辑自己的消息。服务端只允许本人改自己的 —— 改别人的属于伪造发言。 */
+    function editMsg(id, body) {
+      return g.SB.rpc('msg_edit', { p_id: id, p_body: body }).then(function () { return true; });
+    }
+
     return g.SB.rpc('msg_send', {
       p_room: room, p_type: type, p_body: body || '',
       p_media: media || null, p_name: name || '', p_size: size || 0,
@@ -314,6 +320,6 @@
     setMute: setMute, setPerms: setPerms, setRole: setRole,
     prepareMedia: prepareMedia, commitMedia: commitMedia, mediaUrl: mediaUrl,
     uploadMedia: uploadMedia,
-    sendMsg: sendMsg, convert: convert
+    sendMsg: sendMsg, editMsg: editMsg, convert: convert
   };
 })(window);

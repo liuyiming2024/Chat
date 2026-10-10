@@ -21,6 +21,7 @@
       key: 'msg', name: '消息', perms: [
         ['msg.send', '发言'],
         ['msg.recall.own', '撤回自己的消息'],
+        ['msg.edit', '编辑自己的消息'],
         ['msg.remove', '移除他人消息（前台隐藏，后台留痕）'],
         ['msg.delete', 'Delete 物理删除并释放空间'],
         ['msg.viewRaw', '查看被撤回 / 移除消息的原文'],
@@ -97,7 +98,7 @@
   var ROLE_PERMS = {
     owner: Object.keys(PERMS),
     admin: [
-      'msg.send', 'msg.recall.own', 'msg.remove', 'msg.viewRaw',
+      'msg.send', 'msg.recall.own', 'msg.edit', 'msg.remove', 'msg.viewRaw',
       'media.image', 'media.video', 'media.voice', 'media.file',
       'room.create', 'room.rename', 'room.notice', 'room.desc', 'room.pwd',
       'room.invite', 'room.kick', 'room.delete', 'room.export',
@@ -107,7 +108,7 @@
       'sys.notice', 'sys.env'
     ],
     member: [
-      'msg.send', 'msg.recall.own',
+      'msg.send', 'msg.recall.own', 'msg.edit',
       'media.image', 'media.video', 'media.voice', 'media.file',
       'room.create', 'user.view', 'sys.env'
     ]
