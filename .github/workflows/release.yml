@@ -93,6 +93,15 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with: { node-version: '20' }
+      # 签名（可选）。electron-builder 原生认 CSC_LINK / CSC_KEY_PASSWORD，
+      # 有就签、没有就跳过 —— 不用改配置，也不会因缺证书而构建失败。
+      #
+      # 现在不配：代码签名证书要花钱（Windows 几百元/年，
+      # macOS 需 99 美元/年的开发者账号）。未签名的包能正常安装，
+      # 只是 SmartScreen / Gatekeeper 会提示，手动确认一次即可。
+      #
+      # ⚠ 曾在这里配过自定义 sign 钩子（build.win.sign），
+      #   路径在打包上下文里解析不到，直接把 Windows 构建搞挂了。别再用。
       - name: 构建
         shell: bash
         run: |

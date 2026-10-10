@@ -30,9 +30,7 @@
           ]
         }
       ],
-      "icon": "chat/icons/icon.ico",
-      "sign": "./.github/electron/sign-win.js",
-      "signtoolOptions": null
+      "icon": "chat/icons/icon.ico"
     },
     "nsis": {
       "artifactName": "chat-win-setup.${ext}"
