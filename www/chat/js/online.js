@@ -68,14 +68,16 @@
   /* gate_check 现在返回 json {ok, token, show_new}。
      show_new 非空表示"用旧密码进来的"，值是新密码明文，交给前端展示。 */
   /* 本机桥接：客户端申领票据 / 网页兑换票据 */
-  function bridgeTicket() {
-    return g.SB.rpc('bridge_ticket_create').then(function (code) {
+  /* 票据绑定网页来源：申领与兑换必须是同一个 origin，
+     否则票据换到别的机器上也能用。 */
+  function bridgeTicket(origin) {
+    return g.SB.rpc('bridge_ticket_create', { p_origin: origin || '' }).then(function (code) {
       if (!code) throw new Error('未取到票据');
       return code;
     });
   }
-  function bridgeRedeem(code) {
-    return g.SB.rpc('bridge_ticket_redeem', { p_code: code });
+  function bridgeRedeem(code, origin) {
+    return g.SB.rpc('bridge_ticket_redeem', { p_code: code, p_origin: origin || '' });
   }
 
   function gate(pwd) {

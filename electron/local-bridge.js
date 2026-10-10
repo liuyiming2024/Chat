@@ -5,10 +5,10 @@
  *         网页版（github.io）来问一句"你现在登录的是谁"，拿到票据后
  *         去服务端换成会话 —— 于是网页端不用再输一遍账号密码。
  *
- * 这就是腾讯 QQ 空间那套"本机客户端开端口、网页来探测"的机制。
- * 换成自建场景后，卡住人的两道墙自动消失：
+ * 思路是"本机已登录的客户端开一个小服务，网页来问一句你是谁"。
+ * 自建场景下，那两道常被人提起的墙自动消失：
  *   · "本地服务只认自家域名" —— 自己写的，白名单里放谁由我们决定
- *   · "凭证要腾讯密钥才认"   —— 票据由服务端签发，我们自己的
+ *   · "凭证要别人密钥才认"   —— 票据由我们自己的服务端签发
  *
  * 真正要处理的只剩两个响应头：
  *   Access-Control-Allow-Origin            （CORS）
@@ -37,11 +37,46 @@ const http = require('http');
 const PORT = 37821;
 const HOST = '127.0.0.1';
 
-/* 只认这些来源。没有通配，没有例外。 */
+/* 只认这些来源。没有通配，没有例外。
+ *
+ * ⚠ 这里曾经只写了 github.io 一条 —— 那是 E0 级的漏：
+ *   项目自己推荐的部署方式全被挡在外面，而探测失败又是完全静默的，
+ *   于是用 server.py 的用户装了桌面版、打开网页，按钮永远不出现，
+ *   还没有任何提示告诉他为什么。
+ *
+ *   自托管必须放开：
+ *     · server.py（README 里明写的推荐方式）→ localhost / 127.0.0.1
+ *     · 部署到别人的仓库 → 任意 https 的 github.io 子域
+ *     · 局域网另一台机器 → 本机私有网段
+ *
+ *   仍然【不用】通配：白名单的意义就是"只放行这些"，加了 "*" 等于没加。 */
 const ALLOW_ORIGIN = new Set([
   'https://liuyiming2024.github.io'
-  // 本地开发时可以临时加 'http://localhost:8080'，请勿提交通配
 ]);
+
+/* 判断来源是否放行。规则而不是死列表 —— 死列表覆盖不了自托管场景。 */
+function allowedOrigin(origin) {
+  if (!origin || origin === 'null') return false;
+  if (ALLOW_ORIGIN.has(origin)) return true;
+
+  var m = origin.match(/^(https?):\/\/([^:/?#]+)(?::(\d+))?$/);
+  if (!m) return false;
+  var scheme = m[1], host = m[2];
+
+  // 本机：localhost / 127.0.0.1 / [::1]，任意端口（server.py 常用 8000/8080）
+  if (host === 'localhost' || host === '127.0.0.1' || host === '[::1]') return true;
+
+  // 任意 github.io 子域：别人 fork 后部署也算自托管
+  if (/^([a-z0-9-]+\.)?github\.io$/i.test(host)) return true;
+
+  // 局域网私有网段：10.x / 192.168.x / 172.16-31.x
+  if (scheme === 'http' || scheme === 'https') {
+    if (/^10\./.test(host)) return true;
+    if (/^192\.168\./.test(host)) return true;
+    if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return true;
+  }
+  return false;
+}
 
 /* 票据只在内存里，不落盘、不写日志。 */
 let state = { nick: '', code: '', at: 0 };
@@ -54,14 +89,14 @@ function corsHeaders(origin, okOrigin) {
     'Content-Type': 'application/json; charset=utf-8',
     'Cache-Control': 'no-store'
   };
-  if (okOrigin) h['Access-Control-Allow-Origin'] = origin;
+  if (okOrigin) h['Access-Control-Allow-Origin'] = origin;   // 回显具体来源，绝不用 '*'
   return h;
 }
 
 function createServer() {
   const srv = http.createServer((req, res) => {
     const origin = req.headers.origin || '';
-    const okOrigin = ALLOW_ORIGIN.has(origin);
+    const okOrigin = allowedOrigin(origin);
 
     /* 预检：PNA 要求对 OPTIONS 明确回 Allow-Private-Network */
     if (req.method === 'OPTIONS') {
@@ -116,6 +151,7 @@ function createServer() {
 
 module.exports = {
   PORT,
+  allowedOrigin,     // 导出供断言脚本单测
   createServer,
   /* 端口没拿到手就不发票据 —— 宁可这个功能不生效，也不能给错身份 */
   publish(nick, code, srv) {

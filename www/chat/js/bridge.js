@@ -61,5 +61,10 @@
     return !!(g.ElectronBridge && g.ElectronBridge.isApp);
   }
 
-  g.Bridge = { probe: probe, isApp: isApp, PORT: PORT };
+  /* 当前页的来源。票据要绑它 —— 防止票据被搬到别的机器上兑换。 */
+  function origin() {
+    try { return location.origin || ''; } catch (e) { return ''; }
+  }
+
+  g.Bridge = { probe: probe, isApp: isApp, origin: origin, PORT: PORT };
 })(window);

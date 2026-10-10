@@ -198,6 +198,26 @@ jobs:
           echo "===== 待发布 ====="
           ls -la pkg
 
+      # 资产完整性断言。
+      # v1.2.1 漏了 apk，而落地页的四条直链是无条件写死的 ——
+      # 缺一个平台就是死链。靠人眼发现不可靠，这里缺一个直接失败。
+      - name: 校验平台覆盖
+        run: |
+          MISSING=""
+          for f in chat-android.apk chat-win-setup.exe chat-mac.dmg chat-linux.AppImage; do
+            if [ ! -f "pkg/$f" ]; then
+              echo "  ✗ 缺失 $f"
+              MISSING="$MISSING $f"
+            else
+              echo "  ✓ $f $(du -h pkg/$f | cut -f1)"
+            fi
+          done
+          if [ -n "$MISSING" ]; then
+            echo "::error::以下平台资产缺失，终止发布：$MISSING（缺一个就是死链）"
+            exit 1
+          fi
+          echo "  四平台齐全"
+
       # 幂等：tag 已存在就先删掉旧 Release 再重建。
       # 之前用固定 tag 重跑会撞「tag 已存在」—— 把一个成功的事搞成真失败。
       # 用户看到红叉第一反应是重跑，所以这个必须能吃住重跑。

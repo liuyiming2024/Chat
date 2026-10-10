@@ -33,10 +33,12 @@ jobs:
         uses: actions/checkout@v5
 
       - name: 执行 SQL
+        id: sql
+        continue-on-error: true
         env:
           DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
-          set -euo pipefail
+          set -uo pipefail
           # 去除首尾空白/换行：手动粘贴 Secret 时极易在末尾带上回车，
           # 会导致库名变成 "postgres\n" 而连不上。
           DB_URL="$(printf '%s' "$DB_URL" | tr -d '\r\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
@@ -53,13 +55,45 @@ jobs:
             forum.sql)  FILES="chat/supabase/forum.sql" ;;
           esac
 
+          RC=0
           for f in $FILES; do
             echo "==================== $f ===================="
-            if [ ! -f "$f" ]; then echo "::error::找不到 $f"; exit 1; fi
-            psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$f"
+            if [ ! -f "$f" ]; then echo "::error::找不到 $f"; RC=1; break; fi
+            # 输出全留档：失败时这才是唯一线索
+            psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$f" 2>&1 | tee -a migrate-log.txt
+            RC=${PIPESTATUS[0]}
+            echo "psql 退出码 $RC"
+            [ "$RC" -ne 0 ] && break
           done
+          echo "exit=$RC"
+          exit $RC
+
+      # 诊断步骤：失败也不影响结论，但没有它就只能盲改
+      - name: 日志写回
+        if: always()
+        continue-on-error: true
+        run: |
+          git config user.name  "diag-bot"
+          git config user.email "diag@local"
+          git checkout --orphan diag-migrate 2>/dev/null || git checkout diag-migrate
+          git rm -rf --cached . >/dev/null 2>&1 || true
+          [ -f migrate-log.txt ] || echo "(无输出)" > migrate-log.txt
+          git add -f migrate-log.txt
+          git commit -m "迁移日志 $(date -u +%Y%m%d-%H%M%S)" || echo "无变化"
+          git push -f origin diag-migrate || echo "推送失败"
+
+      # 上一步 continue-on-error 了，这里要把真实的失败结论还原出来
+      - name: 判定
+        if: always()
+        run: |
+          if [ "${{ steps.sql.outcome }}" != "success" ]; then
+            echo "::error::SQL 执行失败，详见 diag-migrate 分支的 migrate-log.txt"
+            exit 1
+          fi
+          echo "SQL 执行成功"
 
       - name: 校验
+        if: always()
         env:
           DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
