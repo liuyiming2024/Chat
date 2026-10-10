@@ -423,6 +423,12 @@
     save(true);
     bindEvents();
     renderAll();
+    renderDndTip();
+    syncBadge();
+    /* 回到前台时重算标题栏未读（进过房间的已清零，剩下的才显示） */
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden) syncBadge();
+    });
     g.Net.loadAccel().then(function (ok) { if (ok) g.UI.toast('已启用 C++/WASM 哈希加速', 'ok'); });
     startHeartbeat();
     setMode(getMode(), true);
@@ -502,6 +508,32 @@
     } else if (isAtMe(m)) {
       g.UI.toast('有人 @ 了你', 'ok');
     }
+    /* 系统消息不通知：那是自己操作的回显，弹出来只会莫名其妙 */
+    if (m.type === 'sys') { syncBadge(); return; }
+    if (g.Notifier) {
+      var r = findRoom(m.room);
+      var u = S.users.filter(function (x) { return x.id === m.from; })[0];
+      var txt = m.text || '';
+      if (!txt) {
+        txt = ({ image: '[图片]', video: '[视频]', voice: '[语音]', file: '[文件]' })[m.type] || '[消息]';
+      }
+      g.Notifier.incoming({
+        roomId: m.room,
+        roomName: r ? roomTitleOf(r) : '',
+        fromName: u ? u.nick : '有人',
+        text: txt,
+        mine: false
+      });
+    }
+    syncBadge();
+  }
+
+  /* 未读数写进标题栏：页面切到后台时这是唯一看得见的地方 */
+  function syncBadge() {
+    if (!g.Notifier) return;
+    var n = 0;
+    for (var k in unread) n += (unread[k] || 0);
+    g.Notifier.setUnread(n);
   }
 
   /* ============ 正在输入提示 ============
@@ -1983,11 +2015,11 @@
         var rv = verifyPwd(v, r.pwd.salt, r.pwd.hash);
         if (!rv.ok) { g.UI.toast('密码错误', 'err'); return; }
         if (rv.legacy) { r.pwd.hash = hashPwd(v, r.pwd.salt); save(); }
-        joinRoom(rid, me); save(); cur = rid; unread[rid] = 0; renderAll(); scrollBottom();
+        joinRoom(rid, me); save(); cur = rid; unread[rid] = 0; syncBadge(); renderAll(); scrollBottom();
       }, { password: true });
       return;
     }
-    cur = rid; unread[rid] = 0;
+    cur = rid; unread[rid] = 0; syncBadge();
     renderAll(); scrollBottom();
     $('input').focus();
   }
@@ -2098,6 +2130,15 @@
       }]);
     }
     items.push(['用口令加入房间', function () { joinByCode(); }]);
+    /* 免打扰是本地偏好，不进服务端判定：它只影响"我这边提不提醒"，
+       不影响消息送达，也不影响别人。 */
+    items.push([(g.Notifier && g.Notifier.roomMuted(r.id)) ? '✔ 已免打扰' : '免打扰此会话',
+      function () {
+        if (!g.Notifier) { g.UI.toast('通知模块未加载', 'err'); return; }
+        g.Notifier.setRoomMuted(r.id, !g.Notifier.roomMuted(r.id));
+        g.UI.toast(g.Notifier.roomMuted(r.id) ? '已开启免打扰（仍会收到消息，只是不提醒）' : '已关闭免打扰', 'ok');
+        renderRooms(); renderDndTip();
+      }]);
     if (g.ACL.can(me, 'room.manage', r)) {
       items.push(['生成邀请口令', function () { inviteCodeDialog(r); }]);
     }
@@ -2390,6 +2431,143 @@
     });
   }
 
+  /* ================= 消息通知设置 ================= */
+
+  /* 免打扰状态条。
+     免打扰生效时必须在界面上说出来 —— 否则用户只会以为通知功能坏了，
+     不会意识到是自己（或时段）把它关掉的。 */
+  function renderDndTip() {
+    var el = document.getElementById('dndTip');
+    if (!el) return;
+    var N = g.Notifier, txt = '';
+    if (N) {
+      var q = N.quiet();
+      if (q === 'off') txt = '通知已关闭，不会收到任何提醒';
+      else if (q === 'dnd') txt = '免打扰中：消息照常收到，只是不弹提醒';
+      else if (q === 'hours') txt = '夜间免打扰中（' + N.get('qFrom') + ':00 – ' + N.get('qTo') + ':00）';
+    }
+    if (txt) { el.textContent = txt; el.classList.remove('hidden'); }
+    else el.classList.add('hidden');
+  }
+
+  function notifySettings() {
+    var N = g.Notifier;
+    if (!N) { g.UI.toast('通知模块未加载', 'err'); return; }
+    var d = elc('div', '');
+
+    /* ---- 总开关 ---- */
+    d.appendChild(elc('div', 'pref-sec-title', '通知'));
+    var rowOn = elc('label', 'pref-row');
+    rowOn.innerHTML = '<span>启用消息通知</span>';
+    var cbOn = document.createElement('input');
+    cbOn.type = 'checkbox'; cbOn.checked = !!N.get('enabled');
+    cbOn.onchange = function () { N.set('enabled', cbOn.checked); renderDndTip(); };
+    rowOn.appendChild(cbOn); d.appendChild(rowOn);
+
+    /* ---- 授权状态 ---- */
+    var p = N.permission();
+    var permRow = elc('div', 'pref-row');
+    var permTxt = ({
+      granted: '已授权，可以弹出通知',
+      denied: '已被浏览器拒绝，需到站点设置里手动放行',
+      default: '尚未授权，点右边按钮申请',
+      unsupported: '当前环境不支持系统通知（仍会有提示音）'
+    })[p] || ('状态：' + p);
+    permRow.innerHTML = '<span>系统通知授权<br><i class="pref-note">' + permTxt + '</i></span>';
+    if (p !== 'granted' && p !== 'unsupported') {
+      var bReq = elc('button', 'btn ghost sm', '申请授权');
+      bReq.type = 'button';
+      bReq.onclick = function () {
+        N.request(function (st) {
+          g.UI.toast(st === 'granted' ? '已授权' : '未获授权（' + st + '）', st === 'granted' ? 'ok' : 'err');
+          notifySettings();
+        });
+      };
+      permRow.appendChild(bReq);
+    }
+    d.appendChild(permRow);
+
+    /* ---- 内容预览 ---- */
+    var rowPv = elc('label', 'pref-row');
+    rowPv.innerHTML = '<span>通知里显示消息内容<br><i class="pref-note">关掉后只显示「新消息」，锁屏时不泄内容</i></span>';
+    var cbPv = document.createElement('input');
+    cbPv.type = 'checkbox'; cbPv.checked = !!N.get('preview');
+    cbPv.onchange = function () { N.set('preview', cbPv.checked); };
+    rowPv.appendChild(cbPv); d.appendChild(rowPv);
+
+    /* ---- 提示音 ---- */
+    var rowSnd = elc('label', 'pref-row');
+    rowSnd.innerHTML = '<span>提示音</span>';
+    var cbSnd = document.createElement('input');
+    cbSnd.type = 'checkbox'; cbSnd.checked = !!N.get('sound');
+    cbSnd.onchange = function () { N.set('sound', cbSnd.checked); };
+    rowSnd.appendChild(cbSnd); d.appendChild(rowSnd);
+
+    /* ---- 免打扰 ---- */
+    d.appendChild(elc('div', 'pref-sec-title', '免打扰'));
+    var rowDnd = elc('label', 'pref-row');
+    rowDnd.innerHTML = '<span>全局免打扰<br><i class="pref-note">消息照常收到，只是不弹窗、不响铃</i></span>';
+    var cbDnd = document.createElement('input');
+    cbDnd.type = 'checkbox'; cbDnd.checked = !!N.get('dnd');
+    cbDnd.onchange = function () { N.set('dnd', cbDnd.checked); renderDndTip(); };
+    rowDnd.appendChild(cbDnd); d.appendChild(rowDnd);
+
+    var rowQ = elc('label', 'pref-row');
+    rowQ.innerHTML = '<span>按时段免打扰</span>';
+    var cbQ = document.createElement('input');
+    cbQ.type = 'checkbox'; cbQ.checked = !!N.get('quiet');
+    cbQ.onchange = function () { N.set('quiet', cbQ.checked); renderDndTip(); };
+    rowQ.appendChild(cbQ); d.appendChild(rowQ);
+
+    var rowTime = elc('div', 'pref-row');
+    rowTime.innerHTML = '<span>时段</span>';
+    var selA = document.createElement('select'); selA.className = 'field sm';
+    var selB = document.createElement('select'); selB.className = 'field sm';
+    for (var h = 0; h < 24; h++) {
+      var o1 = document.createElement('option'); o1.value = h; o1.textContent = h + ':00'; selA.appendChild(o1);
+      var o2 = document.createElement('option'); o2.value = h; o2.textContent = h + ':00'; selB.appendChild(o2);
+    }
+    selA.value = N.get('qFrom'); selB.value = N.get('qTo');
+    selA.onchange = function () { N.set('qFrom', selA.value * 1); renderDndTip(); };
+    selB.onchange = function () { N.set('qTo', selB.value * 1); renderDndTip(); };
+    rowTime.appendChild(selA);
+    rowTime.appendChild(elc('span', 'pref-note', ' 至 '));
+    rowTime.appendChild(selB);
+    d.appendChild(rowTime);
+
+    /* ---- 按会话静音 ---- */
+    var muted = Object.keys(N.cfg().rooms || {});
+    if (muted.length) {
+      d.appendChild(elc('div', 'pref-sec-title', '已单独静音的会话'));
+      muted.forEach(function (rid) {
+        var r = findRoom(rid);
+        var row = elc('div', 'pref-row');
+        row.innerHTML = '<span>' + g.UI.esc(r ? roomTitleOf(r) : rid) + '</span>';
+        var b = elc('button', 'btn ghost sm', '取消静音');
+        b.type = 'button';
+        b.onclick = function () { N.setRoomMuted(rid, false); notifySettings(); renderRooms(); };
+        row.appendChild(b);
+        d.appendChild(row);
+      });
+    }
+
+    /* ---- 测试 ---- */
+    var rowT = elc('div', 'pref-row');
+    rowT.innerHTML = '<span>试一下效果</span>';
+    var bT = elc('button', 'btn ghost sm', '发一条测试通知');
+    bT.type = 'button';
+    bT.onclick = function () {
+      if (N.permission() !== 'granted') {
+        N.request(function () { N.incoming({ roomId: '__test', roomName: '测试', fromName: '聊天室', text: '这是一条测试通知', mine: false }); });
+      } else {
+        N.incoming({ roomId: '__test', roomName: '测试', fromName: '聊天室', text: '这是一条测试通知', mine: false });
+      }
+    };
+    rowT.appendChild(bT); d.appendChild(rowT);
+
+    g.UI.modal({ title: '消息通知与免打扰', body: d, okText: '完成', onOk: function () { renderDndTip(); } });
+  }
+
   function openProfile() {
     var d = elc('div', '');
     d.innerHTML =
@@ -2432,6 +2610,16 @@
         }).catch(function () { g.UI.toast('图片处理失败', 'err'); });
       };
     })();
+
+    /* 通知设置入口：放在资料面板里，而不是往头部按钮区再塞一个图标 ——
+       那排按钮已经够挤了，再加一个只会提高误触代价。 */
+    var nBar = elc('div', 'pref-row');
+    nBar.innerHTML = '<span>消息通知与免打扰</span>';
+    var nBtn = elc('button', 'btn ghost sm', '去设置');
+    nBtn.type = 'button';
+    nBtn.onclick = function () { notifySettings(); };
+    nBar.appendChild(nBtn);
+    d.appendChild(nBar);
 
     g.UI.modal({
       title: '我的资料', body: d, okText: '保存', onOk: function (body) {
@@ -3196,6 +3384,14 @@
 
   function boot() {
     initTheme();
+    /* 通知模块需要知道"当前在看哪个房间"，才能判断该不该弹 */
+    if (g.Notifier) {
+      g.Notifier.bindRoom(function () { return cur; });
+      g.Notifier.onOpen = function (rid) {
+        if (!rid) return;
+        openRoom(rid);
+      };
+    }
     S = load();
     if (!S) { S = fresh(); ensurePublic(); save(true); }
     initSync();
