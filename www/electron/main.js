@@ -108,8 +108,12 @@ function startBridge() {
 
 /* 页面申领票据成功后，把昵称与票据交给桥接服务 */
 ipcMain.on('bridge:publish', (e, nick, code) => {
-  bridge.publish(nick, code);
-  startBridge();
+  startBridge();                                  // 先确保服务起来了
+  const ok = bridge.publish(nick, code, bridgeSrv);
+  /* 端口被占时明确告知：宁可这个功能不生效，也不能让网页端拿到错的身份 */
+  if (!ok && e && e.sender) {
+    e.sender.send('bridge:unavailable', '本机桥接端口被占用，已停用');
+  }
 });
 ipcMain.on('bridge:clear', () => bridge.clear());
 

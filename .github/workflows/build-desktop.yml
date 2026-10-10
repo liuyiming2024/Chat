@@ -51,8 +51,10 @@ jobs:
             glob: |
               dist/*.AppImage
               dist/*.deb
-    # 单选时只跑对应平台；选 all 三个都跑
-    if: ${{ github.event.inputs.target == 'all' || github.event.inputs.target == matrix.plat }}
+    # ⚠ 不能在这里写 if —— jobs.<id>.if 不支持 matrix 上下文（matrix 在 job 展开时才生成，
+    # job 级 if 求值更早）。之前就是这么写的，结果 jobs 数为 0，整个 workflow 根本没运行，
+    # 连续四次 push 全是 failure 却看不出原因。
+    # 正确做法：矩阵全展开，在 step 级用 inputs 判断要不要真的跑。
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -64,6 +66,7 @@ jobs:
       # 不要 npm init -y：它会覆盖仓库里已写好的 package.json，
       # 把 electron-builder 的 build 配置（各平台目标）冲掉。
       - name: 装 Electron 打包工具
+        if: ${{ github.event.inputs.target == 'all' || github.event.inputs.target == matrix.plat }}
         run: |
           test -f package.json || npm init -y --silent
           node -e "
@@ -78,6 +81,7 @@ jobs:
 
       - name: 构建
         id: build
+        if: ${{ github.event.inputs.target == 'all' || github.event.inputs.target == matrix.plat }}
         shell: bash
         run: |
           # 完整输出留档。沙箱拿不到 Actions 日志，只能自己写回来。
@@ -89,7 +93,7 @@ jobs:
       # 诊断步骤：永远不该影响 job 结论。
       # 之前就是它失败把整个 workflow 拖成红叉，而真正的产物其实已经成功了。
       - name: 日志写回
-        if: always()
+        if: ${{ always() && (github.event.inputs.target == 'all' || github.event.inputs.target == matrix.plat) }}
         continue-on-error: true
         shell: bash
         run: |

@@ -402,6 +402,10 @@
         '<div class="bridge-note">来自本机客户端。仍需通过上面的保护密码。</div>';
       box.classList.remove('hidden');
       box.querySelector('#bGo').onclick = function () {
+        if (usedBridgeCode === r.code) {
+          g.UI.toast('这张票据已用过，请重新登录或用账号密码登录', 'err');
+          return;
+        }
         var btn = this;
         btn.disabled = true;
         btn.textContent = '正在进入…';
@@ -410,6 +414,7 @@
           g.SB.setSession(res.token, null);
           __bridgeUid = res.uid;
           setMeId(res.uid, rememberOn());
+          usedBridgeCode = r.code;   // 标记已用，防止重复提交
           return g.Online.pull();
         }).then(function (inS) {
           if (inS && mergeState(inS)) save(true);
@@ -419,9 +424,14 @@
           setGateOk();
           enterApp();
         }).catch(function (e) {
-          btn.disabled = false;
-          btn.textContent = '以 ' + r.nick + ' 的身份直接进入';
-          g.UI.toast(e.message || '进入失败，请手动登录', 'err');
+          /* 票据已经用掉了（服务端兑换成功但后续失败也算），
+             这里必须把按钮换掉并说清为什么 ——
+             否则用户再点一次只会得到一句莫名其妙的"票据无效"。 */
+          box.innerHTML =
+            '<div class="bridge-line"></div>' +
+            '<div class="bridge-note">本机票据已用过（每张只能用一次）。' +
+            '请在客户端里重新登录一次，或直接用账号密码登录。</div>';
+          g.UI.toast(e.message || '进入失败，请用账号密码登录', 'err');
         });
       };
     }).catch(function () { });
@@ -430,6 +440,7 @@
   /* 兑换成功后 uid 的临时存放（回调链里要跨 then 用） */
   var __bridgeUid = null;
   function res_uid() { return __bridgeUid; }
+  var usedBridgeCode = null;
 
   function loginView() {
     var wrap = $('gate');
