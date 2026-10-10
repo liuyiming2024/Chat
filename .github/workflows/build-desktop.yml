@@ -64,10 +64,10 @@ jobs:
           git config user.email "diag@local"
           git checkout --orphan diag-desktop 2>/dev/null || git checkout diag-desktop
           git rm -rf --cached . >/dev/null 2>&1 || true
-          [ -f desktop-log.txt ] && git add -f desktop-log.txt || echo "无日志" > desktop-log.txt
+          if [ ! -f desktop-log.txt ]; then echo "(无输出)" > desktop-log.txt; fi
           git add -f desktop-log.txt
           git commit -m "桌面构建日志 $(date -u +%Y%m%d-%H%M%S)" || echo "无变化"
-          git push -f origin diag
+          git push -f origin diag-desktop
 
       - name: 上传安装包
         uses: actions/upload-artifact@v5
