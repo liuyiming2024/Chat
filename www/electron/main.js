@@ -6,7 +6,7 @@
  * 否则改一处要改两遍，迟早对不上。
  * ------------------------------------------------------------------ */
 'use strict';
-const { app, BrowserWindow, Menu, shell } = require('electron');
+const { app, BrowserWindow, Menu, shell, ipcMain, nativeImage } = require('electron');
 const path = require('path');
 
 /* 网页是纯静态的，装了也没有 nodeIntegration 的必要。
@@ -23,16 +23,27 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
+      /* 页面里没有 require，只通过 preload 暴露最小桥接 */
+      preload: path.join(__dirname, 'preload.js'),
       /* 允许页面加载自己的 service worker 与 IndexedDB */
       partition: 'persist:chat'
     }
   });
 
+  /* 打包后加载 www/ 副本；开发时直接加载仓库根目录的页面。
+     www/index.html 会重定向到 chat/index.html，所以装成应用打开就是聊天室。 */
   const entry = app.isPackaged
-    ? path.join(__dirname, '..', 'index.html')
-    : path.join(__dirname, '..', '..', 'index.html');
+    ? path.join(__dirname, '..', 'www', 'index.html')
+    : path.join(__dirname, '..', 'www', 'index.html');
 
   win.loadFile(entry);
+
+  /* 页面（比如点击通知后）请求把窗口带到前台 */
+  require('electron').ipcMain.on('chat:focus', () => {
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+  });
 
   /* 外链一律交给系统浏览器，不在应用里开 ——
      应用内没有地址栏，用户点出去就回不来了。 */
@@ -68,6 +79,23 @@ function zoom(win, d) {
   const cur = win.webContents.getZoomFactor();
   win.webContents.setZoomFactor(Math.min(3, Math.max(0.5, cur + d * 0.1)));
 }
+
+/* 未读数角标：任务栏图标上叠一个红底数字。
+   没有它，桌面版切到后台就完全看不出有新消息。 */
+ipcMain.on('chat:badge', (e, n) => {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  if (!win) return;
+  if (!n || n <= 0) { win.setOverlayIcon(null, ''); return; }
+  const txt = n > 99 ? '99+' : String(n);
+  const size = 64;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}">
+    <circle cx="44" cy="44" r="20" fill="#e5453a"/>
+    <text x="44" y="52" font-family="sans-serif" font-size="24" font-weight="bold"
+      fill="#fff" text-anchor="middle">${txt}</text></svg>`;
+  const img = nativeImage.createFromBuffer(
+    Buffer.from(svg.replace(/\s+/g, ' '), 'utf-8'), { width: size, height: size });
+  win.setOverlayIcon(img, `${txt} 条未读`);
+});
 
 app.whenReady().then(createWindow);
 

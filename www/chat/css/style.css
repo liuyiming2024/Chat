@@ -1411,3 +1411,37 @@ button:active,
   .sw-install { bottom: 62px; }   /* 给「← 首页」让位 */
   .sw-update  { bottom: 62px; }
 }
+
+
+/* ================= 免打扰状态条 / 通知设置 =================
+ * 免打扰生效却在界面上不吭声，用户只会以为通知功能坏了。
+ * 所以状态条是必备的，不是装饰。 */
+.dnd-tip {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 12px;
+  background: #fff7e6;
+  color: #8a5a00;
+  font-size: 12px;
+  border-bottom: 1px solid #ffe4b0;
+}
+body.dark .dnd-tip {
+  background: #3a2f16; color: #ffd591; border-bottom-color: #57492a;
+}
+.dnd-tip.hidden { display: none; }
+
+/* 设置面板里的分区与行 */
+.pref-sec-title {
+  margin: 14px 0 6px;
+  font-size: 12px; font-weight: 600; color: #888;
+  letter-spacing: .5px;
+}
+.pref-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line, #eceef1);
+  font-size: 13px;
+}
+.pref-row:last-child { border-bottom: 0; }
+.pref-row input[type="checkbox"] { width: 18px; height: 18px; flex: none; }
+.pref-note { font-style: normal; color: #999; font-size: 12px; }

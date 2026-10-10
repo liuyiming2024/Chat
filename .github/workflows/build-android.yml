@@ -52,7 +52,10 @@ jobs:
       # 现在：平台目录必须真的生成出来，否则当场失败并报错。
       - name: 装 Capacitor 并添加安卓平台
         run: |
-          npm i @capacitor/core @capacitor/cli @capacitor/android --silent --no-fund --no-audit
+          # local-notifications：安卓 WebView 的通知不可靠，走插件才稳。
+          # notify.js 会自己判断在不在原生环境，网页端不受影响。
+          npm i @capacitor/core @capacitor/cli @capacitor/android \
+             @capacitor/local-notifications --silent --no-fund --no-audit
           # 不跑 cap init：capacitor.config.json 已在仓库里，
           # 而且 init 在配置已存在时会交互式询问"是否覆盖"，在 CI 里直接卡死。
           npx cap add android
