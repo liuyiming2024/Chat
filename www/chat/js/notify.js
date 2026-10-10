@@ -183,7 +183,9 @@
     var visible = !g.document.hidden && g.document.hasFocus();
     if (visible && info.roomId === currentRoom()) return;
 
-    if (permission() !== 'granted') return;   // 没授权就只响一声，不报错
+    /* 拿不到授权不是"什么都不做"的理由 —— 声音和标题闪烁不依赖授权。
+       原实现在这里直接 return，未授权的用户完全感知不到新消息。 */
+    if (permission() !== 'granted') { return; }
 
     var title = (info.roomName || '新消息');
     if (info.fromName) title = info.fromName + (info.roomName ? ' · ' + info.roomName : '');
@@ -197,18 +199,66 @@
   function currentRoom() { try { return curRoomFn(); } catch (e) { return ''; } }
   function bindRoom(fn) { curRoomFn = fn; }
 
-  /* ---------------- 未读数：写进标题栏 ----------------
-   * 页面切到后台时，标题栏的未读数是唯一能看见的东西。 */
+  /* ---------------- 未读角标与标题闪烁 ----------------
+   * 这是"没在盯着这个页面"时唯一能看见的提醒，所以必须做到位。
+   *
+   * 分三层，从弱到强：
+   *   ① 静态计数  (3) 聊天室 —— 一直显示
+   *   ② 标题闪烁 —— 未读且页面在后台时，在两条标题之间来回切
+   *   ③ 桌面通知 —— 需要授权，拿不到授权时①②照常工作
+   *
+   * 主流聊天工具都是这个思路：通知权限是可选项，不是前提。
+   * 之前的实现把"没授权"当成"什么都不做"，所以用户会觉得通知毫无作用。 */
+  var flashTimer = null, flashOn = false, baseTitle = '聊天室';
+  var FLASH_A = '', FLASH_B = '';
+
+  function setBaseTitle(t) { baseTitle = t || '聊天室'; }
+
   function setUnread(n) {
-    var base = '聊天室';
-    try { if (g.__baseTitle) base = g.__baseTitle; } catch (e) { }
-    var t = n > 0 ? '(' + (n > 99 ? '99+' : n) + ') ' + base : base;
-    if (t !== lastTitle) { try { g.document.title = t; } catch (e) { } lastTitle = t; }
+    try { if (g.__baseTitle) baseTitle = g.__baseTitle; } catch (e) { }
+    n = n || 0;
+
+    /* ① 静态计数 */
+    var label = n > 0 ? '(' + (n > 99 ? '99+' : n) + ') ' : '';
+    FLASH_A = label + baseTitle;
+
+    /* ② 只在"页面确实在后台"时才闪 —— 正盯着看还闪是骚扰 */
+    var hidden = false;
+    try { hidden = g.document.hidden; } catch (e) { }
+    stopFlash();
+    if (n > 0 && hidden) startFlash();
+    else apply(FLASH_A);
+
     /* 桌面版：任务栏角标 */
     try {
       if (g.ElectronBridge && g.ElectronBridge.setBadge) g.ElectronBridge.setBadge(n);
     } catch (e) { }
   }
+
+  function apply(t) {
+    if (t === lastTitle) return;
+    try { g.document.title = t; } catch (e) { }
+    lastTitle = t;
+  }
+
+  /* @我 的优先级高于普通未读 —— 主流聊天工具都是这么分级的 */
+  function setFlashText(txt) { FLASH_B = txt || ''; }
+
+  function startFlash() {
+    if (flashTimer) return;
+    if (!FLASH_B) FLASH_B = '💬 你有新消息';
+    flashTimer = setInterval(function () {
+      flashOn = !flashOn;
+      apply(flashOn ? FLASH_B : FLASH_A);
+    }, 900);
+  }
+  function stopFlash() {
+    if (flashTimer) { clearInterval(flashTimer); flashTimer = null; }
+    flashOn = false;
+  }
+
+  /* 回到前台立刻停闪并恢复正常标题 */
+  function onFocus() { stopFlash(); apply(FLASH_A); }
 
   g.Notifier = {
     get: get, set: set, save: save,
@@ -217,7 +267,8 @@
     quiet: quiet, inQuiet: inQuiet,
     roomMuted: roomMuted, setRoomMuted: setRoomMuted,
     incoming: incoming, bindRoom: bindRoom,
-    setUnread: setUnread, isNative: isNative, isElectron: isElectron,
+    setUnread: setUnread, setBaseTitle: setBaseTitle, setFlashText: setFlashText,
+    onFocus: onFocus, isNative: isNative, isElectron: isElectron,
     set onOpen(fn) { onOpen = fn; }
   };
 })(window);

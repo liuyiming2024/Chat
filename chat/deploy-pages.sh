@@ -9,7 +9,7 @@
 set -e
 
 echo "=============================================="
-echo "  洛谷·微信聊天室 —— 一键部署到 GitHub Pages"
+echo "  聊天室 —— 一键部署到 GitHub Pages"
 echo "=============================================="
 echo
 
@@ -19,8 +19,8 @@ cd "$(dirname "$0")"
 read -r -p "① 你的 GitHub 用户名: " GH_USER
 if [ -z "$GH_USER" ]; then echo "用户名不能为空"; exit 1; fi
 
-read -r -p "② 仓库名（直接回车用 luogu-chat）: " GH_REPO
-GH_REPO=${GH_REPO:-luogu-chat}
+read -r -p "② 仓库名（直接回车用 chat）: " GH_REPO
+GH_REPO=${GH_REPO:-chat}
 
 echo
 echo "③ 推送方式："
