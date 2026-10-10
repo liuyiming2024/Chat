@@ -1004,16 +1004,20 @@
       }
       box.appendChild(cachedMsgNode(m, r));
     });
-    /* 还有更早的消息时，顶部放一个「加载更早」 */
+    /* 还有更早的消息时：
+       - 顶部放「加载更早」按钮（可点）
+       - 同时挂滚动监听，滚到顶部自动再翻一页
+       两者并存：按钮给确定性，滚动给连续性。
+       只做按钮的话，用户得反复点才能翻回很久以前。 */
     if (full.length > shown) {
       var more = elc('button', 'load-more', '▲ 加载更早的 ' + (full.length - shown) + ' 条');
       more.onclick = function () {
-        MSG_PAGE += 300;
-        renderChat();
-        var sc = $('msgScroll');
-        if (sc) sc.scrollTop = 0;
+        loadEarlier(full.length);
       };
       box.insertBefore(more, box.firstChild);
+      bindLoadEarlierOnScroll(full.length);
+    } else {
+      unbindLoadEarlierOnScroll();
     }
 
     /* 成员面板 */
@@ -1094,6 +1098,13 @@
       } else if (m.type === 'image' || m.type === 'video') {
         bubble.appendChild(mediaNode(m));
       }
+      /* 已编辑角标：不标的话，别人看到的内容和记忆里不一样却无从察觉，
+         还以为是自己的问题。 */
+      if (m.editedAt) {
+        var ed = elc('span', 'msg-edited', '已编辑');
+        ed.title = '编辑于 ' + g.UI.fmtFull(m.editedAt);
+        bubble.appendChild(ed);
+      }
     }
     body.appendChild(bubble);
 
@@ -1110,6 +1121,14 @@
           catch (e) { g.UI.toast('复制失败'); }
         };
         acts.appendChild(bCopy);
+      }
+      /* 编辑：只有本人、只有文本消息、且在时限内。
+         媒体消息不给改 —— 换附件等于换内容，性质不同于改错别字。 */
+      if (mine && m.type === 'text' && !m.deleted &&
+          g.ACL.can(me, 'msg.edit', r) && (now() - (m.ts || 0)) < EDIT_MS) {
+        var bE = elc('button', 'msg-act', '编辑');
+        bE.onclick = function () { doEdit(m, r); };
+        acts.appendChild(bE);
       }
       /* 撤回：作者本人，限时 RECALL_MS 内 */
       if (mine && g.ACL.can(me, 'msg.recall', r) && (now() - (m.ts || 0)) < RECALL_MS) {
@@ -1268,6 +1287,7 @@
   }
 
   var RECALL_MS = 5 * 60 * 1000;   /* 撤回时限：5 分钟 */
+  var EDIT_MS = 10 * 60 * 1000;    /* 编辑时限：10 分钟，比撤回宽松一点 */
 
   function doRemove(m, mode) {
     var r = findRoom(cur);
@@ -1309,6 +1329,94 @@
 
   /* 我隐藏了多少条消息（用于「恢复已删除」） */
   /* 消息摘要（进日志用，便于后台追溯被撤回/移除/Delete 的内容） */
+  /* ---------- 向前翻页（加载更早） ----------
+     注意：MSG_PAGE 是「当前渲染多少条」，不是「从服务端拉多少条」。
+     翻页只是把本地已有消息的渲染上限调大，不会重新打网络 ——
+     消息本身早就随 state_delta 增量同步下来了。 */
+  var _loadEarlierLock = false;
+  var _earlierTotal = 0;      /* 存模块级：handler 闭包里用旧值会判错 */
+  function loadEarlier(total) {
+    if (MSG_PAGE >= total) return;
+    MSG_PAGE += 300;
+    renderChat();
+    /* 关键：翻页后要保持阅读位置。
+       否则新内容插到顶部，视口被顶下去，用户会"跳"一下，
+       翻几页就彻底迷失了。 */
+    var sc = $('msgScroll');
+    if (sc) sc.scrollTop = 0;
+  }
+
+  var _scrollHandler = null;
+  function bindLoadEarlierOnScroll(total) {
+    _earlierTotal = total;
+    var sc = $('msgScroll');
+    if (!sc) return;
+    if (_scrollHandler) return;   /* 已绑定则不重复挂 */
+    _scrollHandler = function () {
+      if (_loadEarlierLock) return;
+      if (sc.scrollTop > 40) return;          // 距顶部 40px 内才触发
+      if (MSG_PAGE >= _earlierTotal) { unbindLoadEarlierOnScroll(); return; }
+      _loadEarlierLock = true;
+      /* 先记住当前内容的高度，翻页后按增量还原位置 */
+      var before = sc.scrollHeight;
+      MSG_PAGE += 300;
+      renderChat();
+      var sc2 = $('msgScroll');
+      if (sc2) sc2.scrollTop = sc2.scrollHeight - before;  // 保持视觉锚点
+      /* 节流：渲染 300 条 DOM 不小，别让它连续触发 */
+      setTimeout(function () { _loadEarlierLock = false; }, 250);
+    };
+    sc.addEventListener('scroll', _scrollHandler, { passive: true });
+  }
+
+  function unbindLoadEarlierOnScroll() {
+    var sc = $('msgScroll');
+    if (sc && _scrollHandler) { sc.removeEventListener('scroll', _scrollHandler); }
+    _scrollHandler = null;
+  }
+
+  /* ---------- 编辑已发出的消息 ----------
+     本地改完立刻同步服务端；服务端失败要回滚本地并提示，
+     否则用户以为改成功了，刷新一看还是原文。 */
+  function doEdit(m, r) {
+    var d = elc('div', '');
+    var ta = elc('textarea', 'ta');
+    ta.value = m.text || '';
+    ta.rows = 5;
+    ta.style.width = '100%';
+    d.appendChild(ta);
+    var note = elc('div', 'form-note');
+    note.textContent = '改完会显示「已编辑」，对方能看到你改过。';
+    d.appendChild(note);
+
+    g.UI.modal({
+      title: '编辑消息', body: d, okText: '保存', cancelText: '取消',
+      onOk: function (body) {
+        var v = body.querySelector('.ta').value;
+        if (!v.trim()) { g.UI.toast('内容不能为空'); return false; }
+        if (v === (m.text || '')) return true;      // 没改就不折腾
+
+        var oldText = m.text;
+        m.text = v;
+        m.editedAt = now();
+        save();
+        renderChat();
+
+        /* 在线模式同步到服务端。失败要回滚 —— 不能本地显示改了而服务端没改 */
+        if (g.Online && g.Online.isOnline && g.Online.isOnline() && g.Online.editMsg) {
+          g.Online.editMsg(m.id, v).catch(function (e) {
+            m.text = oldText;
+            m.editedAt = 0;
+            save();
+            renderChat();
+            g.UI.toast('编辑未能同步到服务器：' + (e && e.message ? e.message : '网络错误'), 'err');
+          });
+        }
+        return true;
+      }
+    });
+  }
+
   /* ================= 消息置顶 ================= */
   /* ---------- 消息渲染缓存 ---------- */
   var MSG_PAGE = 300;                 /* 当前渲染条数，点「加载更早」会增大 */

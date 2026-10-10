@@ -1549,3 +1549,11 @@ body.dark .src-item:first-of-type { color: #9dc0ff; }
 }
 .dl-prog > span { font-size: 12px; color: #888; font-variant-numeric: tabular-nums; }
 body.dark .dl-prog > span { color: #8d97a8; }
+
+/* 「已编辑」角标：跟在正文末尾，小字、弱化，不抢内容 */
+.msg-edited {
+  display: inline-block; margin-left: 6px;
+  font-size: 11px; color: #999; vertical-align: baseline;
+  cursor: help;
+}
+body.dark .msg-edited { color: #6f7889; }

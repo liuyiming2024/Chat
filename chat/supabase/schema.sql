@@ -129,6 +129,7 @@ create table if not exists messages (
   media_size bigint not null default 0,
   reply_to   uuid,
   deleted    boolean not null default false,
+  edited_at timestamptz,
   created_at timestamptz not null default now()
 );
 create index if not exists messages_room_idx on messages (room_id, created_at);
@@ -331,6 +332,7 @@ begin
         'text', m.body, 'mediaId', m.media_path, 'name', m.media_name,
         'size', m.media_size, 'replyTo', m.reply_to,
         'deleted', m.deleted,
+   'edited',  m.edited_at,
         'ts', (extract(epoch from m.created_at) * 1000)::bigint
       ) order by m.created_at) from messages m
       where m.created_at > v_from
@@ -613,6 +615,7 @@ begin
         'text', m.body, 'mediaId', m.media_path, 'name', m.media_name,
         'size', m.media_size, 'replyTo', m.reply_to,
         'deleted', m.deleted,
+   'edited',  m.edited_at,
         'ts', (extract(epoch from m.created_at) * 1000)::bigint
       ) order by m.created_at) from messages m
       where m.created_at > now() - interval '30 days'
@@ -700,6 +703,46 @@ begin
     return true;
   end if;
   raise exception '无权删除该消息';
+end;
+$$;
+
+-- 编辑已发出的消息。
+-- 只改正文，不动媒体、不动发送者、不动时间。
+-- 改完置 edited_at，前端据此显示「已编辑」角标 —— 不标的话，
+-- 别人看到的消息和记忆里不一样却无从察觉。
+create or replace function msg_edit(p_id uuid, p_body text)
+returns boolean language plpgsql volatile security definer
+set search_path = public, extensions, pg_temp as $$
+declare uid uuid; r record; len int;
+begin
+  uid := cur_user();
+  if uid is null then raise exception '请先登录'; end if;
+
+  select * into r from messages where id = p_id;
+  if not found then return false; end if;
+
+  /* 只有本人能编辑自己的消息。
+     不像删除那样给管理员开口子 —— 改别人的话属于伪造发言内容，
+     性质比删除严重得多，不该有任何角色能做。 */
+  if r.from_id <> uid then
+    raise exception '只能编辑自己的消息';
+  end if;
+
+  if r.deleted then raise exception '消息已撤回，不能编辑'; end if;
+
+  /* 长度上限，与发送侧一致。不设的话一条消息能撑爆额度。 */
+  len := coalesce(char_length(p_body), 0);
+  if len > 8000 then raise exception '消息过长（上限 8000 字）'; end if;
+
+  update messages
+     set body = p_body, edited_at = now()
+   where id = p_id;
+
+  insert into logs (who_id, act, detail)
+  values (uid, 'edit', '编辑消息 ' || p_id);
+
+  perform nextval('state_rev');
+  return true;
 end;
 $$;
 
@@ -1389,7 +1432,7 @@ language sql immutable as $$
   select case p_role
     when 'owner' then array[
       -- owner 恒为全部，这里列出仅为与前端对齐；实际第 4 步已直接放行
-      'msg.send','msg.recall.own','msg.remove','msg.delete','msg.viewRaw','msg.pin',
+      'msg.send','msg.recall.own','msg.edit','msg.remove','msg.delete','msg.viewRaw','msg.pin',
       'media.image','media.video','media.voice','media.file',
       'room.create','room.rename','room.notice','room.desc','room.pwd',
       'room.invite','room.kick','room.grant','room.delete','room.export',
