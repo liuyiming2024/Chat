@@ -3,8 +3,8 @@
   "updated": "2026-10-10",
   "minVersion": "1.3.0",
   "latest": {
-    "version": "1.3.0",
-    "notes": "本机桥接（客户端已登录则网页免密进入）；全平台安装包（Windows / macOS / Linux / Android）。",
+    "version": "1.4.0",
+    "notes": "分块下载（Range 分片并发，单片失败只重传该片）；APK 改为自签名 release 包（3.2MB，比 debug 小）；中英双语界面。",
     "assets": {
       "win": {
         "name": "chat-win-setup.exe",
