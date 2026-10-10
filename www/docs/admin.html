@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%233b7ff2'/%3E%3Cpath d='M8 11h16M8 16h11' stroke='%23fff' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E">
+<title>管理员手册 · 使用手册</title>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="logo" href="../index.html"><span class="logo-mark">聊</span>聊天室</a>
+    <div class="nav-links">
+      <a href="../index.html" data-nav="home">首页</a>
+      <a href="../chat/index.html" data-nav="chat">聊天室</a>
+      <a href="../tieba/index.html" data-nav="tieba">贴吧</a>
+      <a href="../docs/index.html" data-nav="docs">使用手册</a>
+    </div>
+    <div class="nav-tools"><button class="icon-btn" id="btnTheme" title="切换深色 / 浅色">🌙</button></div>
+  </div>
+</nav>
+<div class="wrap">
+  <div class="doc-layout">
+    <nav class="doc-side">
+      <a href="index.html" data-doc="index">手册首页</a>
+      <a href="getting-started.html" data-doc="getting-started">新手入门</a>
+      <a href="markdown.html" data-doc="markdown">Markdown 与公式</a>
+      <a href="permissions.html" data-doc="permissions">权限与命令</a>
+      <a href="admin.html" data-doc="admin">管理员手册</a>
+      <a href="deploy.html" data-doc="deploy">部署与数据</a>
+    </nav>
+    <main class="doc-main">
+      <div class="panel">
+<h2>管理员手册</h2>
+
+<h3>一、审核注册申请</h3>
+<p>管理面板 → <b>审核</b> 页签。每条申请显示昵称、申请说明、申请时间，
+   右边一个 ✓ 一个 ✗，点一下就完成，不用进弹窗。</p>
+<ul>
+  <li><b>通过</b>：对方即可用注册时填的密码登录，全场会收到一条系统消息。</li>
+  <li><b>拒绝</b>：可填拒绝理由。选「删除申请」对方能用同一昵称重新提交；
+      选「保留为已拒绝」则不再出现在待审核列表里。对方下次登录会看到你填的理由。</li>
+</ul>
+<p>这里<b>不是实名制</b>，不强制填真实姓名。唯一的把关材料就是申请人自己写的那段说明。</p>
+
+<h3>二、消息四档处置（别搞混）</h3>
+<table>
+  <tr><th>动作</th><th>谁可以做</th><th>范围</th><th>内容</th><th>释放空间</th></tr>
+  <tr><td><b>删除</b></td><td>任何人</td><td>仅本账号隐藏</td><td>保留（别人照常看到）</td><td>否</td></tr>
+  <tr><td><b>撤回</b></td><td>作者本人，5 分钟内</td><td>全站前台隐藏</td><td>保留，后台可查</td><td>否</td></tr>
+  <tr><td><b>移除</b></td><td>管理员 / 站长</td><td>全站前台隐藏</td><td>保留，后台可查</td><td>否</td></tr>
+  <tr><td><b>Delete</b></td><td>仅站长</td><td>物理抹除</td><td>销毁</td><td><b>是</b></td></tr>
+</table>
+<div class="tip">
+  撤回和移除都<b>刻意保留原文</b>——前台显示"已撤回"或"已被管理员移除"，
+  但管理员可以点气泡上的「查看原文」追溯内容，操作日志里也有摘要。
+  只有 <b>Delete</b> 是真正的物理删除，会连同图片视频一起释放空间，不可恢复。
+</div>
+
+<h3>三、准入方式三选一</h3>
+<table>
+  <tr><th>方式</th><th>设置</th><th>适合</th></tr>
+  <tr><td>申请 + 审核</td><td>开放注册 开 · 注册审核 开</td><td>想认识的人自己申请，你把关</td></tr>
+  <tr><td>免审核</td><td>开放注册 开 · 注册审核 关</td><td>完全开放，填完即用</td></tr>
+  <tr><td>仅手动开户</td><td>开放注册 关</td><td>最严格，只能你「用户 → ＋手动开户」</td></tr>
+</table>
+<p>设置位置：管理面板 → <b>站点</b> 页签。手动开户时你填昵称和初始密码，对方直接可登录。</p>
+
+<h3>四、清理旧媒体（有安全锁）</h3>
+<p>管理面板 → 站点 → <b>清理旧媒体</b>。流程强制两步：</p>
+<ol>
+  <li>先点「第一步：导出 JSON 备份」下载备份文件；</li>
+  <li>没备份就点「确认清理」会被拦下并提示；备份完成后才允许清理。</li>
+</ol>
+<p>清理只删图片视频等媒体，<b>消息文字本身保留</b>并标注"媒体已清理"。可选 7 / 30 / 90 天前。</p>
+
+<h3>五、其他管理操作</h3>
+<table>
+  <tr><th>操作</th><th>位置</th></tr>
+  <tr><td>生成邀请口令（可设有效期与次数）</td><td>群菜单 → 生成邀请口令</td></tr>
+  <tr><td>导出全站数据 / 导入</td><td>站点 → 导出 JSON / 导入 JSON</td></tr>
+  <tr><td>导出聊天记录（md / txt）</td><td>站点 → 导出聊天记录</td></tr>
+  <tr><td>查看存储用量</td><td>站点 → 存储用量</td></tr>
+  <tr><td>日志筛选（按人 / 类型 / 关键词）</td><td>管理面板 → 日志</td></tr>
+  <tr><td>恢复自己删掉的消息</td><td>站点 → 恢复已删除</td></tr>
+  <tr><td>重置站点</td><td>站点 → 重置站点</td></tr>
+</table>
+
+<h3>六、备份提醒</h3>
+<div class="tip warn">
+  管理员登录后，若距上次备份超过 7 天会收到提示。
+  导出 JSON 后会自动记录备份时间。建议定期导出一份留底——
+  聊天数据只存在各人浏览器里，清了浏览器就没了。
+</div>
+      </div>
+    </main>
+  </div>
+</div>
+<div class="foot"><div>使用手册 · <a href="../index.html">返回首页</a></div></div>
+<script src="../assets/site.js"></script>
+<script>
+(function () {
+  var m = /\/([a-z-]+)\.html$/.exec(location.pathname);
+  var k = m ? m[1] : 'index';
+  var links = document.querySelectorAll('.doc-side a');
+  for (var i = 0; i < links.length; i++) {
+    if (links[i].getAttribute('data-doc') === k) links[i].classList.add('on');
+  }
+})();
+</script>
+</body>
+</html>

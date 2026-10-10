@@ -11,12 +11,9 @@
     "appId": "io.github.liuyiming2024.chat",
     "productName": "聊天室",
     "files": [
-      "index.html",
-      "assets/**",
-      "chat/**",
-      "tieba/**",
-      "docs/**",
-      "electron/**"
+      "www/**",
+      "electron/**",
+      "package.json"
     ],
     "win": {
       "target": [

@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%233b7ff2'/%3E%3Cpath d='M8 11h16M8 16h11' stroke='%23fff' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E">
+<title>Markdown 与公式 · 使用手册</title>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="logo" href="../index.html"><span class="logo-mark">聊</span>聊天室</a>
+    <div class="nav-links">
+      <a href="../index.html" data-nav="home">首页</a>
+      <a href="../chat/index.html" data-nav="chat">聊天室</a>
+      <a href="../tieba/index.html" data-nav="tieba">贴吧</a>
+      <a href="../docs/index.html" data-nav="docs">使用手册</a>
+    </div>
+    <div class="nav-tools"><button class="icon-btn" id="btnTheme" title="切换深色 / 浅色">🌙</button></div>
+  </div>
+</nav>
+<div class="wrap">
+  <div class="doc-layout">
+    <nav class="doc-side">
+      <a href="index.html" data-doc="index">手册首页</a>
+      <a href="getting-started.html" data-doc="getting-started">新手入门</a>
+      <a href="markdown.html" data-doc="markdown">Markdown 与公式</a>
+      <a href="permissions.html" data-doc="permissions">权限与命令</a>
+      <a href="admin.html" data-doc="admin">管理员手册</a>
+      <a href="deploy.html" data-doc="deploy">部署与数据</a>
+    </nav>
+    <main class="doc-main">
+      <div class="panel">
+<h2>Markdown 与公式</h2>
+<p>输入框里直接写 Markdown 语法，发送后自动渲染。公式用 <code>$</code> 包裹——
+   行内一个 <code>$</code>，块级两个 <code>$$</code>。</p>
+
+<h3>一、Markdown 语法</h3>
+<table>
+  <tr><th>效果</th><th>写法</th></tr>
+  <tr><td><b>粗体</b></td><td><code>**粗体**</code></td></tr>
+  <tr><td><i>斜体</i></td><td><code>*斜体*</code></td></tr>
+  <tr><td><s>删除线</s></td><td><code>~~删除线~~</code></td></tr>
+  <tr><td>行内代码</td><td><code>`行内代码`</code></td></tr>
+  <tr><td>代码块</td><td><code>```cpp</code> 开头，<code>```</code> 结尾</td></tr>
+  <tr><td>引用</td><td><code>&gt; 引用内容</code></td></tr>
+  <tr><td>列表</td><td><code>- 项目</code> 或 <code>1. 项目</code></td></tr>
+  <tr><td>链接</td><td><code>[文字](https://example.com)</code></td></tr>
+  <tr><td>表格</td><td><code>|列1|列2|</code> 加分隔行 <code>|---|---|</code></td></tr>
+</table>
+
+<h4>代码块示例</h4>
+<pre><code>```cpp
+#include &lt;iostream&gt;
+int main() {
+    std::cout &lt;&lt; "Hello" &lt;&lt; std::endl;
+    return 0;
+}
+```</code></pre>
+<p>代码块会按语言着色（C++ / Python / JavaScript 等），右上角有「复制」按钮。</p>
+
+<h3>二、LaTeX 公式</h3>
+<table>
+  <tr><th>类型</th><th>写法</th><th>显示</th></tr>
+  <tr><td>行内</td><td><code>$x^2+y^2=z^2$</code></td><td>嵌在文字中间</td></tr>
+  <tr><td>块级</td><td><code>$$\\frac{-b\\pm\\sqrt{b^2-4ac}}{2a}$$</code></td><td>独占一行居中</td></tr>
+</table>
+
+<h4>常用符号</h4>
+<table>
+  <tr><th>含义</th><th>写法</th><th>含义</th><th>写法</th></tr>
+  <tr><td>分数</td><td><code>\frac{a}{b}</code></td><td>根号</td><td><code>\sqrt{x}</code></td></tr>
+  <tr><td>上下标</td><td><code>x^{2}_{1}</code></td><td>求和</td><td><code>\sum_{i=1}^{n}</code></td></tr>
+  <tr><td>积分</td><td><code>\int_{0}^{1}</code></td><td>极限</td><td><code>\lim_{x \to 0}</code></td></tr>
+  <tr><td>希腊字母</td><td><code>\alpha \beta \pi</code></td><td>不等号</td><td><code>\le \ge \ne</code></td></tr>
+  <tr><td>乘除</td><td><code>\times \div</code></td><td>正负</td><td><code>\pm</code></td></tr>
+  <tr><td>集合与无穷</td><td><code>\in \infty</code></td><td>向量</td><td><code>\vec{a}</code></td></tr>
+</table>
+
+<h4>矩阵与分段函数</h4>
+<pre><code>$$
+\begin{pmatrix}a&amp;b\\c&amp;d\end{pmatrix}
+$$</code></pre>
+<pre><code>$$
+f(x)=\begin{cases}1&amp;x&gt;0\\0&amp;x\le 0\end{cases}
+$$</code></pre>
+
+<div class="tip">
+  <b>专业模式下</b>工具条上有个「√」按钮，点开是公式符号面板，
+  点一下就把符号插到光标处，不用手敲反斜杠。
+  写 <code>$</code> 或 <code>$$</code> 也可以用工具条按钮自动生成包裹。
+</div>
+
+<h3>三、极简模式的区别</h3>
+<p>极简模式下语法工具条和「?」帮助按钮会隐藏，界面更干净，
+   但<b>公式照常渲染</b>——只是不显示那些辅助入口而已。
+   你照常写 <code>$...$</code> 就行。</p>
+
+<h3>四、转义</h3>
+<p>如果某段文字里出现了会被误判的符号（比如想原样显示 <code>$5 和 $10</code>），
+   可以在 <code>$</code> 前加反斜杠：<code>\$5 和 \$10</code>。</p>
+      </div>
+    </main>
+  </div>
+</div>
+<div class="foot"><div>使用手册 · <a href="../index.html">返回首页</a></div></div>
+<script src="../assets/site.js"></script>
+<script>
+(function () {
+  var m = /\/([a-z-]+)\.html$/.exec(location.pathname);
+  var k = m ? m[1] : 'index';
+  var links = document.querySelectorAll('.doc-side a');
+  for (var i = 0; i < links.length; i++) {
+    if (links[i].getAttribute('data-doc') === k) links[i].classList.add('on');
+  }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>聊天室</title>
+<!-- 原生壳的入口页：直接进聊天室，而不是先停在看板页。
+     用 meta refresh 而不是 location.replace —— 后者在部分 WebView 里
+     会在 file:// 阶段就触发，导致相对路径错乱。 -->
+<meta http-equiv="refresh" content="0;url=./chat/index.html">
+</head>
+<body style="font:14px system-ui;padding:24px">
+正在进入聊天室… 若无反应请 <a href="./chat/index.html">点这里</a>。
+</body>
+</html>

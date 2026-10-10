@@ -1,7 +1,7 @@
 {
   "appId": "io.github.liuyiming2024.chat",
   "appName": "聊天室",
-  "webDir": ".",
+  "webDir": "www",
   "server": {
     "androidScheme": "https",
     "cleartext": false

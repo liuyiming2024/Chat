@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%233b7ff2'/%3E%3Cpath d='M8 11h16M8 16h11' stroke='%23fff' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E">
+<title>部署与数据 · 使用手册</title>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="logo" href="../index.html"><span class="logo-mark">聊</span>聊天室</a>
+    <div class="nav-links">
+      <a href="../index.html" data-nav="home">首页</a>
+      <a href="../chat/index.html" data-nav="chat">聊天室</a>
+      <a href="../tieba/index.html" data-nav="tieba">贴吧</a>
+      <a href="../docs/index.html" data-nav="docs">使用手册</a>
+    </div>
+    <div class="nav-tools"><button class="icon-btn" id="btnTheme" title="切换深色 / 浅色">🌙</button></div>
+  </div>
+</nav>
+<div class="wrap">
+  <div class="doc-layout">
+    <nav class="doc-side">
+      <a href="index.html" data-doc="index">手册首页</a>
+      <a href="getting-started.html" data-doc="getting-started">新手入门</a>
+      <a href="markdown.html" data-doc="markdown">Markdown 与公式</a>
+      <a href="permissions.html" data-doc="permissions">权限与命令</a>
+      <a href="admin.html" data-doc="admin">管理员手册</a>
+      <a href="deploy.html" data-doc="deploy">部署与数据</a>
+    </nav>
+    <main class="doc-main">
+      <div class="panel">
+<h2>部署与数据</h2>
+
+<h3>一、当前架构</h3>
+<p>全站是纯前端静态站点，部署在 GitHub Pages 免费版，网址：</p>
+<pre><code>https://liuyiming2024.github.io/Chat/</code></pre>
+<ul>
+  <li><b>零依赖</b>：不引入任何第三方库、CDN、外部字体。</li>
+  <li><b>无版权争议</b>：Markdown 解析、LaTeX 渲染、SHA-256、媒体压缩、代码高亮均为独立手写实现，MIT 协议。</li>
+  <li><b>本地与线上一致</b>：不存在"本地模式 / 线上模式"的代码分支，三种打开方式跑的是同一份代码。</li>
+</ul>
+
+<h3>二、目录结构</h3>
+<pre><code>index.html            首页
+assets/site.css       整站共用样式
+assets/site.js        整站共用脚本（主题、导航、后端配置）
+chat/                 聊天室（index.html + css + js）
+tieba/                贴吧
+docs/                 使用手册（本页所在）
+chat/supabase/        数据库建表脚本
+.nojekyll             让 Pages 原样发布</code></pre>
+
+<h3>三、数据存在哪里</h3>
+<table>
+  <tr><th>内容</th><th>存在哪</th><th>换设备还能看到吗</th></tr>
+  <tr><td>聊天记录、账号、房间</td><td>各人浏览器的 localStorage</td><td><b>不能</b></td></tr>
+  <tr><td>图片、视频、语音</td><td>各人浏览器的 IndexedDB</td><td><b>不能</b></td></tr>
+  <tr><td>贴吧帖子</td><td>数据库（配置后）</td><td>能</td></tr>
+</table>
+
+<div class="tip warn">
+  <b>重要：</b>重新上传代码或回滚版本，<b>清不掉各人浏览器里的数据</b>。
+  数据按域名存储，不按路径，所以把聊天室从 <code>/Chat/</code> 搬到 <code>/Chat/chat/</code>
+  不会丢数据。要清空只能本人清浏览器站点数据，或站长用「管理面板 → 站点 → 重置站点」。
+</div>
+
+<h3>四、跨设备搬运聊天数据</h3>
+<p>管理面板 → 站点 → <b>导出 JSON</b>，在另一台设备上 <b>导入 JSON</b>。
+   导入走的是与同步完全相同的合并逻辑（按 id 去重、按时间取新、删除不可逆），
+   本地与上线版操作一致。</p>
+
+<h3>五、接数据库后端（可选）</h3>
+<p>想让聊天记录和贴吧跨设备可见，需要接数据库。脚本都已备好，步骤：</p>
+<ol>
+  <li>到数据库服务商创建项目，拿到 <b>Project URL</b> 和 <b>publishable key</b>。
+      <b>只取 publishable，不要 secret key</b>——后者权限极高，放进网页等于裸奔。</li>
+  <li>在 SQL Editor 里执行 <code>chat/supabase/schema.sql</code>（聊天室，8 表 + 33 个函数）
+      和 <code>chat/supabase/forum.sql</code>（贴吧，2 表 + 4 个函数）。</li>
+  <li>贴吧页面点「后端设置」填入 URL 和 key，立即生效，配置存在 localStorage。</li>
+</ol>
+
+<div class="tip err">
+  <b>免费项目的已知问题：</b>连续 7 天没有数据库活动会被自动暂停，
+  全站返回 540，数据不会丢但需要手动恢复。
+  解决办法是配置定时保活（每 3 天请求一次数据库）。
+  注意保活脚本依赖仓库的定时任务，若仓库长期无提交，定时任务也可能被自动禁用。
+</div>
+
+<h3>六、本地运行</h3>
+<pre><code># 方式 1：直接双击（最快，但部分浏览器会限制 IndexedDB 与录音）
+双击 chat/index.html
+
+# 方式 2：起本地服务（推荐，功能完整）
+python3 chat/server.py --port 8000
+# 浏览器打开 http://localhost:8000/</code></pre>
+<p><code>server.py</code> 只用 Python 标准库，只是把静态文件以 http 方式送出去，
+   不存数据、不做同步。</p>
+
+<h3>七、可选：C++ / WASM 加速</h3>
+<pre><code>g++ -O2 -std=c++17 chat/native/accel.cpp -o accel &amp;&amp; ./accel</code></pre>
+<p>用 C++ 实现 SHA-256 加速密码哈希。完全可选，加载失败会自动回退到纯 JS 实现，
+   不影响任何功能。</p>
+
+<h3>八、浏览器要求</h3>
+<p>Chrome / Edge / Firefox / Safari 近两年版本均可。
+   file:// 直接打开时部分浏览器会限制 IndexedDB 与录音，
+   此时媒体存内存、WASM 自动跳过，聊天功能照常。</p>
+      </div>
+    </main>
+  </div>
+</div>
+<div class="foot"><div>使用手册 · <a href="../index.html">返回首页</a></div></div>
+<script src="../assets/site.js"></script>
+<script>
+(function () {
+  var m = /\/([a-z-]+)\.html$/.exec(location.pathname);
+  var k = m ? m[1] : 'index';
+  var links = document.querySelectorAll('.doc-side a');
+  for (var i = 0; i < links.length; i++) {
+    if (links[i].getAttribute('data-doc') === k) links[i].classList.add('on');
+  }
+})();
+</script>
+</body>
+</html>
