@@ -246,7 +246,38 @@
       });
   }
 
+  function fmtSize(n) {
+    if (!n) return '';
+    if (n > 1048576) return (n / 1048576).toFixed(1) + ' MB';
+    if (n > 1024) return (n / 1024).toFixed(0) + ' KB';
+    return n + ' B';
+  }
+
+  /* 给一组源测速并排好序，返回最快的那个 + 全部结果（界面上要显示速度对比）。
+     拿不到速度信息也不影响 —— 我们要的是"谁先响应"。 */
+  function bestSource(sources) {
+    var urls = (sources || []).map(function (s) {
+      return typeof s === 'string' ? s : (s.url || s);
+    });
+    if (!urls.length) return Promise.resolve(null);
+    return Promise.all(urls.map(function (u) {
+      var t0 = Date.now();
+      var ctl; if (typeof AbortController !== 'undefined') ctl = new AbortController();
+      var timer = setTimeout(function () { try { ctl && ctl.abort(); } catch (e) { } }, 6000);
+      return fetch(u, { method: 'GET', headers: { Range: 'bytes=0-1024' }, signal: ctl && ctl.signal })
+        .then(function (r) { clearTimeout(timer); if (!r.ok && r.status !== 206) throw 0;
+          return { url: u, ms: Date.now() - t0 }; })
+        .catch(function () { clearTimeout(timer); return null; });
+    })).then(function (rs) {
+      var ok2 = rs.filter(Boolean).sort(function (a, b) { return a.ms - b.ms; });
+      if (!ok2.length) return null;
+      return { url: ok2[0].url, ranked: ok2 };
+    });
+  }
+
   g.Updater = {
+    fmtSize: fmtSize,
+    bestSource: bestSource,
     downloadChunked: downloadChunked,
     probe: probe,
     check: check,

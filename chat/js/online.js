@@ -193,17 +193,43 @@
 
   /* 轮询：只比序号，变了才拉全量。
      必须用 state_peek 而不是 state_seq —— 后者是 nextval，会自己把序号改掉。 */
+  /* 后台降频：页面不可见时把轮询拉长到 30 秒。
+     手机上一晚上挂着不动，4 秒一次就是两万多次请求 ——
+     纯粹烧额度，用户什么也没得到。回到前台立刻恢复。 */
+  var HIDDEN_MS = 30000;
+  var visibleMs = 4000;
+  var hidden = false;
+
   function startPoll(intervalMs) {
     stopPoll();
-    intervalMs = intervalMs || 4000;
-    timer = setInterval(function () {
-      if (!online || !g.SB || !g.SB.token()) return;
-      g.SB.rpc('state_peek', {}).then(function (n) {
-        n = Number(n);
-        if (seq === null) { seq = n; return pull(); }   /* 首次建立基线 */
-        if (n !== seq) { seq = n; return pullDelta(); } /* 之后只拉增量 */
-      }).catch(function () { /* 网络抖动忽略，下次再来 */ });
-    }, intervalMs);
+    visibleMs = intervalMs || 4000;
+    bindVisibility();
+    timer = setInterval(tick, curInterval());
+  }
+
+  function curInterval() { return hidden ? HIDDEN_MS : visibleMs; }
+
+  function tick() {
+    if (!online || !g.SB || !g.SB.token()) return;
+    g.SB.rpc('state_peek', {}).then(function (n) {
+      n = Number(n);
+      if (seq === null) { seq = n; return pull(); }   /* 首次建立基线 */
+      if (n !== seq) { seq = n; return pullDelta(); } /* 之后只拉增量 */
+    }).catch(function () { /* 网络抖动忽略，下次再来 */ });
+  }
+
+  var visBound = false;
+  function bindVisibility() {
+    if (visBound || typeof document === 'undefined') return;
+    visBound = true;
+    document.addEventListener('visibilitychange', function () {
+      var nowHidden = !!document.hidden;
+      if (nowHidden === hidden) return;
+      hidden = nowHidden;
+      /* 回到前台：立刻拉一次，别让用户等一个周期才看到新消息 */
+      if (!hidden && online) { tick(); }
+      if (timer) { clearInterval(timer); timer = setInterval(tick, curInterval()); }
+    });
   }
 
   function stopPoll() { if (timer) { clearInterval(timer); timer = null; } }

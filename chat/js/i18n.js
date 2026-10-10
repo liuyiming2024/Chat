@@ -37,6 +37,7 @@
       'retry': '重试',
       'copied': '已复制',
       'unknown': '未知',
+      'retry': '重试',
 
       /* ---- 导航 ---- */
       'nav.home': '首页',
@@ -135,6 +136,7 @@
       'retry': 'Retry',
       'copied': 'Copied',
       'unknown': 'Unknown',
+      'retry': 'Retry',
 
       /* ---- Nav ---- */
       'nav.home': 'Home',
@@ -283,4 +285,6 @@
     t: t, set: set, get: get, apply: apply, list: list,
     SUPPORTED: SUPPORTED
   };
+  /* 全局简写 t(...)。app.js 里大量直接调用，没有它就全是 ReferenceError。 */
+  g.t = t;
 })(window);
