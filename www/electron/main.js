@@ -28,11 +28,9 @@ function createWindow() {
     }
   });
 
-  /* 打包后加载 www/ 副本；开发时直接加载仓库根目录的页面。
-     www/index.html 会重定向到 chat/index.html，所以装成应用打开就是聊天室。 */
   const entry = app.isPackaged
-    ? path.join(__dirname, '..', 'www', 'index.html')
-    : path.join(__dirname, '..', 'www', 'index.html');
+    ? path.join(__dirname, '..', 'index.html')
+    : path.join(__dirname, '..', '..', 'index.html');
 
   win.loadFile(entry);
 

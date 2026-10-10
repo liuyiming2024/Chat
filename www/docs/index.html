@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%233b7ff2'/%3E%3Cpath d='M8 11h16M8 16h11' stroke='%23fff' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E">
+<title>使用手册 · 使用手册</title>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="logo" href="../index.html"><span class="logo-mark">聊</span>聊天室</a>
+    <div class="nav-links">
+      <a href="../index.html" data-nav="home">首页</a>
+      <a href="../chat/index.html" data-nav="chat">聊天室</a>
+      <a href="../tieba/index.html" data-nav="tieba">贴吧</a>
+      <a href="../docs/index.html" data-nav="docs">使用手册</a>
+    </div>
+    <div class="nav-tools"><button class="icon-btn" id="btnTheme" title="切换深色 / 浅色">🌙</button></div>
+  </div>
+</nav>
+<div class="wrap">
+  <div class="doc-layout">
+    <nav class="doc-side">
+      <a href="index.html" data-doc="index">手册首页</a>
+      <a href="getting-started.html" data-doc="getting-started">新手入门</a>
+      <a href="markdown.html" data-doc="markdown">Markdown 与公式</a>
+      <a href="permissions.html" data-doc="permissions">权限与命令</a>
+      <a href="admin.html" data-doc="admin">管理员手册</a>
+      <a href="deploy.html" data-doc="deploy">部署与数据</a>
+    </nav>
+    <main class="doc-main">
+      <div class="panel">
+<h2>使用手册</h2>
+<p>这里汇总了聊天室的全部使用说明。按你的身份挑着看就行，不必通读——
+   普通成员看前两册，管理员再加看后两册。</p>
+
+<div class="grid" style="margin-top:16px">
+  <a class="card" href="getting-started.html" style="color:inherit">
+    <span class="card-icon">🚀</span>
+    <h3>新手入门</h3>
+    <p>三步初始化、发消息、建群、发图发语音，面向所有成员。</p>
+  </a>
+  <a class="card" href="markdown.html" style="color:inherit">
+    <span class="card-icon">✍️</span>
+    <h3>Markdown 与公式</h3>
+    <p>粗体、代码块、表格怎么写；行内与块级 LaTeX 公式的语法。</p>
+  </a>
+  <a class="card" href="permissions.html" style="color:inherit">
+    <span class="card-icon">🔑</span>
+    <h3>权限与命令</h3>
+    <p>38 项权限逐项解释、三态怎么设，以及全部斜杠命令一览。</p>
+  </a>
+  <a class="card" href="admin.html" style="color:inherit">
+    <span class="card-icon">🛠</span>
+    <h3>管理员手册</h3>
+    <p>审核申请、消息四档处置、清理媒体、导出备份、邀请口令。</p>
+  </a>
+  <a class="card" href="deploy.html" style="color:inherit">
+    <span class="card-icon">📦</span>
+    <h3>部署与数据</h3>
+    <p>如何上线、如何备份导入、数据库后端怎么配、跨设备同步方案。</p>
+  </a>
+</div>
+
+<h3>最快的上手路径</h3>
+<ol>
+  <li>打开 <a href="../chat/index.html">聊天室</a>，设保护密码 → 建站长账号 → 进入。</li>
+  <li>再开一个浏览器标签页（或换一个浏览器），注册第二个账号，就能自测私聊。</li>
+  <li>想写公式，看 <a href="markdown.html">Markdown 与公式</a>。</li>
+  <li>要管人、管群，看 <a href="admin.html">管理员手册</a>。</li>
+</ol>
+
+<div class="tip">
+  <b>自测技巧：</b>同一浏览器开两个标签页，注册两个账号，即可实时私聊、建群、
+  体验管理员权限。这是同源广播的效果，本地与上线版都支持。
+</div>
+      </div>
+    </main>
+  </div>
+</div>
+<div class="foot"><div>使用手册 · <a href="../index.html">返回首页</a></div></div>
+<script src="../assets/site.js"></script>
+<script>
+(function () {
+  var m = /\/([a-z-]+)\.html$/.exec(location.pathname);
+  var k = m ? m[1] : 'index';
+  var links = document.querySelectorAll('.doc-side a');
+  for (var i = 0; i < links.length; i++) {
+    if (links[i].getAttribute('data-doc') === k) links[i].classList.add('on');
+  }
+})();
+</script>
+</body>
+</html>
