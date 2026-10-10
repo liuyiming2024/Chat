@@ -33,7 +33,14 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
-      - uses: android-actions/setup-android@v3
+      # 不用 setup-android：GitHub 的 ubuntu 镜像自带 Android SDK，
+      # 这个 action 在本仓库会直接失败（已知会打断构建）。
+      - name: 指定 Android SDK 路径
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME" || true
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+          ls "$ANDROID_HOME" || echo "镜像未预装 SDK，将依赖 gradle 自动下载"
 
       - name: 装 Capacitor 并添加安卓平台
         run: |
