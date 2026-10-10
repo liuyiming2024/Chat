@@ -81,33 +81,54 @@ jobs:
       - uses: actions/download-artifact@v5
         with: { path: out, merge-multiple: true }
 
+      # 文件名一律用英文：中文名在上传资产这一步容易出编码问题，
+      # 而失败信息又不明确，排查成本太高。
       - name: 整理文件名
         run: |
           mkdir -p pkg
-          find out -name '*.apk' -exec cp {} pkg/聊天室-安卓.apk \;
-          find out -name '*Setup*.exe' -exec cp {} pkg/聊天室-安装版.exe \;
-          find out -name '*便携版*.exe' -exec cp {} pkg/聊天室-便携版.exe \;
+          find out -name '*.apk'      -exec cp {} pkg/chat-android.apk   \;
+          find out -name '*Setup*.exe' -exec cp {} pkg/chat-setup.exe    \;
+          find out -name '*portable*.exe' -exec cp {} pkg/chat-portable.exe \;
+          find out -name '*.exe' | grep -v Setup | grep -v portable | head -1 | xargs -r -I{} cp {} pkg/chat-portable.exe
           ls -la pkg
 
+      # 用 API 直接发，不走第三方 action：
+      # 出错时能看到 GitHub 返回的正文，而不是只有一个红叉。
       - name: 发 Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.event.inputs.tag }}
-          name: 聊天室 ${{ github.event.inputs.tag }}
-          body: |
-            ## 下载
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.inputs.tag }}
+        run: |
+          set -e
+          API=https://api.github.com/repos/${{ github.repository }}
+          AUTH="Authorization: Bearer $GH_TOKEN"
+          {
+            echo "== 创建 Release =="
+            REL=$(curl -s -X POST "$API/releases" -H "$AUTH" \
+              -H "Accept: application/vnd.github+json" \
+              -d "{\"tag_name\":\"$TAG\",\"name\":\"聊天室 $TAG\",\"body\":\"网页版 / Windows / Android 三端安装包。\\n\\n未签名：安装时点「仍要运行」或允许「未知来源」即可，不影响功能。\"}")
+            echo "$REL" | head -c 400
+            UP=$(echo "$REL" | python3 -c "import sys,json;print(json.load(sys.stdin).get('upload_url','').split('{')[0])")
+            echo ""
+            echo "upload_url: $UP"
+            for f in pkg/*; do
+              N=$(basename "$f")
+              echo "-- 上传 $N --"
+              curl -s -X POST "$UP?name=$N&label=$N" \
+                -H "$AUTH" -H "Content-Type: application/octet-stream" \
+                --data-binary @"$f" | head -c 300
+              echo ""
+            done
+          } 2>&1 | tee release-log.txt
 
-            | 文件 | 平台 | 说明 |
-            |---|---|---|
-            | 聊天室-安卓.apk | Android | 未签名，安装需允许「未知来源」 |
-            | 聊天室-安装版.exe | Windows | 未签名，SmartScreen 会拦截，点「仍要运行」 |
-            | 聊天室-便携版.exe | Windows | 不用安装，双击即用 |
-
-            **未签名是刻意的**：签名证书需要付费。安装时的安全提示点「仍要运行」即可，
-            不影响功能。
-
-            ## 更新内容
-
-            - 消息通知与免打扰（标题栏闪烁、未读计数、@我 提醒、按时段/按会话静音）
-            - 修复有人 @ 我时提醒完全无反应的问题
-          files: pkg/*
+      - name: 日志写回
+        if: always()
+        run: |
+          git config user.name  "diag-bot"
+          git config user.email "diag@local"
+          git checkout --orphan diag-release 2>/dev/null || git checkout diag-release
+          git rm -rf --cached . >/dev/null 2>&1 || true
+          [ -f release-log.txt ] || echo "(无输出)" > release-log.txt
+          git add -f release-log.txt
+          git commit -m "发布日志 $(date -u +%Y%m%d-%H%M%S)" || echo "无变化"
+          git push -f origin diag-release || echo "推送失败" 
