@@ -2478,6 +2478,77 @@
     ob.appendChild(tb);
   }
 
+  /* ---------- 检查更新 ----------
+     清单在线维护，地址是多源的；下载源按实测速度排序。
+     桌面版下载完打开所在文件夹让用户自己装 —— 不代他执行安装。 */
+  function checkUpdateUI() {
+    var d = elc('div', '');
+    d.innerHTML = '<div class="form-tip">' + t('update.checking') + '</div>';
+    var mo = g.UI.modal({ title: t('update.checking'), body: d, okText: null, cancelText: t('common.close') });
+
+    g.Updater.check().then(function (r) {
+      if (!r || !r.sources || !r.sources.length) {
+        d.innerHTML = '<div class="form-tip">' + t('update.failed') + '：' +
+          g.UI.esc((r && r.reason) || t('common.unknownReason')) + '</div>';
+        mo.setTitle(t('update.failed'));
+        return;
+      }
+      if (!r.hasUpdate) {
+        d.innerHTML = '<div class="form-tip">' + t('update.upToDate') +
+          '（' + g.UI.esc(r.version) + '）</div>';
+        mo.setTitle(t('update.upToDate'));
+        return;
+      }
+
+      mo.setTitle(t('update.available'));
+      d.innerHTML =
+        '<div class="form-tip">' + t('update.latest') + '：<b>' + g.UI.esc(r.version) + '</b>' +
+        (r.current ? '　' + t('update.current') + '：' + g.UI.esc(r.current) : '') + '</div>' +
+        '<div class="form-note">' + g.UI.esc(r.file) + ' · ' + g.Updater.fmtSize(r.size) + '</div>' +
+        '<div id="srcBox" class="form-note">' + t('update.speed') + '…</div>';
+
+      /* 测速：并发探测所有源，按速度排序，选最快的 */
+      g.Updater.bestSource(r.sources).then(function (best) {
+        var box = d.querySelector('#srcBox');
+        if (!box) return;
+        if (!best) {
+          box.textContent = t('update.failed') + '：' + t('common.networkError');
+          return;
+        }
+        var list = best.ranked.map(function (x, i) {
+          var nm = best.ranked.length && r.sources.filter(function (s2) { return s2.url === x.url; })[0];
+          return '<div class="src-item">' + (i === 0 ? '▶ ' : '　') +
+            g.UI.esc(nm ? nm.name : x.url) + ' — ' + Math.round(x.speed / 1024) + ' KB/s</div>';
+        }).join('');
+        box.innerHTML = '<div class="field-label">' + t('update.source') + '</div>' + list;
+
+        var btn = elc('button', 'btn primary block', t('update.download'));
+        btn.type = 'button';
+        btn.onclick = function () {
+          btn.disabled = true;
+          btn.textContent = t('update.downloading');
+          var u = best.source.url;
+          if (g.ElectronBridge && g.ElectronBridge.downloadUpdate) {
+            g.ElectronBridge.downloadUpdate(u, r.file).then(function (res) {
+              if (res && res.ok) { g.UI.toast('已下载，请在弹出的文件夹里安装'); mo.close(); }
+              else { btn.disabled = false; btn.textContent = t('common.retry') || t('update.retry');
+                     g.UI.toast((res && res.err) || t('update.failed'), 'err'); }
+            });
+          } else {
+            /* 网页版：直接给文件直链，不跳网页 */
+            window.open(u, '_blank');
+            mo.close();
+          }
+        };
+        d.appendChild(btn);
+      });
+    }).catch(function (e) {
+      d.innerHTML = '<div class="form-tip">' + t('update.failed') + '：' +
+        g.UI.esc(e && e.message || t('common.unknownReason')) + '</div>';
+      mo.setTitle(t('update.failed'));
+    });
+  }
+
   /* ================= 用户卡 / 资料 ================= */
   function userCard(u, r) {
     var d = elc('div', '');
@@ -2927,6 +2998,36 @@
     nBtn.onclick = function () { notifySettings(); };
     nBar.appendChild(nBtn);
     d.appendChild(nBar);
+
+    /* 语言切换 */
+    var lBar = elc('div', 'pref-row');
+    lBar.innerHTML = '<span>' + t('lang.title') + '</span>';
+    var lSel = elc('select', 'sel');
+    lSel.id = 'pLang';
+    [['zh', t('lang.zh')], ['en', t('lang.en')]].forEach(function (o) {
+      var op = document.createElement('option');
+      op.value = o[0]; op.textContent = o[1];
+      if (g.I18N.cur() === o[0]) op.selected = true;
+      lSel.appendChild(op);
+    });
+    lSel.onchange = function () {
+      g.I18N.load(lSel.value);
+      g.UI.toast(lSel.value === 'zh' ? '已切换为简体中文' : 'Switched to English');
+    };
+    lBar.appendChild(lSel);
+    d.appendChild(lBar);
+
+    /* 检查更新。桌面版/安卓版才有意义 —— 网页版本身就是最新的，
+       但入口保留，用户也能从这里拿到客户端下载地址。 */
+    var uBar = elc('div', 'pref-row');
+    var ver = g.Updater && g.Updater.currentVersion();
+    uBar.innerHTML = '<span>' + t('update.current') + '：' + (ver || '—') + '</span>';
+    var uBtn = elc('button', 'btn ghost sm', t('update.checking'));
+    uBtn.type = 'button';
+    uBtn.textContent = '检查更新';
+    uBtn.onclick = function () { checkUpdateUI(); };
+    uBar.appendChild(uBtn);
+    d.appendChild(uBar);
 
     g.UI.modal({
       title: '我的资料', body: d, okText: '保存', onOk: function (body) {
@@ -3694,6 +3795,8 @@
   }
 
   function boot() {
+    /* 多语言：先按"用户选过 → 浏览器语言 → 中文"定语种，再渲染界面 */
+    try { if (g.I18N) g.I18N.load(g.I18N.detect()); } catch (e) { }
     initTheme();
     /* 通知模块需要知道"当前在看哪个房间"，才能判断该不该弹 */
     if (g.Notifier) {

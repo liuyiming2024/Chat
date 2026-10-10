@@ -1,0 +1,27 @@
+
+// ---- 签名配置（CI 注入；本地没有 keystore.properties 时自动跳过）----
+def ksFile = rootProject.file('keystore.properties')
+def ksProps = new Properties()
+if (ksFile.exists()) { ksProps.load(new FileInputStream(ksFile)) }
+
+android {
+    signingConfigs {
+        release {
+            if (ksFile.exists()) {
+                storeFile file(ksProps['storeFile'])
+                storePassword ksProps['storePassword']
+                keyAlias ksProps['keyAlias']
+                keyPassword ksProps['keyPassword']
+                // v1(JAR) 必须开：只开 v2 的话 Android 6 及以下装不上
+                v1SigningEnabled true
+                v2SigningEnabled true
+            }
+        }
+    }
+    buildTypes {
+        release {
+            if (ksFile.exists()) { signingConfig signingConfigs.release }
+            minifyEnabled false
+        }
+    }
+}
