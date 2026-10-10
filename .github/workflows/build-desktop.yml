@@ -1,12 +1,24 @@
 name: 构建桌面版
 
+# 三平台矩阵：Windows / macOS / Linux。
+#
+# 之前 options 里写了 all/win/mac/linux，matrix 却只有 windows-latest
+# 且硬编码 --win —— 选 mac 或 linux 拿到的还是 exe。选项是假的。
+# 现在按 target 真的分到对应 runner 上跑。
+#
+# ⚠ 成本核算（免费额度下必须知道）：
+#   Linux   runner 1x 分钟
+#   Windows runner 2x 分钟
+#   macOS   runner 10x 分钟   ← mac 构建很贵，别没事反复跑
+# 所以默认只跑 win；要 mac/linux 得显式选。
+
 on:
   workflow_dispatch:
     inputs:
       target:
         description: 打包目标
         type: choice
-        options: [all, win, mac, linux]
+        options: [win, mac, linux, all]
         default: win
 
 permissions:
@@ -17,10 +29,30 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest]
         include:
           - os: windows-latest
-            target: win
+            plat: win
+            flag: --win --x64
+            art: chat-desktop-win
+            glob: |
+              dist/*.exe
+              dist/*.msi
+          - os: macos-latest
+            plat: mac
+            flag: --mac --x64 --arm64
+            art: chat-desktop-mac
+            glob: |
+              dist/*.dmg
+              dist/*.zip
+          - os: ubuntu-latest
+            plat: linux
+            flag: --linux --x64
+            art: chat-desktop-linux
+            glob: |
+              dist/*.AppImage
+              dist/*.deb
+    # 单选时只跑对应平台；选 all 三个都跑
+    if: ${{ github.event.inputs.target == 'all' || github.event.inputs.target == matrix.plat }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -30,8 +62,7 @@ jobs:
           node-version: '20'
 
       # 不要 npm init -y：它会覆盖仓库里已写好的 package.json，
-      # 把 electron-builder 的 build 配置（win 目标、NSIS/portable）冲掉，
-      # 结果 electron-builder 不知道该怎么打包，自然出不了 exe。
+      # 把 electron-builder 的 build 配置（各平台目标）冲掉。
       - name: 装 Electron 打包工具
         run: |
           test -f package.json || npm init -y --silent
@@ -50,33 +81,32 @@ jobs:
         shell: bash
         run: |
           # 完整输出留档。沙箱拿不到 Actions 日志，只能自己写回来。
-          npx electron-builder --win --x64 --publish never 2>&1 | tee desktop-log.txt
+          npx electron-builder ${{ matrix.flag }} --publish never 2>&1 | tee desktop-log.txt
           echo "exit=${PIPESTATUS[0]}"
           ls dist 2>/dev/null | head -20 >> desktop-log.txt || echo "dist 为空" >> desktop-log.txt
           exit ${PIPESTATUS[0]}
 
-      # 必须 always：构建失败时这份日志才是唯一线索
-      - name: 日志写回 diag 分支
+      # 诊断步骤：永远不该影响 job 结论。
+      # 之前就是它失败把整个 workflow 拖成红叉，而真正的产物其实已经成功了。
+      - name: 日志写回
         if: always()
         continue-on-error: true
         shell: bash
         run: |
           git config user.name  "diag-bot"
           git config user.email "diag@local"
-          git checkout --orphan diag-desktop 2>/dev/null || git checkout diag-desktop
+          git checkout --orphan diag-desktop-${{ matrix.plat }} 2>/dev/null || git checkout diag-desktop-${{ matrix.plat }}
           git rm -rf --cached . >/dev/null 2>&1 || true
           if [ ! -f desktop-log.txt ]; then echo "(无输出)" > desktop-log.txt; fi
           git add -f desktop-log.txt
-          git commit -m "桌面构建日志 $(date -u +%Y%m%d-%H%M%S)" || echo "无变化"
-          git push -f origin diag-desktop
+          git commit -m "桌面构建日志 ${{ matrix.plat }} $(date -u +%Y%m%d-%H%M%S)" || echo "无变化"
+          git push -f origin diag-desktop-${{ matrix.plat }} || echo "推送失败（不影响产物）"
 
       - name: 上传安装包
         if: always()
         uses: actions/upload-artifact@v5
         with:
-          name: chat-desktop-win
-          path: |
-            dist/*.exe
-            dist/*.msi
+          name: ${{ matrix.art }}
+          path: ${{ matrix.glob }}
           if-no-files-found: warn
           retention-days: 30

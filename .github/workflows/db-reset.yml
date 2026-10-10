@@ -72,12 +72,13 @@ jobs:
           psql "$DB_URL" -v ON_ERROR_STOP=1 -f /tmp/reset.sql 2>&1 | tee -a report.txt
 
       - name: 结果写回 diag 分支
+        continue-on-error: true
         run: |
           set -euo pipefail
           git config user.name  "diag-bot"
           git config user.email "diag@local"
-          git checkout --orphan diag 2>/dev/null || git checkout diag
+          git checkout --orphan diag-db-reset 2>/dev/null || git checkout diag-db-reset
           git rm -rf --cached . >/dev/null 2>&1 || true
           git add -f report.txt
           git commit -m "清库 $(date -u +%Y%m%d-%H%M%S)" || echo "无变化"
-          git push -f origin diag
+          git push -f origin diag-db-reset

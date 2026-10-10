@@ -11,6 +11,15 @@
 <body>
 <svg xmlns="http://www.w3.org/2000/svg" style="display:none">
 <!-- 用法：<svg class="ic"><use href="#i-image"/></svg> -->
+  <symbol id="i-monitor" viewBox="0 0 24 24">
+    <rect x="2.5" y="3.5" width="19" height="13" rx="1.6"/>
+    <path d="M9 20.5h6M12 16.5v4"/>
+  </symbol>
+  <symbol id="i-phone" viewBox="0 0 24 24">
+    <rect x="6.5" y="2.5" width="11" height="19" rx="2.2"/>
+    <path d="M10.8 5.4h2.4"/>
+    <path d="M11 18.6h2"/>
+  </symbol>
   <symbol id="i-chat" viewBox="0 0 24 24">
     <path d="M4.6 4H19.4A2.6 2.6 0 0 1 22 6.6v6.8a2.6 2.6 0 0 1-2.6 2.6H11.4L7.4 20v-4H4.6A2.6 2.6 0 0 1 2 13.4V6.6A2.6 2.6 0 0 1 4.6 4z"/>
   </symbol>
@@ -116,28 +125,59 @@
 
   <!-- 客户端下载。之前三个平台做完了却没有任何入口，
        用户不知道有桌面版和安卓版 —— 等于没发布。 -->
-  <h2 class="section-title">也可以装到设备上</h2>
+  <!-- 客户端下载。之前三端做完了却没有任何入口，等于没发布。
+       现在按"市面上常用平台"列全，并各自给直链，不让用户在资产列表里自己分辨。 -->
+  <h2 class="section-title">装到设备上</h2>
   <div class="grid">
+    <a class="card" href="https://github.com/liuyiming2024/Chat/releases/latest/download/chat-win-setup.exe" target="_blank" rel="noopener" style="color:inherit">
+      <span class="card-icon"><svg class="ic" aria-hidden="true"><use href="#i-monitor"/></svg></span>
+      <h3>Windows</h3>
+      <p>安装版，独立窗口，任务栏图标显示未读数。未签名，SmartScreen
+         会拦，点「仍要运行」即可。</p>
+      <span class="card-link">下载 exe →</span>
+    </a>
+
+    <a class="card" href="https://github.com/liuyiming2024/Chat/releases/latest/download/chat-mac.dmg" target="_blank" rel="noopener" style="color:inherit">
+      <span class="card-icon"><svg class="ic" aria-hidden="true"><use href="#i-monitor"/></svg></span>
+      <h3>macOS</h3>
+      <p>支持 Intel 与 Apple 芯片。未签名，首次打开需右键选「打开」绕过
+         Gatekeeper —— 签名证书要年费，就不花了。</p>
+      <span class="card-link">下载 dmg →</span>
+    </a>
+
+    <a class="card" href="https://github.com/liuyiming2024/Chat/releases/latest/download/chat-linux.AppImage" target="_blank" rel="noopener" style="color:inherit">
+      <span class="card-icon"><svg class="ic" aria-hidden="true"><use href="#i-monitor"/></svg></span>
+      <h3>Linux</h3>
+      <p>AppImage 免安装，下载后加执行权限直接跑；也提供 deb 包。</p>
+      <span class="card-link">下载 AppImage →</span>
+    </a>
+
+    <a class="card" href="https://github.com/liuyiming2024/Chat/releases/latest/download/chat-android.apk" target="_blank" rel="noopener" style="color:inherit">
+      <span class="card-icon"><svg class="ic" aria-hidden="true"><use href="#i-phone"/></svg></span>
+      <h3>安卓</h3>
+      <p>原生通知，锁屏也能收到提醒。未签名，安装需允许「未知来源」。</p>
+      <span class="card-link">下载 apk →</span>
+    </a>
+
     <div class="card">
-      <span class="card-icon"><svg class="ic" aria-hidden="true"><use href="#i-chat"/></svg></span>
-      <h3>网页版</h3>
-      <p>不需要下载。手机浏览器「添加到主屏幕」、电脑 Chrome 右上角「安装」，
-         就能像应用一样打开，还能离线用。</p>
+      <span class="card-icon"><svg class="ic" aria-hidden="true"><use href="#i-phone"/></svg></span>
+      <h3>iPhone / iPad</h3>
+      <p><b>没有独立 App</b> —— 上架 App Store 需要 Apple 开发者年费。
+         用 Safari 打开本站，点分享 → 「添加到主屏幕」，获得全屏图标、
+         离线可用，跟 App 几乎一样。</p>
     </div>
-    <a class="card" href="https://github.com/liuyiming2024/Chat/releases/latest" target="_blank" rel="noopener" style="color:inherit">
-      <span class="card-icon"><svg class="ic" aria-hidden="true"><use href="#i-repo"/></svg></span>
-      <h3>桌面版 · Windows</h3>
-      <p>独立窗口，任务栏图标显示未读数。未签名，安装时 SmartScreen
-         会提示，点「仍要运行」即可。</p>
-      <span class="card-link">下载 →</span>
-    </a>
-    <a class="card" href="https://github.com/liuyiming2024/Chat/releases/latest" target="_blank" rel="noopener" style="color:inherit">
-      <span class="card-icon"><svg class="ic" aria-hidden="true"><use href="#i-chat"/></svg></span>
-      <h3>安卓版 · APK</h3>
-      <p>原生通知，锁屏也能收到消息提醒。未签名，安装需允许「未知来源」。</p>
-      <span class="card-link">下载 →</span>
-    </a>
+
+    <div class="card">
+      <span class="card-icon"><svg class="ic" aria-hidden="true"><use href="#i-monitor"/></svg></span>
+      <h3>不想装？用网页版</h3>
+      <p>电脑 Chrome / Edge 右上角「安装」，手机浏览器「添加到主屏幕」，
+         免下载，一样离线可用。</p>
+    </div>
   </div>
+
+  <p class="section-note">所有安装包都<b>未签名</b> —— 代码签名证书需要年费。
+     除了 iOS（App Store 硬性要求付费账号），其余平台都能正常安装使用，
+     只是第一次要手动确认一下。</p>
 
   <h2 class="section-title">三大板块</h2>
   <div class="grid">

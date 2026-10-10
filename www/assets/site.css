@@ -460,3 +460,10 @@ body.dark .card-main { box-shadow: 0 2px 10px rgba(125,179,255,.14); }
   font-weight: 600;
 }
 .card:hover { transform: translateY(-2px); }
+
+/* 平台说明脚注：把"未签名"这件事说在明处，别让人装到一半才发现 */
+.section-note {
+  margin: 10px 0 0;
+  font-size: 12px; color: #888; line-height: 1.7;
+}
+body.dark .section-note { color: #7c8698; }
