@@ -1,0 +1,113 @@
+name: 发布客户端
+
+# 把 APK 与 Windows 安装包打成 GitHub Release。
+#
+# 为什么必须用 Release 而不是只留 Actions artifacts：
+#   artifacts 下载必须登录 GitHub 账号，而且 30 天就过期。
+#   用户不知道有这东西，就算翻到了也下不了 —— 等于没发布。
+# Release 的资产是免登录直链，不过期。
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 版本号（如 v1.0.0）
+        required: true
+        default: v1.0.0
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version: '20' }
+      - uses: actions/setup-java@v5
+        with: { distribution: 'temurin', java-version: '21' }
+      - name: 装 Capacitor 并生成安卓工程
+        run: |
+          npm i @capacitor/core @capacitor/cli @capacitor/android \
+             @capacitor/local-notifications --silent --no-fund --no-audit
+          npx cap add android
+          npx cap sync android
+      - name: 统一 Kotlin 标准库版本
+        run: |
+          cat >> android/app/build.gradle <<'EOF'
+
+          configurations.all {
+            resolutionStrategy {
+              force 'org.jetbrains.kotlin:kotlin-stdlib:1.8.22'
+              force 'org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22'
+              force 'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22'
+            }
+          }
+          EOF
+      - name: 构建 APK
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > android/local.properties
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
+          cd android && chmod +x gradlew && ./gradlew assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: apk
+          path: android/app/build/outputs/apk/debug/*.apk
+
+  desktop:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version: '20' }
+      - name: 装 Electron 打包工具
+        run: npm i --save-dev electron electron-builder --silent --no-fund --no-audit
+      - name: 构建
+        shell: bash
+        run: npx electron-builder --win --x64 --publish never
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: exe
+          path: |
+            dist/*.exe
+
+  publish:
+    needs: [android, desktop]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v5
+        with: { path: out, merge-multiple: true }
+
+      - name: 整理文件名
+        run: |
+          mkdir -p pkg
+          find out -name '*.apk' -exec cp {} pkg/聊天室-安卓.apk \;
+          find out -name '*Setup*.exe' -exec cp {} pkg/聊天室-安装版.exe \;
+          find out -name '*便携版*.exe' -exec cp {} pkg/聊天室-便携版.exe \;
+          ls -la pkg
+
+      - name: 发 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag }}
+          name: 聊天室 ${{ github.event.inputs.tag }}
+          body: |
+            ## 下载
+
+            | 文件 | 平台 | 说明 |
+            |---|---|---|
+            | 聊天室-安卓.apk | Android | 未签名，安装需允许「未知来源」 |
+            | 聊天室-安装版.exe | Windows | 未签名，SmartScreen 会拦截，点「仍要运行」 |
+            | 聊天室-便携版.exe | Windows | 不用安装，双击即用 |
+
+            **未签名是刻意的**：签名证书需要付费。安装时的安全提示点「仍要运行」即可，
+            不影响功能。
+
+            ## 更新内容
+
+            - 消息通知与免打扰（标题栏闪烁、未读计数、@我 提醒、按时段/按会话静音）
+            - 修复有人 @ 我时提醒完全无反应的问题
+          files: pkg/*
