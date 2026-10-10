@@ -393,6 +393,14 @@ end;
 $fn$;
 
 -- 校验保护密码（通过后会话可读取站点公开信息）
+-- ⚠ 必须先 drop：Postgres 的 create or replace 【不允许改变返回类型】。
+--   线上原本是 returns text，这里改成了 json，不 drop 会直接报
+--   "cannot change return type of existing function"，整段迁移失败。
+--
+--   教训：改函数返回类型时，create or replace 不够，必须 drop 再建。
+--   本地测试库是空的所以测不出来 —— 只有已有数据的线上库才会暴露。
+drop function if exists gate_check(text);
+
 -- 保护密码校验。返回 json：{ok, token, show_new}
 --   ok       ：是否通过
 --   token    ：会话
