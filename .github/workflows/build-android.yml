@@ -75,6 +75,23 @@ jobs:
           echo "keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}" >> android/keystore.properties || true
           echo "keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}" >> android/keystore.properties || true
 
+      # kotlin-stdlib 1.8.22 与 kotlin-stdlib-jdk7/jdk8 1.6.21 重复类，
+      # checkDebugDuplicateClasses 直接判失败。
+      # 1.8.22 的 jdk7/jdk8 已是空的重定向包，统一强制到同一版本即可消解。
+      - name: 统一 Kotlin 标准库版本
+        run: |
+          cat >> android/app/build.gradle <<'EOF'
+
+          configurations.all {
+            resolutionStrategy {
+              force 'org.jetbrains.kotlin:kotlin-stdlib:1.8.22'
+              force 'org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22'
+              force 'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22'
+            }
+          }
+          EOF
+          echo "已注入 kotlin 版本统一"
+
       - name: 准备 Android 构建环境
         run: |
           # gradle 靠 local.properties 找 SDK，缺了它第一步就报 "SDK location not found"

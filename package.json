@@ -44,5 +44,10 @@
     "directories": {
       "output": "dist"
     }
-  }
+  },
+  "directories": {
+    "app": ".",
+    "output": "dist"
+  },
+  "author": "liuyiming2024"
 }
