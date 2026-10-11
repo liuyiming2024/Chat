@@ -65,8 +65,17 @@ jobs:
         run: |
           # local-notifications：安卓 WebView 的通知不可靠，走插件才稳。
           # notify.js 会自己判断在不在原生环境，网页端不受影响。
-          npm i @capacitor/core @capacitor/cli @capacitor/android \
-             @capacitor/local-notifications --silent --no-fund --no-audit
+          # ⚠ 必须钉版本（S-022）。
+          #   不钉的话每次构建拉当时最新的 capacitor，
+          #   某天上游发个不兼容的版本，构建就毫无征兆地红了，
+          #   而本地谁也复现不出来 —— 因为大家装的不是同一个版本。
+          #   改版本时改这里这一处即可。
+          CAPV=7.4.3
+          echo "capacitor 版本: $CAPV"
+          npm i @capacitor/core@$CAPV @capacitor/cli@$CAPV @capacitor/android@$CAPV \
+             @capacitor/local-notifications@$CAPV --silent --no-fund --no-audit
+          # 装完立刻核对，别等构建失败了才发现版本不对
+          npx cap --version | head -1
           # 不跑 cap init：capacitor.config.json 已在仓库里，
           # 而且 init 在配置已存在时会交互式询问"是否覆盖"，在 CI 里直接卡死。
           npx cap add android
