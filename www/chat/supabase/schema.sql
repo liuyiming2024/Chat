@@ -1011,6 +1011,8 @@ begin
       or exists (select 1 from users u where u.id = uid and u.role in ('owner','admin'))
     )
   ) then raise exception '无权解散该房间'; end if;
+  insert into logs (who_id, act, detail, target)
+  values (uid, 'room.delete', '解散房间', p_room);
   delete from rooms where id = p_room;
   perform nextval('state_rev');
   return true;
@@ -1347,6 +1349,9 @@ begin
     raise exception '仅站长可删除用户';
   end if;
   perform self_guard(p_user, '删除');
+  /* ⚠ 删账号必须留痕（S-064）。 */
+  insert into logs (who_id, act, detail, target)
+  values (uid, 'user.delete', '删除账号', p_user::text);
   delete from users where id = p_user;
   perform nextval('state_rev');
   return true;
@@ -1432,6 +1437,10 @@ begin
   if u.pwd_hash <> crypt(p_old, u.pwd_hash) then raise exception '原密码错误'; end if;
   if length(p_new) < 4 then raise exception '新密码至少 4 位'; end if;
   update users set pwd_hash = crypt(p_new, gen_salt('bf', 10)) where id = uid;
+  /* 改密码留痕（S-064）。明细只记"改了"，不记新旧密码 ——
+     日志本身不能成为泄密源。 */
+  insert into logs (who_id, act, detail, target)
+  values (uid, 'user.password', '修改登录密码', uid::text);
   return true;
 end;
 $$;
@@ -1582,6 +1591,13 @@ begin
   if not exists (select 1 from users u where u.id = uid and u.role in ('owner','admin')) then
     raise exception '仅管理员可修改站点设置';
   end if;
+  /* 站点设置留痕（S-064）：改站名、开关注册都影响全站。
+     把改成什么写进 detail —— 事后要能看出"是谁放开了注册"。 */
+  insert into logs (who_id, act, detail, target)
+  values (uid, 'site.set',
+    coalesce('站名=' || p_name || ' ', '')
+    || coalesce('允许注册=' || p_allow_register::text, ''),
+    'site');
   update site set
     site_name = coalesce(p_name, site_name),
     allow_register = coalesce(p_allow_register, allow_register)
