@@ -1,0 +1,43 @@
+  • electron-builder  version=26.15.3 os=25.6.0
+  • loaded configuration  file=package.json ("build" field)
+  • Specified application directory equals to project dir — superfluous or wrong configuration  appDirectory=.
+  • executing @electron/rebuild  electronVersion=33.4.11 arch=x64 buildFromSource=false workspaceRoot=/Users/runner/work/Chat/Chat projectDir=./ appDir=./
+  • installing native dependencies  arch=x64
+  • completed installing native dependencies
+  • packaging       platform=darwin arch=x64 electron=33.4.11 appOutDir=dist/mac
+  • downloaded      label=electron progress=100%
+  • downloaded electron zip extracted successfully  output=/Users/runner/work/Chat/Chat/dist/mac
+  • searching for node modules  pm=npm searchDir=/Users/runner/work/Chat/Chat
+  • searching for node modules  pm=traversal searchDir=/Users/runner/work/Chat/Chat
+  • using manual traversal of node_modules to build dependency tree
+  • no node modules returned while searching directories  searchDirectories=[""]
+  • downloaded      label=icons-bundle.tar.gz progress=100%
+  • skipped macOS code signing  reason=identity explicitly is set to null
+  • building        target=macOS zip arch=x64 file=dist/chat-mac.zip
+  • building        target=DMG arch=x64 file=dist/chat-mac.dmg
+  • executing @electron/rebuild  electronVersion=33.4.11 arch=arm64 buildFromSource=false workspaceRoot=/Users/runner/work/Chat/Chat projectDir=./ appDir=./
+  • installing native dependencies  arch=arm64
+  • downloaded      label=dmgbuild-bundle-arm64-75c8a6c.tar.gz progress=100%
+  • completed installing native dependencies
+  • packaging       platform=darwin arch=arm64 electron=33.4.11 appOutDir=dist/mac-arm64
+  • downloaded      label=electron progress=100%
+  • downloaded electron zip extracted successfully  output=/Users/runner/work/Chat/Chat/dist/mac-arm64
+  • searching for node modules  pm=npm searchDir=/Users/runner/work/Chat/Chat
+  • searching for node modules  pm=traversal searchDir=/Users/runner/work/Chat/Chat
+  • using manual traversal of node_modules to build dependency tree
+  • no node modules returned while searching directories  searchDirectories=[""]
+  • skipped macOS code signing  reason=identity explicitly is set to null
+  • building        target=macOS zip arch=arm64 file=dist/chat-mac.zip
+  • building        target=DMG arch=arm64 file=dist/chat-mac.dmg
+  • building block map  blockMapFile=dist/chat-mac.zip.blockmap
+  • building block map  blockMapFile=dist/chat-mac.zip.blockmap
+  • building block map  blockMapFile=dist/chat-mac.dmg.blockmap
+  • building block map  blockMapFile=dist/chat-mac.dmg.blockmap
+builder-debug.yml
+chat-mac.dmg
+chat-mac.dmg.blockmap
+chat-mac.zip
+chat-mac.zip.blockmap
+latest-mac.yml
+mac
+mac-arm64
