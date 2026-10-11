@@ -61,7 +61,7 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version: '22'
 
       # 不要 npm init -y：它会覆盖仓库里已写好的 package.json，
       # 把 electron-builder 的 build 配置（各平台目标）冲掉。

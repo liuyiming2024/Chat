@@ -400,6 +400,7 @@
     prepareMedia: prepareMedia, commitMedia: commitMedia, mediaUrl: mediaUrl,
     uploadMedia: uploadMedia,
     sendMsg: sendMsg, editMsg: editMsg, convert: convert,
+    joinRoom: joinRoom, createRoom: createRoom, updateRoom: updateRoom,
     enqueue: enqueue, flushOutbox: flushOutbox, outbox: outbox, dequeue: dequeue
   };
 })(window);
