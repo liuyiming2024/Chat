@@ -166,7 +166,22 @@
     return d;
   }
 
+  /* 取一个 sprite 图标的 DOM 节点。
+     界面上的图形一律走 SVG sprite，不用 emoji ——
+     emoji 在不同系统上长得不一样（Android 的 🔔 和 iOS 的完全两个样），
+     而且在部分 Windows 上直接显示成方框。 */
+  function svgIcon(name) {
+    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', 'ic');
+    svg.setAttribute('aria-hidden', 'true');
+    var use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+    use.setAttribute('href', '#' + name);
+    svg.appendChild(use);
+    return svg;
+  }
+
   g.UI = {
+    svgIcon: svgIcon,
     esc: esc, toast: toast, modal: modal, confirm: confirm, prompt: prompt,
     lightbox: lightbox, closeLightbox: closeLightbox,
     fmtTime: fmtTime, fmtFull: fmtFull, avatar: avatar, setAvatarCache: setAvatarCache

@@ -368,7 +368,36 @@
     });
   }
 
-  /* ---------------- 写操作：只走带鉴权的 RPC ---------------- */
+  /* ---------------- 写操作：只走带鉴权的 RPC ----------------
+
+     ⚠ 前端一律走这里的封装，不要直接 g.SB.rpc（S-019）。
+     理由不是"统一风格"，是三件具体的事：
+       1. 这里能统一判断在线状态，离线时给出一致的失败而不是各写各的
+       2. 失败能被统一报出来 —— 直接 g.SB.rpc 的地方有 3 处写成
+          .catch(function () { })，出错完全无声，用户只知道"点了没反应"
+       3. 将来加鉴权头 / 重试，只改这一处 */
+
+  /* 管理操作：封禁 / 解封 / 删号。
+     这三个原来在 app.js 里直接调 g.SB.rpc 且静默吞异常 ——
+     管理员点了"封禁"，请求失败了，界面却毫无反应，
+     他会以为已经封了。 */
+  function userReview(uid, status) {
+    return g.SB.rpc('user_review', { p_user: uid, p_status: status });
+  }
+  function userDelete(uid) {
+    return g.SB.rpc('user_delete', { p_user: uid });
+  }
+  /* 给已有消息补上媒体（媒体异步上传完再回填） */
+  function msgMedia(msgId, path) {
+    return g.SB.rpc('msg_media', { p_msg: msgId, p_media: path });
+  }
+  /* 改密码（S-011）：服务端会报"原密码错误"/"至少 4 位"，
+     必须由调用方显示 e.message —— 这两条错误之前无处显示。 */
+  function changePwd(oldP, newP) {
+    return g.SB.rpc('user_password', { p_old: oldP, p_new: newP });
+  }
+
+
 
   function sendMsg(room, type, body, media, name, size, replyTo) {
     return g.SB.rpc('msg_send', {
@@ -476,6 +505,8 @@
     setup: setup, gate: gate, login: login, register: register,
     pull: pull, pullDelta: pullDelta, startPoll: startPoll, stopPoll: stopPoll,
     createRoom: createRoom, updateRoom: updateRoom, joinRoom: joinRoom,
+    userReview: userReview, userDelete: userDelete, msgMedia: msgMedia,
+    changePwd: changePwd,
     addMember: addMember, removeMember: removeMember, setAdmin: setAdmin,
     setMute: setMute, setPerms: setPerms, setRole: setRole,
     prepareMedia: prepareMedia, commitMedia: commitMedia, mediaUrl: mediaUrl,

@@ -572,7 +572,11 @@ begin
   if not gate_passed() then raise exception '请先通过站点保护密码'; end if;
 
   /* 频率闸门：15 分钟内同一昵称失败 8 次即冻结 15 分钟。
-     这是数据库层唯一能做的登录限流位置。 */
+     这是数据库层唯一能做的登录限流位置。
+
+     ⚠ 只按昵称计数是不够的（S-008）：换一个昵称就绕过了，
+     而且任何人知道你昵称、试错 8 次就能把你锁 15 分钟。
+     所以下面还有一道全局闸门。 */
   select count(*) into v_fail from login_attempts
    where lower(nick) = lower(p_nick) and ok = false
      and created_at > now() - interval '15 minutes';
@@ -580,16 +584,34 @@ begin
     return json_build_object('ok', false, 'err', '尝试次数过多，请 15 分钟后再试');
   end if;
 
+  /* 全局闸门：15 分钟内全站失败 ≥ 100 次就整体拒绝。
+     这是"换昵称爆破"唯一拦得住的地方 —— 昵称维度对它是无效的。
+
+     为什么不用 IP 做第二维度：
+       · 请求头里的 x-forwarded-for 客户端自己能改，等于没有
+       · 同一个 NAT 后面可能是一整个学校/公司，按 IP 限流会误伤一大片
+     所以宁可粗一点用全局闸门。100 次/15 分钟对正常站点很宽松，
+     正常用户极少失败这么多次；真被爆破时宁可暂时全站挡住。 */
+  select count(*) into v_fail from login_attempts
+   where ok = false and created_at > now() - interval '15 minutes';
+  if v_fail >= 100 then
+    return json_build_object('ok', false, 'err', '登录尝试过于频繁，请稍后再试');
+  end if;
+
   select * into u from users where lower(nick) = lower(p_nick);
   if not found then
     insert into login_attempts (nick, ok) values (p_nick, false);
-    perform nextval('state_rev');
+    /* ⚠ 这里原来有一句 perform nextval('state_rev')（S-006）。
+       登录失败跟状态变更毫无关系，却会让每次失败都推进全局序号，
+       惊动所有在线客户端去拉一次增量 ——
+       1 次爆破请求被放大成 N 次拉取，等于给了攻击者一个免费放大器。
+       删掉。 */
     return json_build_object('ok', false, 'err', '昵称或密码错误');
   end if;
 
   if u.pwd_hash <> crypt(p_pwd, u.pwd_hash) then
     insert into login_attempts (nick, ok) values (p_nick, false);
-    perform nextval('state_rev');
+    /* 同上：失败不推进全局序号 */
     return json_build_object('ok', false, 'err', '昵称或密码错误');
   end if;
 
@@ -602,10 +624,12 @@ begin
   end if;
 
   insert into login_attempts (nick, ok) values (p_nick, true);
-  /* 顺手清掉 24 小时前的旧记录。
-     内联写而不调 login_attempts_cleanup() —— 那个函数要求管理员权限，
-     普通用户登录成功时会把自己拒绝掉。 */
-  delete from login_attempts where created_at < now() - interval '24 hours';
+  /* 登录成功：只清这个昵称自己的旧失败记录（好让计数重新开始）。
+     ⚠ 全表清理不在这里做 —— 放在 session_cleanup() 里。
+       原因：只在成功时清理，等于清理依赖攻击者去登录成功一次，
+       纯爆破路径下这张表会无限增长。 */
+  delete from login_attempts
+   where lower(nick) = lower(p_nick) and ok = false;
 
   update users set last_seen = now() where id = u.id;
   tk := issue_session(u.id, false);
@@ -1376,6 +1400,12 @@ declare n int;
 begin
   delete from sessions where expires_at < now();
   get diagnostics n = row_count;
+
+  /* login_attempts 也必须在这里清（S-007）。
+     原来只在"登录成功"时顺手删 24 小时前的记录 ——
+     那么纯爆破路径（永远不成功）会让这张表无限增长，
+     而爆破恰恰是最需要防的场景。清理不能依赖攻击者配合。 */
+  delete from login_attempts where created_at < now() - interval '24 hours';
 
   /* 所有会自然过期/堆积的凭据表都要在这里清，不能只清 sessions。
      bridge_ticket 刚加时就漏了 —— 跟门禁会话堆积是同一类缺陷。 */
