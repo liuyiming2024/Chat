@@ -464,6 +464,20 @@
   }
   /* 改密码（S-011）：服务端会报"原密码错误"/"至少 4 位"，
      必须由调用方显示 e.message —— 这两条错误之前无处显示。 */
+  /* 改昵称 / 个性签名 / 真实姓名。
+     服务端 profile_update 早就有了，前端却没接 ——
+     /nick 命令只改本地 me.nick，弹一句"修改了昵称"就完事，
+     在线模式下刷新即回滚，其他设备完全不知道。
+     **界面说了"已修改"，实际没改 —— 这比不支持更糟。** */
+  function profileUpdate(o) {
+    o = o || {};
+    return g.SB.rpc('profile_update', {
+      p_nick: o.nick === undefined ? null : o.nick,
+      p_real: o.real === undefined ? null : o.real,
+      p_bio: o.bio === undefined ? null : o.bio
+    });
+  }
+
   function changePwd(oldP, newP) {
     return g.SB.rpc('user_password', { p_old: oldP, p_new: newP });
   }
@@ -579,7 +593,7 @@
     userReview: userReview, userDelete: userDelete, msgMedia: msgMedia,
     inviteCreate: inviteCreate, inviteRedeem: inviteRedeem,
     inviteRevoke: inviteRevoke, setCanInvite: setCanInvite,
-    changePwd: changePwd,
+    changePwd: changePwd, profileUpdate: profileUpdate,
     addMember: addMember, removeMember: removeMember, setAdmin: setAdmin,
     setMute: setMute, setPerms: setPerms, setRole: setRole,
     prepareMedia: prepareMedia, commitMedia: commitMedia, mediaUrl: mediaUrl,
