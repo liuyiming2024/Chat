@@ -128,5 +128,6 @@
       "不要放 releases 页面地址，那下载下来是 HTML。",
       "iOS 为 null：App Store 需付费开发者账号，用 Safari「添加到主屏幕」代替。"
     ]
-  }
+  },
+  "ios": []
 }

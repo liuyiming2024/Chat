@@ -338,7 +338,17 @@
           if (inS && mergeState(inS)) save(true);
           afterGate();
         }).catch(function (e) {
-          g.UI.toast('密码错误或网络异常', 'err');
+          /* 「密码错误」和「网络异常」原来是同一句话（S-010）。
+             这两种失败用户该做的事完全不同：
+               密码错误 → 重新输入
+               网络异常 → 等一会儿 / 检查网络
+             混成一句，用户会一直改密码，而问题根本不在密码上。 */
+          var msg = (e && e.message) ? String(e.message) : '';
+          var isNet = /网络|fetch|timeout|Failed|超时|500|502|503|504/i.test(msg)
+            || !msg || msg === '网络错误';
+          g.UI.toast(isNet
+            ? '网络异常，未能验证保护密码，请稍后再试'
+            : (msg || '保护密码错误'), 'err');
         });
         return;
       }
@@ -562,7 +572,11 @@
               g.UI.toast('申请已提交，请等待站长通过', 'ok');
               pane('login');
             }).catch(function (e) {
-              g.UI.toast('注册失败：' + ((e && e.message) || '昵称可能已被占用'), 'err');
+              /* 拿不到服务端原因时用中性文案，不要猜。
+                 猜成"昵称可能已被占用"，而真实原因可能是
+                 "不允许注册"/"待审核"/网络错误 —— 猜错会把人引向错误的动作
+                 （他会一直换昵称，其实换一百个也没用）。 */
+              g.UI.toast('注册失败：' + ((e && e.message) || '请稍后再试'), 'err');
             });
             return;
           }
@@ -741,7 +755,7 @@
       g.UI.toast('有人 @ 了你', 'ok');
     }
     /* @我 的提醒优先级更高：标题闪烁文案直接换成这个 */
-    if (isAtMe(m) && g.Notifier) g.Notifier.setFlashText('🔔 有人 @ 了你');
+    if (isAtMe(m) && g.Notifier) g.Notifier.setFlashText('有人 @ 了你');
     /* 系统消息不通知：那是自己操作的回显，弹出来只会莫名其妙 */
     if (m.type === 'sys') { syncBadge(); return; }
     if (g.Notifier) {
@@ -1498,6 +1512,11 @@
     return [
       m.id, m.ts, m.type, m.text || '', m.mediaId || '', m.dur || 0, m.name || '',
       m.deleted ? 1 : 0, m.removedBy || '', m.quote ? (m.quote.id || m.quote.text || '') : '',
+      /* editedAt 必须进指纹（S-036/047）。
+         不进的话：服务端回滚编辑（editedAt 变 null）时指纹不变，
+         缓存节点被复用 —— 「已编辑」标记不会消失。
+         用户看到一条标着"已编辑"但内容没变的消息，非常费解。 */
+      m.editedAt || 0,
       (m.hiddenFor && m.hiddenFor.indexOf(me && me.id) >= 0) ? 1 : 0,
       (r.pinned && r.pinned.indexOf(m.id) >= 0) ? 1 : 0
     ].join('\u0001');
@@ -1552,7 +1571,10 @@
     }).filter(function (x) { return x && visibleToMe(x) && !x.deleted; });
     if (!items.length) { host.classList.add('hidden'); return; }
     host.classList.remove('hidden');
-    host.appendChild(elc('div', 'pinned-head', '📌 置顶 ' + items.length + ' 条'));
+    { var ph = elc('div', 'pinned-head');
+         ph.appendChild(document.createTextNode('置顶 ' + items.length + ' 条'));
+         ph.insertBefore(g.UI.svgIcon('i-pin'), ph.firstChild);
+         host.appendChild(ph); }
     items.forEach(function (m) {
       var row = elc('div', 'pinned-row');
       var txt = m.type === 'text' ? g.MD.plain(m.text || '') : msgSnippet(m);
@@ -1675,8 +1697,8 @@
   }
 
   /* 误触录音的最后一道保险：
-     进得去出不来的链条是「误触 🎙 → 唯一出口 ⏹ → ⏹ 的作用是发送」。
-     ✕ 取消已补上，但真有人慌了直接按 ⏹ 呢？
+     进得去出不来的链条是「误触录音键 → 唯一出口是停止键 → 停止键的作用是发送」。
+     取消按钮已补上，但真有人慌了直接按停止键呢？
      录制不足 800ms 视为误触 —— 不发送，直接丢弃并提示。
      （原来 Math.max(1,...) 会把 0.5 秒硬算成 1 秒照样发出去。） */
   var REC_MIN_MS = 800;
@@ -1686,7 +1708,7 @@
     var tip = $('recTip');
     if (tip) tip.classList.add('hidden');
     var bv = $('btnVoice');
-    if (bv) { bv.classList.remove('recording'); bv.textContent = '🎙'; }
+    if (bv) { bv.classList.remove('recording'); bv.innerHTML = '<svg class="ic" aria-hidden="true"><use href="#i-voice"/></svg>'; }
     if (recStart && (now() - recStart) < REC_MIN_MS) {
       recChunks = []; rec = null; recStart = 0;
       g.UI.toast('录音太短，已取消（未发送）', 'err');
@@ -1717,7 +1739,7 @@
     try { rec.stop(); } catch (e) { }
     rec = null;
     var tip = $('recTip'); if (tip) tip.classList.add('hidden');
-    var bv = $('btnVoice'); if (bv) { bv.classList.remove('recording'); bv.textContent = '🎙'; }
+    var bv = $('btnVoice'); if (bv) { bv.classList.remove('recording'); bv.innerHTML = '<svg class="ic" aria-hidden="true"><use href="#i-voice"/></svg>'; }
     g.UI.toast('已取消');
   }
 
@@ -1864,7 +1886,7 @@
       '<label class="field-label">清理早于多少天的媒体</label><select class="field" id="mcDays">' +
       '<option value="7">7 天前</option><option value="30" selected>30 天前</option>' +
       '<option value="90">90 天前</option></select>' +
-      '<div class="form-tip danger">⚠️ 必须先导出备份。清理后这些消息的媒体无法显示（消息本身保留）。</div>' +
+      '<div class="form-tip danger"><svg class="ic" aria-hidden="true"><use href="#i-warn"/></svg> 必须先导出备份。清理后这些消息的媒体无法显示（消息本身保留）。</div>' +
       '<button class="btn ghost" id="mcBackup">第一步：导出 JSON 备份</button>' +
       '<div id="mcTip" class="field-hint"></div>';
     var backed = false;
@@ -1899,7 +1921,7 @@
       a.download = 'chat-backup-' + new Date().toISOString().slice(0, 10) + '.json';
       a.click();
       backed = true;
-      d.querySelector('#mcTip').textContent = '✓ 备份已下载，现在可以执行清理了。';
+      d.querySelector('#mcTip').innerHTML = '<svg class="ic" aria-hidden="true"><use href="#i-check"/></svg> 备份已下载，现在可以执行清理了。';
       log('backup', '清理前导出备份');
     };
   }
@@ -2117,8 +2139,13 @@
       m.mediaPath = slot.path;
       g.UI.toast('已同步到云端，换设备可见', 'ok');
       /* 回填到服务端消息记录，其他设备才能知道去哪取 */
-      if (g.SB && g.SB.rpc) {
-        g.SB.rpc('msg_media', { p_msg: m.id, p_media: slot.path }).catch(function () { });
+      /* 走封装，别直接 g.SB.rpc。
+         原来这里 .catch(function () { })，回填失败完全无声 ——
+         消息看着有图，别的设备打开却是空的。 */
+      if (g.Online && g.Online.msgMedia) {
+        g.Online.msgMedia(m.id, slot.path).catch(function (e) {
+          g.UI.toast('媒体回填失败：' + (e && e.message ? e.message : '网络错误'), 'err');
+        });
       }
       save(true);
     }).catch(function (e) {
@@ -2572,7 +2599,7 @@
     items.push(['用口令加入房间', function () { joinByCode(); }]);
     /* 免打扰是本地偏好，不进服务端判定：它只影响"我这边提不提醒"，
        不影响消息送达，也不影响别人。 */
-    items.push([(g.Notifier && g.Notifier.roomMuted(r.id)) ? '✔ 已免打扰' : '免打扰此会话',
+    items.push([(g.Notifier && g.Notifier.roomMuted(r.id)) ? '已免打扰' : '免打扰此会话',
       function () {
         if (!g.Notifier) { g.UI.toast('通知模块未加载', 'err'); return; }
         g.Notifier.setRoomMuted(r.id, !g.Notifier.roomMuted(r.id));
@@ -2645,7 +2672,7 @@
     });
     var ab = d.querySelector('#sAdmin');
     membersOf(r).forEach(function (u) {
-      var b = elc('button', 'chip' + (r.admins.indexOf(u.id) >= 0 ? ' on' : ''), u.nick + (r.admins.indexOf(u.id) >= 0 ? ' ✓' : ''));
+      var b = elc('button', 'chip' + (r.admins.indexOf(u.id) >= 0 ? ' on' : ''), u.nick);
       b.onclick = function () {
         if (!g.ACL.can(me, 'user.grant', r)) { g.UI.toast('无授权权限', 'err'); return; }
         var i = r.admins.indexOf(u.id);
@@ -3181,7 +3208,13 @@
       '<input type="file" id="pAvFile" accept="image/*" class="hidden">' +
       '<div class="field-hint">图片会自动压缩为正方形小图，存在本地。</div></div></div>' +
       '<label class="field-label">个性签名</label><input class="field" id="pBio" value="' + g.UI.esc(me.bio || '') + '">' +
-      '<label class="field-label">修改登录密码（留空不改）</label><input class="field" id="pPwd" type="password">' +
+      '<label class="field-label">修改登录密码（留空不改）</label>' +
+      /* 在线模式下必须有"当前密码"输入框（S-011）。
+         服务端 user_password 要校验旧密码，没这个框就调不了；
+         而只改本地 pwdHash 的话，换台设备用新密码登不上 ——
+         用户以为改成功了，其实只改了这台机器。 */
+      '<input class="field" id="pOldPwd" type="password" placeholder="当前密码（在线模式必填）">' +
+      '<input class="field" id="pPwd" type="password" placeholder="新密码（至少 4 位）">' +
       '<div class="field-hint">默认头像由昵称首字母自动生成，配色取自昵称哈希；上传后改为自定义图片。</div>';
 
     /* 预览与选择头像 */
@@ -3264,8 +3297,25 @@
         var p = body.querySelector('#pPwd').value;
         if (p) {
           if (p.length < 4) { g.UI.toast('密码至少 4 位'); return false; }
-          var s = g.SHA256.randomId(12);
-          me.pwdSalt = s; me.pwdHash = hashPwd(p, s);
+
+          /* 在线：必须走服务端改。
+             只改本地的话，换设备用新密码登不上，
+             而用户看到的提示是"保存成功" —— 这是最糟的一种结果。 */
+          if (g.Online && g.Online.isOnline && g.Online.isOnline()) {
+            var op = (body.querySelector('#pOldPwd') || {}).value || '';
+            if (!op) { g.UI.toast('在线模式下修改密码需要先填当前密码'); return false; }
+            if (op === p) { g.UI.toast('新密码不能与当前密码相同'); return false; }
+            g.Online.changePwd(op, p).then(function () {
+              g.UI.toast('密码已更新', 'ok');
+            }).catch(function (e) {
+              /* 服务端会明确报"原密码错误"/"至少 4 位"，
+                 这两条原来无处显示（S-011），必须显示出来。 */
+              g.UI.toast('修改失败：' + (e && e.message ? e.message : '网络错误'), 'err');
+            });
+          } else {
+            var s = g.SHA256.randomId(12);
+            me.pwdSalt = s; me.pwdHash = hashPwd(p, s);
+          }
         }
         /* 保存头像 */
         if (pickedAvatar === '') {
@@ -3422,13 +3472,17 @@
                 if (mode === 'delete') {
                   S.users = S.users.filter(function (x) { return x.id !== u.id; });
                   if (g.Online && g.Online.isOnline()) {
-                    g.SB.rpc('user_delete', { p_user: u.id }).catch(function () {
-                      g.UI.toast('服务端删除失败（本地已删除）', 'err');
+                    g.Online.userDelete(u.id).catch(function (e) {
+                      g.UI.toast('服务端删除失败（本地已删除）：'
+                        + (e && e.message ? e.message : ''), 'err');
                     });
                   }
                 } else {
                   if (g.Online && g.Online.isOnline()) {
-                    g.SB.rpc('user_review', { p_user: u.id, p_status: 'banned' }).catch(function () { });
+                    g.Online.userReview(u.id, 'banned').catch(function (e) {
+                      g.UI.toast('服务端封禁失败（本地已改）：'
+                        + (e && e.message ? e.message : ''), 'err');
+                    });
                   }
                 }
                 save(); adminPanelRefresh(mo, d, view, t);
@@ -3461,7 +3515,7 @@
             /* 审核是站长的核心动作，必须落到服务端 ——
                否则在本地通过了，对方换个设备仍是待审核。 */
             if (g.Online && g.Online.isOnline()) {
-              g.SB.rpc('user_review', { p_user: u.id, p_status: 'active' })
+              g.Online.userReview(u.id, 'active')
                 .then(function () {
                   if (g.Online.addMember) g.Online.addMember('public', u.id).catch(function () { });
                 })
@@ -3494,13 +3548,17 @@
                 if (mode === 'delete') {
                   S.users = S.users.filter(function (x) { return x.id !== u.id; });
                   if (g.Online && g.Online.isOnline()) {
-                    g.SB.rpc('user_delete', { p_user: u.id }).catch(function () {
-                      g.UI.toast('服务端删除失败（本地已删除）', 'err');
+                    g.Online.userDelete(u.id).catch(function (e) {
+                      g.UI.toast('服务端删除失败（本地已删除）：'
+                        + (e && e.message ? e.message : ''), 'err');
                     });
                   }
                 } else {
                   if (g.Online && g.Online.isOnline()) {
-                    g.SB.rpc('user_review', { p_user: u.id, p_status: 'banned' }).catch(function () { });
+                    g.Online.userReview(u.id, 'banned').catch(function (e) {
+                      g.UI.toast('服务端封禁失败（本地已改）：'
+                        + (e && e.message ? e.message : ''), 'err');
+                    });
                   }
                 }
                 save(); adminPanelRefresh(mo, d, view, t);
@@ -3576,9 +3634,9 @@
         var html = '<table class="md-table"><thead><tr><th>权限</th><th>站长</th><th>管理员</th><th>成员</th></tr></thead><tbody>';
         g.ACL.all().forEach(function (p) {
           html += '<tr><td>' + g.UI.esc(g.ACL.label(p)) + ' <code>' + p + '</code></td>' +
-            '<td>✓</td>' +
-            '<td>' + (g.ACL.ROLE_PERMS.admin.indexOf(p) >= 0 ? '✓' : '—') + '</td>' +
-            '<td>' + (g.ACL.ROLE_PERMS.member.indexOf(p) >= 0 ? '✓' : '—') + '</td></tr>';
+            '<td><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg></td>' +
+            '<td>' + (g.ACL.ROLE_PERMS.admin.indexOf(p) >= 0 ? '<svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>' : '—') + '</td>' +
+            '<td>' + (g.ACL.ROLE_PERMS.member.indexOf(p) >= 0 ? '<svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>' : '—') + '</td></tr>';
         });
         html += '</tbody></table>';
         wrap.innerHTML = html;
@@ -3846,7 +3904,7 @@
       };
     }
     /* 取消录音的唯一出口。
-       没有它，误触 🎙 之后只能：把不想发的语音发出去，或刷新页面。
+       没有它，误触录音之后只能：把不想发的语音发出去，或刷新页面。
        cancelRecord() 早就写好了，只是从没接到 UI 上。 */
     var rc = $('recCancel');
     if (rc) rc.onclick = function (e) {

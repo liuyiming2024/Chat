@@ -6,15 +6,32 @@
   "repo": "https://github.com/liuyiming2024/Chat",
   "backend": "Supabase（PostgreSQL）。后端连不上时退回本机模式并提示。",
   "endpoints": [
-    { "path": "/Chat/api/manifest.json",  "method": "GET", "desc": "本项目元信息与接口清单" },
-    { "path": "/Chat/api/platforms.json", "method": "GET", "desc": "各平台客户端与当前版本" }
+    {
+      "path": "/Chat/api/manifest.json",
+      "method": "GET",
+      "desc": "本项目元信息与接口清单"
+    },
+    {
+      "path": "/Chat/api/platforms.json",
+      "method": "GET",
+      "desc": "各平台客户端与当前版本"
+    },
+    {
+      "path": "/Chat/chat/update/manifest.json",
+      "method": "GET",
+      "desc": "客户端更新清单（版本 + 多镜像下载直链），related 里那份"
+    }
   ],
   "related": [
-    { "path": "/Chat/chat/update/manifest.json", "desc": "客户端更新清单（版本 + 多镜像下载直链）" }
+    {
+      "path": "/Chat/chat/update/manifest.json",
+      "desc": "客户端更新清单（版本 + 多镜像下载直链）"
+    }
   ],
   "note": [
-    "站外只有这些只读的静态 JSON。聊天数据存在服务端，",
+    "站外只有下面列出的这些只读静态 JSON。聊天数据存在服务端，",
     "受站点保护密码与账号权限双重保护，不会通过任何公开接口暴露。",
-    "GitHub Pages 是纯静态托管，没有服务端可以代理读写请求。"
+    "GitHub Pages 是纯静态托管，没有服务端可以代理读写请求，",
+    "因此不存在任何写入接口。"
   ]
 }
