@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%233b7ff2'/%3E%3Cpath d='M8 11h16M8 16h11' stroke='%23fff' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E">
+<title>隐私声明 · 使用手册</title>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+  <symbol id="i-moon" viewBox="0 0 24 24">
+    <path d="M20.2 14.6A8.6 8.6 0 0 1 9.4 3.8a8.6 8.6 0 1 0 10.8 10.8z"/>
+  </symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="4.2"/>
+    <path d="M12 2.4v2.2M12 19.4v2.2M4.2 12H2M22 12h-2.2M6.4 6.4 4.8 4.8M19.2 19.2l-1.6-1.6M17.6 6.4l1.6-1.6M4.8 19.2l1.6-1.6"/>
+  </symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24">
+    <path d="M12 3 5 6v5.5c0 4.2 3 7.9 7 9 4-1.1 7-4.8 7-9V6z"/>
+    <path d="M9.2 12.2 11.2 14.2 15 10.4"/>
+  </symbol>
+</svg>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="logo" href="../index.html"><span class="logo-mark">聊</span>聊天室</a>
+    <div class="nav-links">
+      <a href="../index.html" data-nav="home">首页</a>
+      <a href="../chat/index.html" data-nav="chat">聊天室</a>
+      <a href="../tieba/index.html" data-nav="tieba">贴吧</a>
+      <a href="../docs/index.html" data-nav="docs">使用手册</a>
+    </div>
+    <div class="nav-tools"><button class="icon-btn" id="btnTheme" title="切换深色 / 浅色"><svg class="ic" aria-hidden="true"><use href="#i-moon"/></svg></button></div>
+  </div>
+</nav>
+<div class="wrap">
+  <div class="doc-layout">
+    <nav class="doc-side">
+      <a href="index.html" data-doc="index">手册首页</a>
+      <a href="getting-started.html" data-doc="getting-started">新手入门</a>
+      <a href="markdown.html" data-doc="markdown">Markdown 与公式</a>
+      <a href="permissions.html" data-doc="permissions">权限与命令</a>
+      <a href="admin.html" data-doc="admin">管理员手册</a>
+      <a href="client.html" data-doc="client">客户端下载</a>
+      <a href="deploy.html" data-doc="deploy">部署与数据</a>
+      <a href="privacy.html" data-doc="privacy">隐私声明</a>
+      <a href="terms.html" data-doc="terms">使用须知</a>
+    </nav>
+    <main class="doc-main">
+      <div class="panel">
+<h2>隐私声明</h2>
+<p>本站是个人自部署的聊天站点，<b>不是商业服务</b>。
+   下面说清楚：你的什么数据被存下来、存在哪、谁能看到、怎么删掉。
+   不用法律术语绕弯子，你看完就知道发生了什么。</p>
+
+<h3>一、数据存在哪</h3>
+<p>聊天数据存在<b>站长自己租用的数据库</b>里（Supabase），
+   账号由站长独立持有——不是某个公司运营的公共聊天服务，
+   <b>没有运营商在背后看你的消息</b>。</p>
+<p>网页本身托管在 GitHub Pages，它只负责把页面文件送给你，
+   不接触聊天内容。</p>
+<div class="tip">
+  <b>换句话说：</b>能看到你消息的人只有两类——你所在的房间的其他成员，
+  以及<b>有能力直接查数据库的站长</b>。就这两类，没有第三类。
+</div>
+
+<h3>二、存了你的什么</h3>
+<table>
+  <tr><th>数据</th><th>为什么需要</th></tr>
+  <tr><td>昵称</td><td>别人认出你</td></tr>
+  <tr><td>登录密码</td><td>验证是你本人。<b>只存单向哈希，不存明文</b></td></tr>
+  <tr><td>注册申请说明</td><td>站长审核时用</td></tr>
+  <tr><td>你发的消息</td><td>聊天本身</td></tr>
+  <tr><td>你发的图片/视频/语音/文件</td><td>聊天本身</td></tr>
+  <tr><td>最后在线时间</td><td>显示"最近活跃"</td></tr>
+</table>
+<p>不需要手机号、邮箱、真实姓名、通讯录、位置——这些<b>一个都不采集</b>。</p>
+
+<div class="tip warn">
+  <b>关于密码：</b>存的是单向哈希，<b>站长也看不到你的密码原文</b>。
+  他只能重置，不能"查出来"。<br>
+  但这也意味着：<b>密码忘了就找不回</b>，只能请站长重置。
+  所以别用你在别处用过的密码——虽然看不到明文，习惯上仍然值得分开。
+</div>
+
+<h3>三、谁看得到你的消息</h3>
+<table>
+  <tr><th>场景</th><th>谁能看到</th></tr>
+  <tr><td>公屏大厅</td><td>所有通过审核的成员</td></tr>
+  <tr><td>群</td><td>该群成员</td></tr>
+  <tr><td>私聊</td><td>只有你们两个</td></tr>
+</table>
+<div class="tip warn">
+  <b>「加密群」不等于端到端加密。</b>
+  群密码只是<b>进门凭证</b>——挡的是陌生人加入，
+  不挡有数据库权限的人。站长在数据库层面仍可读到全部消息。
+  如果你需要真正"站长也看不到"，本站在设计上做不到，
+  最实际的做法是发完即撤回。
+</div>
+
+<h3>四、你本机存了什么</h3>
+<p>除了服务端，你的浏览器里也会存一份，目的是离线可用和加快打开：</p>
+<ul>
+  <li><b>图片、视频等媒体</b>——缓存，避免每次重新下载</li>
+  <li><b>离线时发的消息</b>——排队等你联网后补发，发完清除</li>
+  <li><b>登录状态、界面偏好</b>——记住你选的"记住我"、深色模式等</li>
+</ul>
+<p>这些都在<b>你自己设备的浏览器里</b>，别人拿不到。
+   清除浏览器站点数据即可全部删掉（同时会退出登录）。</p>
+
+<h3>五、第三方</h3>
+<p>整站只有两个外部服务：</p>
+<table>
+  <tr><th>服务</th><th>做什么</th><th>接触聊天内容吗</th></tr>
+  <tr><td>Supabase</td><td>存账号、消息、媒体</td><td>是（它就是数据库本身）</td></tr>
+  <tr><td>GitHub Pages</td><td>存放网页文件</td><td>否</td></tr>
+</table>
+<p><b>没有</b>统计脚本、没有广告、没有社交插件、没有第三方 Cookie。</p>
+
+<h3>六、不做什么</h3>
+<ul>
+  <li>不追踪你在其他网站的行为</li>
+  <li>不投放广告，也不把数据用于广告</li>
+  <li>不出售、不交换、不共享给任何第三方</li>
+  <li>不把聊天内容用于模型训练</li>
+  <li>不索要通讯录、位置、相机等无关权限
+      （录音只在你要发语音时申请，图片只在你要发图时读取）</li>
+</ul>
+
+<h3>七、怎么删</h3>
+<table>
+  <tr><th>想删什么</th><th>怎么做</th></tr>
+  <tr><td>自己发的某条消息</td><td>消息操作条 →「删除」</td></tr>
+  <tr><td>整个会话的记录</td><td><code>/clear</code>，或群菜单里清空</td></tr>
+  <tr><td>本机的缓存</td><td>浏览器清除站点数据</td></tr>
+  <tr><td>整个账号</td><td>找站长，管理面板里删除用户</td></tr>
+  <tr><td>全站数据</td><td>站长：管理面板 → 站点 → 重置站点</td></tr>
+</table>
+<p>想带走数据：管理面板 → 站点 → <b>导出 JSON</b>。
+   这是你的数据，随时可以拿走。</p>
+
+<h3>八、风险说在前面</h3>
+<div class="tip warn">
+  <ul>
+    <li>这是个人项目，<b>没有备份承诺</b>。重要内容请自行导出留存。</li>
+    <li>站长重置站点会清空全部数据，且<b>不可恢复</b>。</li>
+    <li>请不要在这里发送身份证号、银行卡、密码等高度敏感信息——
+        任何聊天工具都不适合传这些。</li>
+  </ul>
+</div>
+
+<h3>九、条款变更</h3>
+<p>本站功能会迭代，本页内容也会随之调整。
+   改动会更新在页面上，继续使用即视为知晓最新版本。
+   有疑问直接问站长——这是个熟人小站，不是客服工单系统。</p>
+
+<p style="color:var(--dim);font-size:13.5px;margin-top:20px">
+  相关：<a href="terms.html">使用须知</a> ·
+  <a href="deploy.html">部署与数据</a></p>
+      </div>
+    </main>
+  </div>
+</div>
+<div class="foot"><div>使用手册 · <a href="../index.html">返回首页</a> · <a href="privacy.html">隐私声明</a> · <a href="terms.html">使用须知</a></div></div>
+<script src="../assets/site.js"></script>
+<script>
+(function () {
+  var m = /\/([a-z-]+)\.html$/.exec(location.pathname);
+  var k = m ? m[1] : 'index';
+  var links = document.querySelectorAll('.doc-side a');
+  for (var i = 0; i < links.length; i++) {
+    if (links[i].getAttribute('data-doc') === k) links[i].classList.add('on');
+  }
+})();
+</script>
+</body>
+</html>
