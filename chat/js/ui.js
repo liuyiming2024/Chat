@@ -11,7 +11,15 @@
   }
 
   var toastTimer = null;
-  function toast(msg, type) {
+  /* ⚠ 原来签名只有 (msg, type)，而代码里有 4 处传第三个参数当时长
+     （如 toast('...', 'err', 6000)）—— **被静默忽略**。
+     调用方以为设了 6 秒，实际仍是默认 2.2 秒，
+     长提示一闪而过，用户根本没读完。这类"参数传了没用"
+     不会报错，只有对比实现和调用才会发现。
+
+     所以补上第三个参数：ms（默认 2200；传 0 表示常驻，直到被下一次覆盖）。
+     并返回元素，方便调用方主动关掉"正在…"这类进度提示。 */
+  function toast(msg, type, ms) {
     var el = document.getElementById('toast');
     if (!el) {
       el = document.createElement('div');
@@ -21,7 +29,11 @@
     el.className = 'toast show' + (type ? ' toast-' + type : '');
     el.textContent = msg;
     if (toastTimer) clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { el.className = 'toast'; }, 2200);
+    var dur = (typeof ms === 'number' && ms >= 0) ? ms : 2200;
+    if (dur > 0) {
+      toastTimer = setTimeout(function () { el.className = 'toast'; }, dur);
+    }
+    return el;
   }
 
   /* 模态框：opts {title, body(HTML或节点), okText, cancelText, onOk, wide} */

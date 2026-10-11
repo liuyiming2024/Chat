@@ -1945,6 +1945,13 @@
         return '[' + g.UI.fmtFull(m.ts) + '] ' + nameOf(m.from) + '：' + t;
       }).join('\n');
     }
+    /* ⚠ 大房间导出时界面全程零反馈（S-077）。
+       数万条消息一次性拼字符串 + 包 Blob 会占住主线程好几秒，
+       用户看到的是"点了没反应"，于是反复点 —— 越点越卡。
+       所以：① 先显示"正在导出 N 条"；② 让这一帧有机会画出来再干重活。
+       分块拼接成本高，这里先解决"看不见进度"这个主要矛盾。 */
+    g.UI.toast('正在导出 ' + list.length + ' 条…', 'ok', 0);
+    var doExport = function () {
     var blob = new Blob([head + body], { type: 'text/plain;charset=utf-8' });
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -1956,7 +1963,13 @@
     a.download = (r ? r.name : cur).replace(/[\/:*?"<>|]/g, '_') + '-' +
       new Date().toISOString().slice(0, 10) + '.' + (fmt === 'md' ? 'md' : 'txt');
     a.click();
-    g.UI.toast('已导出', 'ok');
+    /* 不必手动 remove：下一次 toast 会复用同一个元素并覆盖内容。
+       先移除再新建只是白白多一次 DOM 操作。 */
+    g.UI.toast('已导出 ' + list.length + ' 条（'
+      + (blob.size / 1024).toFixed(0) + ' KB）', 'ok');
+    };
+    /* 让"正在导出"这一帧先画出来，再执行重活 */
+    setTimeout(doExport, 30);
   }
 
   function markBackup() { S.lastBackup = Date.now(); save(true); }
