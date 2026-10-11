@@ -209,13 +209,28 @@
 
   function curInterval() { return hidden ? HIDDEN_MS : visibleMs; }
 
+  /* 上次轮询是否成功。用来检测"网络恢复"。
+     ⚠ 必须检测，否则补发只在建站初始化时发生一次：
+       已登录用户中途断网发的消息，重新联网后永远不会被补发，
+       一直挂着"待发送"不动 —— 队列机制等于白做。 */
+  var tickOk = false;
+  var reconnectHandler = null;
+  function onReconnect(fn) { reconnectHandler = fn; }
+
   function tick() {
     if (!online || !g.SB || !g.SB.token()) return;
     g.SB.rpc('state_peek', {}).then(function (n) {
+      /* 失败→成功：网络刚恢复，把离线期间攒的消息补发出去 */
+      if (!tickOk) {
+        tickOk = true;
+        if (reconnectHandler) { try { reconnectHandler(); } catch (e) { } }
+      }
       n = Number(n);
       if (seq === null) { seq = n; return pull(); }   /* 首次建立基线 */
       if (n !== seq) { seq = n; return pullDelta(); } /* 之后只拉增量 */
-    }).catch(function () { /* 网络抖动忽略，下次再来 */ });
+    }).catch(function () {
+      tickOk = false;   /* 网络抖动忽略，但记下来，好在恢复时补发 */
+    });
   }
 
   var visBound = false;
@@ -239,26 +254,67 @@
      时间戳由服务端给 —— 本机时钟可能不准，用它会导致消息乱序，
      插在别人消息中间，看起来非常怪。
 
-     所以客户端只管排队，不自己造时间戳。 */
+     所以客户端只管排队，不自己造时间戳。
+
+     ⚠ 上限不是"以防万一"，是必需的：
+       localStorage 只有 5MB。长期离线会攒爆，届时 setItem 抛异常
+       被 try/catch 吞掉 —— 用户看到"已存入待发送队列"，
+       实际一条都没存住。攒爆之后入队的消息全部静默丢失，
+       这比当场告诉用户"存不下了"糟得多（S-045）。 */
   var OUTBOX_KEY = 'chat_outbox';
+  var OUTBOX_MAX_ITEMS = 200;                    /* 条数上限 */
+  var OUTBOX_MAX_BYTES = 2 * 1024 * 1024;        /* 体积上限 2MB（配额 5MB） */
+  var OUTBOX_TTL_MS = 7 * 24 * 3600 * 1000;      /* 7 天以上就没什么意义了 */
 
   function outbox() {
     try { return JSON.parse(localStorage.getItem(OUTBOX_KEY) || '[]'); }
     catch (e) { return []; }
   }
 
-  function outboxSave(list) {
-    try { localStorage.setItem(OUTBOX_KEY, JSON.stringify(list)); } catch (e) { }
+  function outboxBytes(list) {
+    try { return JSON.stringify(list).length; } catch (e) { return 0; }
   }
 
-  /* 入队。返回本地临时 id，界面据此显示"待发送" */
+  /* 返回是否真的存住了 —— 存不下必须让调用方知道，不能静默 */
+  function outboxSave(list) {
+    try { localStorage.setItem(OUTBOX_KEY, JSON.stringify(list)); return true; }
+    catch (e) { return false; }
+  }
+
+  /* 入队。
+     localId 是界面上那条乐观更新消息的本地 id —— 补发成功要靠它
+     把本地临时 id 换成服务端 id，否则同一条会出现两遍（S-043）。
+
+     返回 { ok, qid, dropped, reason }：
+       ok=false 表示真的没存住，界面必须如实告诉用户，
+       不能照样显示"待发送"（那是在骗人）。 */
   function enqueue(item) {
+    var now = Date.now();
     var list = outbox();
-    item.qid = 'q_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
-    item.queuedAt = Date.now();
+
+    /* 先清过期的 */
+    var before = list.length;
+    list = list.filter(function (x) {
+      return !x.queuedAt || (now - x.queuedAt) < OUTBOX_TTL_MS;
+    });
+    var dropped = before - list.length;
+
+    item.qid = 'q_' + now + '_' + Math.random().toString(36).slice(2, 8);
+    item.queuedAt = now;
     list.push(item);
-    outboxSave(list);
-    return item.qid;
+
+    /* 超上限就丢最老的。while 里保底留 1 条 ——
+       刚点的发送必须留下，否则用户点完什么都没有，非常费解。 */
+    while (list.length > OUTBOX_MAX_ITEMS && list.length > 1) { list.shift(); dropped++; }
+    while (outboxBytes(list) > OUTBOX_MAX_BYTES && list.length > 1) { list.shift(); dropped++; }
+
+    if (!outboxSave(list)) {
+      /* 存不下（配额满）。把刚加的这条去掉再试一次，至少保住已有的 */
+      list.pop();
+      outboxSave(list);
+      return { ok: false, qid: null, dropped: dropped, reason: 'quota' };
+    }
+    return { ok: true, qid: item.qid, dropped: dropped, reason: null };
   }
 
   function dequeue(qid) {
@@ -266,13 +322,28 @@
     outboxSave(list);
   }
 
-  /* 补发。按顺序逐条发，失败就停下等下次 ——
-     顺序错了比少发一条更糟，所以不能并发。 */
+  /* 补发成功后通知界面：把本地临时 id 换成服务端 id。
+     不做这一步会怎样（S-043）：
+       界面那条是乐观更新出来的，id 由本地生成；补发时服务端另生成一个。
+       pull 回来后两条 id 不同，按 id merge 就会并存 ——
+       用户看到自己发的话出现两遍。 */
+  var outboxSentHandler = null;
+  function outboxOnSent(fn) { outboxSentHandler = fn; }
+
+  /* 补发。按顺序逐条发 ——
+     顺序错了比少发一条更糟，所以不能并发。
+
+     ⚠ 失败不能静默（S-044）：
+       之前 .catch 什么都不做，用户不知道有几条没发出去、为什么。
+       攒了 50 条全失败，它们还挂着"待发送"，用户以为迟早会发出去。
+     返回 { sent, failed, err }。 */
   function flushOutbox() {
-    if (!online) return Promise.resolve(0);
+    var empty = { sent: 0, failed: 0, err: null };
+    if (!online) return Promise.resolve(empty);
     var list = outbox();
-    if (!list.length) return Promise.resolve(0);
-    var n = 0;
+    if (!list.length) return Promise.resolve(empty);
+
+    var sent = 0, failed = 0, lastErr = null;
     var chain = Promise.resolve();
     list.slice().forEach(function (it) {
       chain = chain.then(function () {
@@ -280,11 +351,21 @@
           p_room: it.room, p_type: it.type, p_body: it.body,
           p_media: it.media || null, p_name: it.name || '',
           p_size: it.size || 0, p_reply: it.replyTo || null
-        }).then(function () { dequeue(it.qid); n++; })
-          .catch(function () { /* 失败保留，下次再试 */ });
+        }).then(function (res) {
+          dequeue(it.qid);
+          if (outboxSentHandler && it.localId && res && res.id) {
+            try { outboxSentHandler(it.localId, res.id, it); } catch (e) { }
+          }
+          sent++;
+        }).catch(function (e) {
+          failed++;
+          lastErr = (e && e.message) ? e.message : '网络错误';
+        });
       });
     });
-    return chain.then(function () { return n; });
+    return chain.then(function () {
+      return { sent: sent, failed: failed, err: lastErr };
+    });
   }
 
   /* ---------------- 写操作：只走带鉴权的 RPC ---------------- */
@@ -401,6 +482,7 @@
     uploadMedia: uploadMedia,
     sendMsg: sendMsg, editMsg: editMsg, convert: convert,
     joinRoom: joinRoom, createRoom: createRoom, updateRoom: updateRoom,
-    enqueue: enqueue, flushOutbox: flushOutbox, outbox: outbox, dequeue: dequeue
+    enqueue: enqueue, flushOutbox: flushOutbox, outbox: outbox, dequeue: dequeue,
+    outboxOnSent: outboxOnSent, onReconnect: onReconnect
   };
 })(window);
