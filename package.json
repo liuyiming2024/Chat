@@ -5,6 +5,8 @@
   "main": "electron/main.js",
   "description": "聊天室桌面版（Electron 壳，复用同一份前端代码）",
   "scripts": {
+    "sync-www": "node scripts/sync-www.js",
+    "prebuild": "node scripts/sync-www.js",
     "dist": "electron-builder --win --x64 --publish never"
   },
   "build": {
