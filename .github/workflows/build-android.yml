@@ -50,22 +50,16 @@ jobs:
       # 之前每一步都写 `|| true`，结果 cap add 失败也吞掉，
       # 一路滑到 gradlew 才炸，报的错跟真正的原因八竿子打不着。
       # 现在：平台目录必须真的生成出来，否则当场失败并报错。
-      # capacitor.config.json 的 webDir 指向 www/，源码在 chat/。
-      # 不同步的话，改了源码打进的还是旧版本 —— 已经真实发生过：
+      # www/ 是打包目录（capacitor webDir），源码在根目录。
+      # 不同步就打进旧版本 —— 已经真实发生过：
       # 修了 app.js 的跨房间状态泄漏，www/ 里仍是旧的，
       # 安卓包里的 bug 没修到，当时还以为修好了。
-      # 这里同步一次并当场校验，避免"以为同步了其实没有"。
+      #
+      # 用仓库脚本而不是现场 cp：脚本同步【所有】目录
+      # （chat/docs/tieba/api/assets），当场校验一致，
+      # 并确认 www/index.html 没被误覆盖成根落地页。
       - name: 同步源码到打包目录
-        run: |
-          rm -rf www/chat
-          cp -r chat www/chat
-          if diff -r chat www/chat > /tmp/shadow.txt 2>&1; then
-            echo "✅ 源码已同步到 www/chat/"
-          else
-            echo "::error::同步后两份仍不一致"
-            head -20 /tmp/shadow.txt
-            exit 1
-          fi
+        run: node scripts/sync-www.js
 
       - name: 装 Capacitor 并添加安卓平台
         run: |

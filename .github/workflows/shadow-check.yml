@@ -1,23 +1,42 @@
 name: 影子副本一致性
 
-# capacitor.config.json 的 webDir 指向 www/，而源码在 chat/。
-# 这两份之间没有同步机制，改了源码会打进旧版本 —— 已经真实发生过一次：
+# www/ 是 APP（Capacitor）与桌面版（Electron）的共同打包目录：
+#   capacitor.config.json 的 webDir 指向 www
+#   package.json 的 build.files 里是 www/**
+# 源码在仓库根目录的 chat/ docs/ tieba/ api/ assets/。
 #
-#   2026-10-11 修了 app.js 的跨房间状态泄漏（MSG_PAGE / replyTo），
-#   改动只在 chat/ 里，www/chat/js/app.js 还是旧的。
-#   而安卓打包读 www/ → 用户装到的 APP 里，那个 bug 根本没修到，
-#   当时还以为已经修好了。
+# 两边没有任何自动同步机制，改了源码会打进旧版本。
+# 已经真实发生过两次：
 #
-# 这个检查独立成一个 workflow，不挂在安卓构建上：
-# 安卓构建要跑十几分钟，这里只要几秒。早失败比晚失败便宜得多。
+#   1. 2026-10-11 修了 chat/js/app.js 的跨房间状态泄漏，
+#      www/chat/js/app.js 还是旧的 → 安卓用户装到的 APP 里 bug 一个没修，
+#      而我们当时以为修好了。
+#   2. www/electron/main.js 曾经是 81 行的旧版死代码，
+#      被 files: www/** 一起打进安装包。
+#
+# 所以这里要覆盖【所有】会被打包进去的目录，不只是 chat/。
+# docs/ 尤其不能漏 —— APP 里的使用手册跟网页版说的不是一回事，
+# 比代码不同步更误导人。
+#
+# 独立成快 workflow（几秒），不挂在安卓构建（十几分钟）上。
+# 早失败比晚失败便宜得多。
+#
+# 校验逻辑放在 scripts/sync-www.js，本文件只负责调用 ——
+# 同一套逻辑写两份，早晚有一天对不上。
 
 on:
   push:
     branches: [main]
     paths:
       - 'chat/**'
-      - 'www/chat/**'
+      - 'docs/**'
+      - 'tieba/**'
+      - 'api/**'
+      - 'assets/**'
+      - 'www/**'
+      - 'scripts/sync-www.js'
       - 'capacitor.config.json'
+      - 'package.json'
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -28,24 +47,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: 比对 chat/ 与 www/chat/
-        run: |
-          echo "源码目录：chat/"
-          echo "打包目录：www/chat/（capacitor webDir 指向 www）"
-          echo ""
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
 
-          if diff -r chat www/chat > /tmp/d.txt 2>&1; then
-            echo "✅ 两份一致"
-            exit 0
-          fi
-
-          echo "::error::chat/ 与 www/chat/ 不一致 —— 安卓包会打进旧版本"
-          echo ""
-          echo "差异摘要（前 30 行）："
-          head -30 /tmp/d.txt
-          echo ""
-          echo "总计：$(grep -c '^diff\|^Files.*differ\|^Only in' /tmp/d.txt) 处"
-          echo ""
-          echo "修法：把源码同步过去再提交"
-          echo "  rsync -a --delete chat/ www/chat/"
-          exit 1
+      # --check 只比对不改文件；不一致就退出码 1
+      - name: 比对源码目录与 www 副本
+        run: node scripts/sync-www.js --check

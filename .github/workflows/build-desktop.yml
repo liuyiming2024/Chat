@@ -79,6 +79,11 @@ jobs:
           npm i --save-dev electron electron-builder --silent --no-fund --no-audit
           node -e "console.log('build 配置:', JSON.stringify(require('./package.json').build))"
 
+      # 桌面版打包读 www/（package.json 的 build.files 里是 www/**）。
+      # 用仓库里的脚本，顺便校验 www/index.html 没被误覆盖。
+      - name: 同步源码到打包目录
+        run: node scripts/sync-www.js
+
       - name: 构建
         id: build
         if: ${{ github.event.inputs.target == 'all' || github.event.inputs.target == matrix.plat }}

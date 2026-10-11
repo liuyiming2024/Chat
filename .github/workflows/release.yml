@@ -105,6 +105,7 @@ jobs:
       - name: 构建
         shell: bash
         run: |
+          node scripts/sync-www.js
           npm i --save-dev electron electron-builder --silent --no-fund --no-audit
           npx electron-builder --win --x64 --publish never 2>&1 | tee build-log.txt
           echo "exit=${PIPESTATUS[0]}"
@@ -137,6 +138,7 @@ jobs:
         with: { node-version: '22' }
       - name: 构建
         run: |
+          node scripts/sync-www.js
           npm i --save-dev electron electron-builder --silent --no-fund --no-audit
           npx electron-builder --linux --x64 --publish never 2>&1 | tee build-log.txt
           echo "exit=${PIPESTATUS[0]}"
@@ -174,6 +176,7 @@ jobs:
         with: { node-version: '22' }
       - name: 构建
         run: |
+          node scripts/sync-www.js
           npm i --save-dev electron electron-builder --silent --no-fund --no-audit
           npx electron-builder --mac --x64 --arm64 --publish never 2>&1 | tee build-log.txt
           echo "exit=${PIPESTATUS[0]}"
