@@ -91,6 +91,7 @@
       <a href="markdown.html" data-doc="markdown">Markdown 与公式</a>
       <a href="permissions.html" data-doc="permissions">权限与命令</a>
       <a href="admin.html" data-doc="admin">管理员手册</a>
+      <a href="client.html" data-doc="client">客户端下载</a>
       <a href="deploy.html" data-doc="deploy">部署与数据</a>
     </nav>
     <main class="doc-main">
@@ -112,10 +113,10 @@
   这正是由逐项勾选决定的。想给某人特殊权力，不必提拔他，直接勾那一项就行。
 </div>
 
-<h3>二、38 项权限（7 组）</h3>
+<h3>二、39 项权限（7 组）</h3>
 <table>
   <tr><th>组</th><th>权限项</th></tr>
-  <tr><td><b>消息</b></td><td>发言 · 撤回自己的消息 · 移除他人消息 · Delete 物理删除 · 查看被处置原文 · 置顶消息</td></tr>
+  <tr><td><b>消息</b></td><td>发言 · <b>编辑自己已发出的消息</b> · 撤回自己的消息 · 移除他人消息 · Delete 物理删除 · 查看被处置原文 · 置顶消息</td></tr>
   <tr><td><b>媒体</b></td><td>发图片 · 发视频 · 发语音 · 发文件附件（<b>各自独立</b>）</td></tr>
   <tr><td><b>房间</b></td><td>建群 · 改群名 · 改公告 · 改简介 · 改群密码 · 邀请/生成口令 · 移出成员 · 设群管理员 · 解散群 · 导出群记录</td></tr>
   <tr><td><b>用户管理</b></td><td>查看成员 · 禁言 · 封禁 · 手动开户 · 删除用户 · 授予管理员 · <b>分配他人权限</b> · 转让站长</td></tr>
@@ -153,6 +154,7 @@
   <tr><td><code>/clear</code></td><td>清空本会话</td><td><code>/pwd 密码</code></td><td>设群密码（留空取消）</td></tr>
   <tr><td><code>/env</code></td><td>运行环境自检</td><td><code>/sys 内容</code></td><td>全站系统公告（管理）</td></tr>
   <tr><td><code>/mode simple</code></td><td>切极简模式</td><td><code>/mode pro</code></td><td>切专业模式</td></tr>
+  <tr><td><code>/msg 昵称 内容</code></td><td><code>/dm</code> 的别名，用法完全相同</td><td></td><td></td></tr>
 </table>
 <p style="color:var(--dim);font-size:13.5px">
   管理员也可以完全不用命令：右键会话、点头像、开管理面板，全是图形化操作。</p>

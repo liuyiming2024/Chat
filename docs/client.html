@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%233b7ff2'/%3E%3Cpath d='M8 11h16M8 16h11' stroke='%23fff' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E">
+<title>客户端下载 · 使用手册</title>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+<!--
+  共享图标库（内联 SVG sprite）。
+
+  为什么内联而不是外部 .svg 文件：
+    站点要支持 file:// 双击直接打开，外部 SVG sprite 在 file:// 下
+    会被 CORS 挡掉，Safari 也不支持跨文档 <use>。内联才能全场景可用。
+
+  用法：
+    <svg class="ic" aria-hidden="true"><use href="#i-moon"/></svg>
+
+  风格统一：24×24 视口、stroke=currentColor、fill=none、圆角端点。
+  这样图标颜色自动跟随文字，深色模式不用额外处理。
+-->
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+  <symbol id="i-moon" viewBox="0 0 24 24">
+    <path d="M20.2 14.6A8.6 8.6 0 0 1 9.4 3.8a8.6 8.6 0 1 0 10.8 10.8z"/>
+  </symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="4.2"/>
+    <path d="M12 2.4v2.2M12 19.4v2.2M4.2 12H2M22 12h-2.2M6.4 6.4 4.8 4.8M19.2 19.2l-1.6-1.6M17.6 6.4l1.6-1.6M4.8 19.2l1.6-1.6"/>
+  </symbol>
+  <symbol id="i-monitor" viewBox="0 0 24 24">
+    <rect x="2.5" y="3.5" width="19" height="13" rx="1.6"/>
+    <path d="M9 20.5h6M12 16.5v4"/>
+  </symbol>
+  <symbol id="i-phone" viewBox="0 0 24 24">
+    <rect x="6.5" y="2.5" width="11" height="19" rx="2.2"/>
+    <path d="M10.8 5.4h2.4M11 18.6h2"/>
+  </symbol>
+  <symbol id="i-box" viewBox="0 0 24 24">
+    <path d="M20.6 7.6 12 3 3.4 7.6v8.8L12 21l8.6-4.6z"/>
+    <path d="M3.6 7.6 12 12l8.4-4.4M12 12v9"/>
+  </symbol>
+</svg>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="logo" href="../index.html"><span class="logo-mark">聊</span>聊天室</a>
+    <div class="nav-links">
+      <a href="../index.html" data-nav="home">首页</a>
+      <a href="../chat/index.html" data-nav="chat">聊天室</a>
+      <a href="../tieba/index.html" data-nav="tieba">贴吧</a>
+      <a href="../docs/index.html" data-nav="docs">使用手册</a>
+    </div>
+    <div class="nav-tools"><button class="icon-btn" id="btnTheme" title="切换深色 / 浅色"><svg class="ic" aria-hidden="true"><use href="#i-moon"/></svg></button></div>
+  </div>
+</nav>
+<div class="wrap">
+  <div class="doc-layout">
+    <nav class="doc-side">
+      <a href="index.html" data-doc="index">手册首页</a>
+      <a href="getting-started.html" data-doc="getting-started">新手入门</a>
+      <a href="markdown.html" data-doc="markdown">Markdown 与公式</a>
+      <a href="permissions.html" data-doc="permissions">权限与命令</a>
+      <a href="admin.html" data-doc="admin">管理员手册</a>
+      <a href="client.html" data-doc="client">客户端下载</a>
+      <a href="deploy.html" data-doc="deploy">部署与数据</a>
+    </nav>
+    <main class="doc-main">
+      <div class="panel">
+<h2>客户端下载</h2>
+<p>网页版打开即用，不用装任何东西。<b>客户端是可选的</b>——
+   想要独立窗口、系统托盘、开机自启这类体验时才需要它。
+   两边的消息完全互通，装不装不影响你跟谁聊。</p>
+
+<h3>一、各平台怎么拿</h3>
+<table>
+  <tr><th>平台</th><th>文件</th><th>大小</th><th>怎么装</th></tr>
+  <tr><td><b>Windows</b></td><td><code>chat-win-setup.exe</code></td><td>76 MB</td>
+      <td>双击安装。SmartScreen 提示时点「仍要运行」</td></tr>
+  <tr><td><b>Windows 便携</b></td><td><code>chat-win-portable.exe</code></td><td>76 MB</td>
+      <td>双击即用，不安装、不写注册表</td></tr>
+  <tr><td><b>macOS</b></td><td><code>chat-mac.dmg</code></td><td>94 MB</td>
+      <td>拖进 Applications</td></tr>
+  <tr><td><b>Linux</b></td><td><code>chat-linux.AppImage</code></td><td>103 MB</td>
+      <td>加执行权限后直接运行</td></tr>
+  <tr><td><b>安卓</b></td><td><code>chat-android.apk</code></td><td>3.2 MB</td>
+      <td>需允许「未知来源」安装</td></tr>
+</table>
+
+<div class="tip">
+  <b>下载直链</b>不用登录，格式是
+  <code>releases/latest/download/文件名</code>——
+  写死的链接会自动指向最新版，不用手动找版本号。
+</div>
+
+<h3>二、第一次打开会被拦一下</h3>
+<p>这个文件<b>没有做商业签名</b>（正规证书要花钱，本项目零成本运行），
+   所以各系统都会拦一次。拦是系统该做的，点过去就行：</p>
+<table>
+  <tr><th>系统</th><th>你会看到</th><th>怎么做</th></tr>
+  <tr><td>Windows</td><td>蓝色「Windows 已保护你的电脑」</td><td>点「更多信息」→「仍要运行」</td></tr>
+  <tr><td>macOS</td><td>「无法打开，因为来自身份不明的开发者」</td>
+      <td><b>右键</b>点应用 →「打开」，不要双击。只第一次需要</td></tr>
+  <tr><td>安卓</td><td>「未知来源应用」</td><td>设置里允许一次</td></tr>
+</table>
+
+<div class="tip warn">
+  <b>macOS 那步容易踩：</b>直接双击会一直弹同样的框，怎么点都打不开。
+  必须是<b>右键</b>→「打开」，弹框里才会多出「打开」按钮。
+</div>
+
+<h3>三、苹果手机没有独立 App</h3>
+<p>App Store 上架需要 Apple 开发者账号（每年 99 美元），不在本项目预算内。
+   <b>但效果基本一样</b>——用浏览器把它装到桌面：</p>
+<ol>
+  <li>iPhone / iPad 用 <b>Safari</b> 打开本站</li>
+  <li>点底部「分享」按钮</li>
+  <li>选「添加到主屏幕」</li>
+</ol>
+<p>之后桌面会出现独立图标，点开全屏运行、没有浏览器地址栏，
+   还能离线使用。不经过 App Store，不花一分钱。</p>
+
+<h3>四、自动更新</h3>
+<p>客户端启动时会自己查一次有没有新版，有了会提示。
+   几个细节值得知道：</p>
+<ul>
+  <li><b>多个源自动测速。</b>它对候选源各取一小段计时，选最快的下载，
+      中途失败了自动换下一个。你不用管从哪下。</li>
+  <li><b>分块下载。</b>大文件切成几片同时拉，某一片失败只重传那一片，
+      不用整个文件从头来。断网重连也能接着下。</li>
+  <li><b>换源不用重新装。</b>下载源写在一份在线清单里，
+      改了清单客户端自己就会用新的。</li>
+  <li>下载完成后<b>不会替你安装</b>——它会打开文件夹让你自己装。
+      自动静默覆盖正在运行的应用不合适。</li>
+</ul>
+
+<h3>五、桌面版登录之后，网页版可以直接进</h3>
+<p>如果你在这台电脑上开着桌面版并已登录，打开网页版登录页时，
+   会多出一行提示「检测到这台电脑上已登录 XXX」，点一下就能直接进。</p>
+<div class="tip">
+  <b>它只省掉账号密码，不省站点保护密码。</b>
+  这是两道门：一道是你这个账号，一道是整站门禁。
+  桥接帮你过第一道，第二道该输还得输。
+</div>
+<p>没出现这行提示也没关系——那是<b>正常情况</b>，不是坏了。
+   它只在「桌面版开着且已登录」时才出现，
+   没装客户端、或客户端没登录，都会安静地不显示。</p>
+
+<h3>六、没装也能用</h3>
+<p>网页版功能和客户端完全一致，消息互通。<b>不装不会少任何功能。</b>
+   客户端多的只是：独立窗口、系统托盘、开机自启、以及上面那个免密进入。</p>
+      </div>
+    </main>
+  </div>
+</div>
+<div class="foot"><div>使用手册 · <a href="../index.html">返回首页</a></div></div>
+<script src="../assets/site.js"></script>
+<script>
+(function () {
+  var m = /\/([a-z-]+)\.html$/.exec(location.pathname);
+  var k = m ? m[1] : 'index';
+  var links = document.querySelectorAll('.doc-side a');
+  for (var i = 0; i < links.length; i++) {
+    if (links[i].getAttribute('data-doc') === k) links[i].classList.add('on');
+  }
+})();
+</script>
+</body>
+</html>
