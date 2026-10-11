@@ -1,5 +1,9 @@
--- 临时执行脚本占位。
--- 用完必须清空：本文件在公开仓库且会被 Actions 直接执行，
--- 绝不能留下任何凭据或破坏性语句。
--- 用法：把要执行的 SQL 临时写在这里 → Actions「数据库执行」→ 跑完立刻清空。
-select '（空）' as 提示;
+-- 只读核对：Code 云盘的表与函数是否已就位
+select 'code_files 表' as 项,
+  case when exists (select 1 from information_schema.tables where table_schema='public' and table_name='code_files')
+       then '存在' else '缺失' end as 状态
+union all
+select '函数数量', count(*)::text from information_schema.routines
+  where routine_schema='public' and routine_name like 'code_%'
+union all
+select 'users 表仍在', count(*)::text from users;
