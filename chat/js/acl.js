@@ -199,9 +199,29 @@
     if (!muted(user)) return 0;
     return Math.ceil((user.mutedUntil - Date.now()) / 1000);
   }
+
+  /* 把剩余禁言秒数说成人能读的话。
+     "剩余 3600 秒" 和 "还剩 1 小时" 是同一件事，
+     但前者要用户自己换算 —— 禁言中的用户本来就急躁。 */
+  function muteLeftText(user) {
+    var s = muteLeft(user);
+    if (!(s > 0)) return '禁言已到期，请重试';
+    if (s < 60) return '还剩 ' + s + ' 秒';
+    var m = Math.round(s / 60);
+    if (m < 60) return '还剩约 ' + m + ' 分钟';
+    var h = Math.floor(m / 60), mm = m % 60;
+    if (h < 24) return '还剩约 ' + h + ' 小时' + (mm ? ' ' + mm + ' 分' : '');
+    var d = Math.floor(h / 24);
+    return '还剩约 ' + d + ' 天' + ((h % 24) ? ' ' + (h % 24) + ' 小时' : '');
+  }
+
   function canSpeak(user, room) {
     if (!can(user, 'msg.send', room)) return { ok: false, why: '没有发言权限' };
-    if (muted(user)) return { ok: false, why: '你已被禁言，剩余 ' + muteLeft(user) + ' 秒' };
+    /* ⚠ 原来直接报"剩余 N 秒"（E-042）。
+       设置处填的是分钟，一次禁言 60 分钟就是 3600 秒 ——
+       用户看到"剩余 3600 秒"得自己换算，而多数人不会去算。
+       按量级换成"分 / 小时 / 天"，超过 1 天才退回日期。 */
+    if (muted(user)) return { ok: false, why: '你已被禁言，' + muteLeftText(user) };
     if (room && room.muted && room.muted.indexOf(user.id) >= 0) return { ok: false, why: '你已被本群禁言' };
     return { ok: true };
   }
