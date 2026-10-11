@@ -59,7 +59,11 @@ jobs:
       # （chat/docs/tieba/api/assets），当场校验一致，
       # 并确认 www/index.html 没被误覆盖成根落地页。
       - name: 同步源码到打包目录
-        run: node scripts/sync-www.js
+        run: |
+          # 日志提前建好：失败若发生在后面的步骤，
+          # "日志写回"是 always，能把它带出来。
+          echo "==== 构建开始 $(date -u +%FT%TZ) ====" > android-log.txt
+          node scripts/sync-www.js 2>&1 | tee -a android-log.txt
 
       - name: 装 Capacitor 并添加安卓平台
         run: |
@@ -70,12 +74,24 @@ jobs:
           #   某天上游发个不兼容的版本，构建就毫无征兆地红了，
           #   而本地谁也复现不出来 —— 因为大家装的不是同一个版本。
           #   改版本时改这里这一处即可。
-          CAPV=7.4.3
-          echo "capacitor 版本: $CAPV"
-          npm i @capacitor/core@$CAPV @capacitor/cli@$CAPV @capacitor/android@$CAPV \
-             @capacitor/local-notifications@$CAPV --silent --no-fund --no-audit
-          # 装完立刻核对，别等构建失败了才发现版本不对
-          npx cap --version | head -1
+          # 各包版本不完全同步（local-notifications 落后于 core），
+          # 所以分开钉，别想当然用同一个号。
+          #   ⚠ 上一轮我把 core/android/cli/notifications 全钉成 7.4.3，
+          #     结果 @capacitor/local-notifications 没有 7.4.3 这个版本，
+          #     npm i 直接失败 —— 而这一整步的日志当时没落盘，
+          #     只看到"装 Capacitor 失败"，查不出是哪句挂的。
+          #   所以：① 分开钉 ② 输出全程 tee 到日志文件。
+          CAP_CORE=8.5.3
+          CAP_NOTIF=8.3.1
+          echo "capacitor: core/cli/android=$CAP_CORE  local-notifications=$CAP_NOTIF"
+          set -o pipefail
+          npm i @capacitor/core@$CAP_CORE @capacitor/cli@$CAP_CORE \
+             @capacitor/android@$CAP_CORE \
+             @capacitor/local-notifications@$CAP_NOTIF \
+             --silent --no-fund --no-audit 2>&1 | tee -a ../android-log.txt
+          echo "npm i 退出码: ${PIPESTATUS[0]}" | tee -a ../android-log.txt
+          # 核对装到的版本：直接读文件，不用 npx（npx 会触发下载，在 CI 里可能超时）
+          node -e "for (const p of ['@capacitor/core','@capacitor/android','@capacitor/local-notifications']) { try { console.log(p, require('./node_modules/'+p+'/package.json').version) } catch(e) { console.log(p, '未安装') } }" 2>&1 | tee -a ../android-log.txt
           # 不跑 cap init：capacitor.config.json 已在仓库里，
           # 而且 init 在配置已存在时会交互式询问"是否覆盖"，在 CI 里直接卡死。
           npx cap add android
