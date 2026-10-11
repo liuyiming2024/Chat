@@ -41,6 +41,18 @@ jobs:
               -cf - . | (cd _site && tar -xf -)
           # 静态站点不需要 Jekyll 处理
           touch _site/.nojekyll
+
+          # Service Worker 版本号：必须随内容变化，否则用户永远拿到旧缓存。
+          # 用「commit sha + 本次发布内容哈希」定，改任何文件都会得到新版本号。
+          VER="${GITHUB_SHA::8}"
+          HASH=$(find _site -type f -not -name 'sw.js' 2>/dev/null | sort | xargs cat 2>/dev/null | md5sum | cut -c1-8)
+          echo "注入 SW 版本: v${VER}-${HASH}"
+          if [ -f _site/chat/sw.js ]; then
+            sed -i "s|self.__CHAT_VERSION__|\"v${VER}-${HASH}\"|" _site/chat/sw.js
+            grep -n "VERSION = " _site/chat/sw.js | head -1
+          else
+            echo "::warning::未找到 _site/chat/sw.js，跳过版本注入"
+          fi
           echo "发布文件数: $(find _site -type f | wc -l)"
 
       - uses: actions/configure-pages@v5

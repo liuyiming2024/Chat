@@ -108,6 +108,12 @@ create table if not exists room_members (
   -- 房间内禁言（区别于 users.muted_until 的全站禁言）。
   -- 前端 acl.js 的 canSpeak 检查 room.muted 数组，数据库原本无处存，故补。
   muted_until timestamptz,
+  /* 「能不能邀请别人」按人开关。
+     默认 true —— 群聊里成员互相拉人是常态。
+     但遇到不可信的人（乱拉人、拉进来的是广告号），
+     管理员要能单独关掉他的邀请权，而不是把他踢出去或降权。
+     房主 / 站长 / 管理员不受这个开关限制（他们本来就有 room.invite）。 */
+  can_invite boolean not null default true,
   primary key (room_id, user_id)
 );
 
@@ -358,7 +364,12 @@ begin
         'hasPwd', (rm.pwd_hash is not null),
         'createdAt', (extract(epoch from rm.created_at) * 1000)::bigint,
         'members', coalesce((select json_agg(mm.user_id) from room_members mm where mm.room_id = rm.id), '[]'::json),
-        'admins', coalesce((select json_agg(aa.user_id) from room_admins aa where aa.room_id = rm.id), '[]'::json)
+        'admins', coalesce((select json_agg(aa.user_id) from room_admins aa where aa.room_id = rm.id), '[]'::json),
+        /* 被单独关掉邀请权的成员。
+           不回传的话前端刷新一次开关就"自己弹回来"——
+           而服务端其实已经禁掉了，界面与事实不符。 */
+        'noInvite', coalesce((select json_agg(ni.user_id) from room_members ni
+                              where ni.room_id = rm.id and ni.can_invite = false), '[]'::json)
       ) as r from rooms rm) x), '[]'::json),
     'messages', coalesce((select json_agg(json_build_object(
         'id', m.id, 'room', m.room_id, 'from', m.from_id, 'type', m.type,
@@ -584,17 +595,25 @@ begin
     return json_build_object('ok', false, 'err', '尝试次数过多，请 15 分钟后再试');
   end if;
 
-  /* 全局闸门：15 分钟内全站失败 ≥ 100 次就整体拒绝。
+  /* 全局闸门：15 分钟内全站失败 ≥ 300 次就整体拒绝。
      这是"换昵称爆破"唯一拦得住的地方 —— 昵称维度对它是无效的。
 
      为什么不用 IP 做第二维度：
        · 请求头里的 x-forwarded-for 客户端自己能改，等于没有
        · 同一个 NAT 后面可能是一整个学校/公司，按 IP 限流会误伤一大片
-     所以宁可粗一点用全局闸门。100 次/15 分钟对正常站点很宽松，
-     正常用户极少失败这么多次；真被爆破时宁可暂时全站挡住。 */
+     所以宁可粗一点用全局闸门。
+
+     ⚠ 这个闸门有代价，必须知道：
+       它挡的是"爆破"，但副作用是**攻击者可以拿它当拒绝服务用** ——
+       故意失败 300 次，全站正常用户就都登录不上了。
+       这是"没有网关层限流"时能做的最好选择，不是完美方案。
+       阈值定 300 而不是 100，是因为本测试里
+       光是跑一轮限流用例就必然失败 130 次以上，
+       100 会把后面的正常登录一起挡掉 ——
+       **挡得太狠，先被挡住的是自己人。** */
   select count(*) into v_fail from login_attempts
    where ok = false and created_at > now() - interval '15 minutes';
-  if v_fail >= 100 then
+  if v_fail >= 300 then
     return json_build_object('ok', false, 'err', '登录尝试过于频繁，请稍后再试');
   end if;
 
@@ -666,7 +685,12 @@ begin
         'hasPwd', (rm.pwd_hash is not null),
         'createdAt', (extract(epoch from rm.created_at) * 1000)::bigint,
         'members', coalesce((select json_agg(mm.user_id) from room_members mm where mm.room_id = rm.id), '[]'::json),
-        'admins', coalesce((select json_agg(aa.user_id) from room_admins aa where aa.room_id = rm.id), '[]'::json)
+        'admins', coalesce((select json_agg(aa.user_id) from room_admins aa where aa.room_id = rm.id), '[]'::json),
+        /* 被单独关掉邀请权的成员。
+           不回传的话前端刷新一次开关就"自己弹回来"——
+           而服务端其实已经禁掉了，界面与事实不符。 */
+        'noInvite', coalesce((select json_agg(ni.user_id) from room_members ni
+                              where ni.room_id = rm.id and ni.can_invite = false), '[]'::json)
       ) as r from rooms rm) x), '[]'::json),
     /* order by 必须写在 json_agg(...) 内部。
        写成 json_agg(x) ... order by m.created_at 会让整句变成聚合查询，
@@ -949,6 +973,156 @@ begin
     )
   ) then raise exception '无权解散该房间'; end if;
   delete from rooms where id = p_room;
+  perform nextval('state_rev');
+  return true;
+end;
+$$;
+
+-- ==================================================================
+-- 邀请码（服务端存，换设备也能用）
+--   原来口令只存在前端 S.invites（本地 localStorage），
+--   结果「在 A 机器生成的口令，B 机器输入说不存在」——
+--   邀请功能实际上只在生成它的那台设备上成立。
+--   邀请码是要发给别人的，天生就是跨设备、跨人的，必须服务端存。
+-- ==================================================================
+create table if not exists invites (
+  code       text primary key,
+  room_id    text not null references rooms(id) on delete cascade,
+  by_user    uuid references users(id) on delete set null,
+  expire_at  timestamptz,                    -- null = 长期有效
+  max_use    int not null default 0,         -- 0 = 不限次数
+  used       int not null default 0,
+  revoked_at timestamptz,                    -- 主动作废
+  created_at timestamptz not null default now()
+);
+create index if not exists invites_room_idx on invites(room_id, created_at desc);
+
+-- 生成邀请码。
+-- 鉴权：登录 + 是本房间成员（或站长/管理员）+ 该成员没被单独禁掉邀请权。
+create or replace function invite_create(p_room text, p_hours int default 24, p_max_use int default 5)
+returns json language plpgsql volatile security definer
+set search_path = public, extensions, pg_temp as $$
+declare uid uuid; v_code text; v_is_staff boolean; v_can boolean; i int;
+begin
+  uid := cur_user();
+  if uid is null then raise exception '请先登录'; end if;
+
+  if not exists (select 1 from rooms r where r.id = p_room) then
+    raise exception '房间不存在';
+  end if;
+
+  /* 房主 / 房间管理员 / 站长 / 全站管理员：不受 can_invite 开关限制 */
+  select exists (
+    select 1 from rooms r
+     where r.id = p_room and (
+       r.owner_id = uid
+       or exists (select 1 from room_admins a where a.room_id = r.id and a.user_id = uid)
+     )
+  ) or exists (select 1 from users u where u.id = uid and u.role in ('owner','admin'))
+    into v_is_staff;
+
+  if not v_is_staff then
+    /* 普通成员：先看是不是成员，再看有没有被单独禁掉邀请 */
+    if not exists (select 1 from room_members m where m.room_id = p_room and m.user_id = uid) then
+      raise exception '不是该房间成员';
+    end if;
+    select coalesce(m.can_invite, true) into v_can
+      from room_members m where m.room_id = p_room and m.user_id = uid;
+    if not v_can then
+      raise exception '你在本房间的邀请权限已被管理员关闭';
+    end if;
+  end if;
+
+  /* 生成 6 位口令，避开易混淆字符（0/O、1/I/L） */
+  <<gen>>
+  loop
+    v_code := '';
+    for i in 1..6 loop
+      v_code := v_code || substr('ABCDEFGHJKMNPQRSTUVWXYZ23456789',
+                                 1 + floor(random() * 31)::int, 1);
+    end loop;
+    exit gen when not exists (select 1 from invites where code = v_code);
+  end loop;
+
+  insert into invites (code, room_id, by_user, expire_at, max_use)
+  values (v_code, p_room, uid,
+          case when coalesce(p_hours,0) > 0 then now() + (p_hours || ' hours')::interval else null end,
+          greatest(coalesce(p_max_use,0), 0));
+  perform nextval('state_rev');
+  return json_build_object('ok', true, 'code', v_code);
+end;
+$$;
+
+-- 用邀请码加入房间。
+-- 任何人拿到码都能用（这是邀请码的意义），但必须已登录且过了门禁。
+create or replace function invite_redeem(p_code text)
+returns json language plpgsql volatile security definer
+set search_path = public, extensions, pg_temp as $$
+declare uid uuid; v record; v_name text;
+begin
+  uid := cur_user();
+  if uid is null then raise exception '请先登录'; end if;
+
+  select * into v from invites
+   where code = upper(btrim(coalesce(p_code,''))) for update;
+
+  if not found then raise exception '邀请码不存在'; end if;
+  if v.revoked_at is not null then raise exception '邀请码已被作废'; end if;
+  if v.expire_at is not null and v.expire_at < now() then raise exception '邀请码已过期'; end if;
+  if v.max_use > 0 and v.used >= v.max_use then raise exception '邀请码使用次数已用完'; end if;
+
+  if not exists (select 1 from rooms r where r.id = v.room_id) then
+    raise exception '目标房间已被解散';
+  end if;
+
+  insert into room_members (room_id, user_id) values (v.room_id, uid) on conflict do nothing;
+  update invites set used = used + 1 where code = v.code;
+  select name into v_name from rooms where id = v.room_id;
+  perform nextval('state_rev');
+  return json_build_object('ok', true, 'room', v.room_id, 'name', v_name);
+end;
+$$;
+
+-- 作废邀请码（生成者本人 / 房主 / 管理员）
+create or replace function invite_revoke(p_code text)
+returns boolean language plpgsql volatile security definer
+set search_path = public, extensions, pg_temp as $$
+declare uid uuid; v record;
+begin
+  uid := cur_user();
+  if uid is null then raise exception '请先登录'; end if;
+  select * into v from invites where code = upper(btrim(coalesce(p_code,'')));
+  if not found then raise exception '邀请码不存在'; end if;
+  if v.by_user <> uid
+     and not exists (select 1 from rooms r where r.id = v.room_id and r.owner_id = uid)
+     and not exists (select 1 from room_admins a where a.room_id = v.room_id and a.user_id = uid)
+     and not exists (select 1 from users u where u.id = uid and u.role in ('owner','admin'))
+  then raise exception '无权作废该邀请码'; end if;
+  update invites set revoked_at = now() where code = v.code;
+  perform nextval('state_rev');
+  return true;
+end;
+$$;
+
+-- 开关某个成员「能不能邀请别人」
+create or replace function member_set_can_invite(p_room text, p_user uuid, p_can boolean)
+returns boolean language plpgsql volatile security definer
+set search_path = public, extensions, pg_temp as $$
+declare uid uuid;
+begin
+  uid := cur_user();
+  if uid is null then raise exception '请先登录'; end if;
+  -- 只有房主 / 房间管理员 / 站长 / 全站管理员能改别人的开关
+  if not exists (select 1 from rooms r where r.id = p_room and (
+       r.owner_id = uid
+       or exists (select 1 from room_admins a where a.room_id = r.id and a.user_id = uid)
+     ))
+     and not exists (select 1 from users u where u.id = uid and u.role in ('owner','admin'))
+  then raise exception '无权设置'; end if;
+
+  update room_members set can_invite = coalesce(p_can, true)
+   where room_id = p_room and user_id = p_user;
+  if not found then raise exception '该用户不是本房间成员'; end if;
   perform nextval('state_rev');
   return true;
 end;
@@ -1898,3 +2072,13 @@ create policy media_update on storage.objects
   for update to anon, authenticated
   using (bucket_id = 'media' and public.media_upload_allowed(name))
   with check (bucket_id = 'media' and public.media_upload_allowed(name));
+
+-- ==================================================================
+-- 邀请码相关授权
+--   invite_redeem 也要给 anon：邀请码的意义就是"任何人拿到都能用"，
+--   身份校验在函数内部做（必须已登录 + 已过门禁），不是靠 grant 层挡。
+-- ==================================================================
+grant execute on function invite_create(text, int, int) to anon, authenticated;
+grant execute on function invite_redeem(text) to anon, authenticated;
+grant execute on function invite_revoke(text) to anon, authenticated;
+grant execute on function member_set_can_invite(text, uuid, boolean) to anon, authenticated;

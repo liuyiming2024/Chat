@@ -275,7 +275,17 @@
     });
   }
 
+  /* 当前版本号。APP/桌面版从原生层取，网页版回落到清单里的版本。
+     我的资料面板要用它显示"当前版本"。 */
+  function currentVersion() {
+    if (g.NativeBridge && g.NativeBridge.version) {
+      try { var v = g.NativeBridge.version(); if (v) return v; } catch (e) { }
+    }
+    return (g.UPDATER_MANIFEST && g.UPDATER_MANIFEST.version) || '';
+  }
+
   g.Updater = {
+    currentVersion: currentVersion,
     fmtSize: fmtSize,
     bestSource: bestSource,
     downloadChunked: downloadChunked,

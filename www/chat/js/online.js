@@ -129,7 +129,10 @@
       id: r.id, name: r.name, type: r.type, desc: r.desc || '',
       owner: r.owner, admins: r.admins || [], members: r.members || null,
       pwd: r.hasPwd ? '(已设置)' : null, notice: r.notice || '',
-      muted: [], createdAt: r.createdAt || 0, updatedAt: r.createdAt || 0
+      muted: [],
+      /* 被单独关掉邀请权的成员（服务端 can_invite=false） */
+      noInvite: r.noInvite || [],
+      createdAt: r.createdAt || 0, updatedAt: r.createdAt || 0
     };
   }
 
@@ -387,6 +390,24 @@
   function userDelete(uid) {
     return g.SB.rpc('user_delete', { p_user: uid });
   }
+  /* 邀请码：必须走服务端。
+     原来口令存在本地 S.invites —— 在 A 机器生成的码，B 机器输入说"不存在"。
+     邀请码是要发给别人的，天生跨设备、跨人，本地存就只在生成那台成立。 */
+  function inviteCreate(room, hours, maxUse) {
+    return g.SB.rpc('invite_create',
+      { p_room: room, p_hours: hours || 0, p_max_use: maxUse || 0 });
+  }
+  function inviteRedeem(code) {
+    return g.SB.rpc('invite_redeem', { p_code: String(code || '').toUpperCase() });
+  }
+  function inviteRevoke(code) {
+    return g.SB.rpc('invite_revoke', { p_code: String(code || '').toUpperCase() });
+  }
+  /* 开关某个成员"能不能邀请别人" */
+  function setCanInvite(room, uid, can) {
+    return g.SB.rpc('member_set_can_invite',
+      { p_room: room, p_user: uid, p_can: !!can });
+  }
   /* 给已有消息补上媒体（媒体异步上传完再回填） */
   function msgMedia(msgId, path) {
     return g.SB.rpc('msg_media', { p_msg: msgId, p_media: path });
@@ -506,6 +527,8 @@
     pull: pull, pullDelta: pullDelta, startPoll: startPoll, stopPoll: stopPoll,
     createRoom: createRoom, updateRoom: updateRoom, joinRoom: joinRoom,
     userReview: userReview, userDelete: userDelete, msgMedia: msgMedia,
+    inviteCreate: inviteCreate, inviteRedeem: inviteRedeem,
+    inviteRevoke: inviteRevoke, setCanInvite: setCanInvite,
     changePwd: changePwd,
     addMember: addMember, removeMember: removeMember, setAdmin: setAdmin,
     setMute: setMute, setPerms: setPerms, setRole: setRole,

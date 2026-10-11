@@ -1092,7 +1092,11 @@ body.dark .md-table th { background: #1c1f24; }
 body.dark .muted-tip,
 body.dark .notice-bar { background: #1c1f24; color: var(--text-dim); }
 body.dark .env-item { background: #1c1f24; }
-body.dark .at-mention { background: #2d3f5a; color: #9ecbff; }
+body.dark .at-mention {
+  /* 可点就得看着可点（E-054）。
+     原来有蓝底却没有 cursor:pointer ——
+     用户看到蓝底会去点，点了没反应，会以为是自己操作错了。 */
+  cursor: pointer; background: #2d3f5a; color: #9ecbff; }
 body.dark .gate-card { background: var(--bg-panel); }
 
 /* @提及高亮 */
