@@ -253,7 +253,12 @@ begin
   tk := new_token();
   insert into sessions (token_hash, user_id, gate_ok, expires_at)
   values (encode(digest(tk, 'sha256'), 'hex'), uid, coalesce(gate_only, false),
-          now() + interval '14 days');
+          -- 门禁会话单独用短有效期（1 天），登录会话才是 14 天。
+          -- 门禁是每次成功检查就建一条，没有限流（见 gate_check 注释），
+          -- 一分钟 60 次 × 14 天 = 120 万条，会撑爆免费额度。
+          now() + (case when coalesce(gate_only, false)
+                        then interval '1 day'
+                        else interval '14 days' end));
   return tk;   -- 明文 token 只在这一刻出现，随后随响应返回，库里不留
 end;
 $$;
@@ -1337,6 +1342,21 @@ begin
   /* 所有会自然过期/堆积的凭据表都要在这里清，不能只清 sessions。
      bridge_ticket 刚加时就漏了 —— 跟门禁会话堆积是同一类缺陷。 */
   delete from bridge_ticket where expires_at < now() or used_at is not null;
+
+  /* 门禁会话只保留最近 200 条，多的删掉。
+     门禁每次成功检查都建一条，且没有限流（plpgsql 里 raise 会回滚，
+     失败计数加不上去 —— 真实限流只能在网关层做）。
+     所以这里必须有兜底：不管多频繁地刷，总量都压在 200 条以内。
+     200 够用了 —— 这是"同时有多少台设备过过门禁"的量级，不是用户数。 */
+  delete from sessions
+   where gate_ok = true
+     and user_id is null
+     and ctid not in (
+       select ctid from sessions
+        where gate_ok = true and user_id is null
+        order by expires_at desc
+        limit 200
+     );
 
   return n;
 end;
