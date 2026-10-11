@@ -120,6 +120,20 @@
     for (i = 0; i < S.users.length; i++) if ((S.users[i].nick || '').toLowerCase().indexOf(n) === 0) return S.users[i];
     return null;
   }
+  /* 我还能不能看这个房间的消息（E-059）。
+     判据：房间还在 + 我是成员（或公开房间 / 房主 / 管理员）。
+     被移出房间后本地仍留着那段历史，不解散就不会删 ——
+     于是能搜到自己早就不该看到的对话，还能点进去看。
+     **本地留着缓存不等于还有权限看。** */
+  function canSeeRoom(rid) {
+    var r = findRoom(rid);
+    if (!r || !me) return false;
+    if (r.type === 'public') return true;
+    if (r.ownerId === me.id) return true;
+    if (g.ACL && g.ACL.isStaff && g.ACL.isStaff(me)) return true;
+    return (r.members || []).indexOf(me.id) >= 0;
+  }
+
   function findRoom(id) { for (var i = 0; i < S.rooms.length; i++) if (S.rooms[i].id === id) return S.rooms[i]; return null; }
   function msgs(rid) { return S.messages[rid] || (S.messages[rid] = []); }
   function touch(o) { if (o) o.updatedAt = now(); return o; }
@@ -1890,6 +1904,55 @@
   }
 
   /* ================= 旧媒体清理（先备份再问站长） ================= */
+  /* 完整备份：状态 + 媒体本体（E-043 / E-044）。
+     ⚠ 原来"导出 JSON"只写 JSON.stringify(S)，
+     而 S 里每条消息只有 mediaId —— 媒体在 IndexedDB，根本不进 JSON。
+     结果：「先备份再清理」是个假门禁：
+       用户照做，导出了，清理了，然后媒体永久没了，备份里也没有。
+     ⚠ 更糟的是站点面板还教用户"用导出/导入 JSON 换设备搬运"，
+       搬完所有图片视频都变成「没同步到这台设备」——
+       用户是按文档操作的，所以他会认为是操作错了，而不是文档错了。
+
+     所以这里导出真正的完整包：媒体以 dataURL 内嵌。
+     体积会明显变大（base64 约 1.33 倍），所以先算出来告诉用户。 */
+  function buildFullBackup(onProgress) {
+    var ids = [];
+    Object.keys(S.messages || {}).forEach(function (rid) {
+      (S.messages[rid] || []).forEach(function (m) {
+        if (m.mediaId && !m.deleted) ids.push(m.mediaId);
+      });
+    });
+    ids = ids.filter(function (v, i) { return ids.indexOf(v) === i; });
+    var out = { kind: 'chat-full-backup', version: 2, at: Date.now(), state: S, media: {} };
+    var i = 0;
+    var step = function () {
+      if (typeof onProgress === 'function') onProgress(i, ids.length);
+      if (i >= ids.length) return Promise.resolve(out);
+      var id = ids[i++];
+      return g.Media.get(id).then(function (d) {
+        if (d) out.media[id] = d;
+      }).catch(function () { }).then(step);
+    };
+    return step();
+  }
+
+  /* 导入完整备份：先还原媒体，再覆盖状态。
+     顺序不能反 —— 先写状态的话，界面会先渲染出一堆找不到的媒体。 */
+  function restoreFullBackup(obj) {
+    var media = obj && obj.media || {};
+    var ids = Object.keys(media);
+    var i = 0;
+    var step = function () {
+      if (i >= ids.length) {
+        S = obj.state; save(true);
+        return Promise.resolve(true);
+      }
+      var id = ids[i++];
+      return g.Media.put(id, media[id]).catch(function () { }).then(step);
+    };
+    return step();
+  }
+
   function mediaCleanDialog() {
     if (!(g.ACL.can(me, 'site.clean') || me.role === 'owner')) {
       g.UI.toast('仅站长 / 管理员可清理媒体'); return;
@@ -1931,15 +1994,32 @@
       }
     });
     d.querySelector('#mcBackup').onclick = function () {
-      var blob = new Blob([JSON.stringify(S, null, 2)], { type: 'application/json' });
-      var a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      setTimeout(function () { try { URL.revokeObjectURL(a.href); } catch (e) { } }, 60000);
-      a.download = 'chat-backup-' + new Date().toISOString().slice(0, 10) + '.json';
-      a.click();
-      backed = true;
-      d.querySelector('#mcTip').innerHTML = '<svg class="ic" aria-hidden="true"><use href="#i-check"/></svg> 备份已下载，现在可以执行清理了。';
-      log('backup', '清理前导出备份');
+      var tipEl = d.querySelector('#mcTip');
+      tipEl.textContent = '正在打包媒体（可能较慢）…';
+      /* 用完整备份，别再用 JSON.stringify(S) —— 那个不含媒体，
+         照它备份完再清理，媒体就真没了。 */
+      buildFullBackup(function (done, total) {
+        tipEl.textContent = '正在打包媒体：' + done + ' / ' + total;
+      }).then(function (pack) {
+        var n = Object.keys(pack.media || {}).length;
+        var blob = new Blob([JSON.stringify(pack)], { type: 'application/json' });
+        var mb = (blob.size / 1048576).toFixed(1);
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        setTimeout(function () { try { URL.revokeObjectURL(a.href); } catch (e) { } }, 60000);
+        a.download = 'chat-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+        a.click();
+        backed = true;
+        /* 明确说清备份里包含了什么 —— 用户要能自己确认"真的有媒体"。
+           不说的话，他只能相信"备份完成了"这四个字。 */
+        d.querySelector('#mcTip').innerHTML =
+          '<svg class="ic" aria-hidden="true"><use href="#i-check"/></svg> ' +
+          '备份已下载（含 ' + n + ' 个媒体文件，' + mb + ' MB），现在可以执行清理了。';
+        log('backup', '清理前导出完整备份（含 ' + n + ' 个媒体）');
+      }).catch(function (e) {
+        tipEl.textContent = '备份失败：' + (e && e.message ? e.message : '未知错误');
+        g.UI.toast('备份失败，未执行清理', 'err');
+      });
     };
   }
 
@@ -2094,6 +2174,8 @@
       var hits = [];
       Object.keys(S.messages).forEach(function (rid) {
         if (scope === 'cur' && rid !== cur) return;
+        /* ⚠ 必须过滤"我是否还是这个房间的成员"（E-059） */
+        if (!canSeeRoom(rid)) return;
         (S.messages[rid] || []).forEach(function (m) {
           if (m.deleted) return;
           var txt = (m.text || '');
@@ -3852,7 +3934,13 @@
               '换设备可见；媒体文件存在云端存储。本机只保留一份缓存。'
             : '<div class="field-hint">当前为<b>本机模式</b>（未连后端）：' +
               '数据保存在本机浏览器（localStorage + IndexedDB），不上传任何服务器。') +
-          '需要换设备或备份时，用下面的「导出 / 导入 JSON」搬运，本地版与上线版操作完全相同。</div>' +
+          /* 原来写「用导出/导入 JSON 搬运」（E-044），
+             而 JSON 里只有 mediaId —— 搬到新设备后所有图片视频都打不开。
+             用户是按文档操作的，所以他会以为是自己操作错了。
+             所以这里必须说清：普通 JSON 只搬结构与文字，
+             要连媒体一起搬得用「完整备份」。 */
+          '要换设备或备份，用下面的「完整备份」（含图片 / 视频 / 语音）；' +
+          '「导出 JSON」只含文字与结构，不含媒体。</div>' +
           '<div class="sec-title">数据</div>' +
           '<button class="btn ghost" id="stExport">导出 JSON</button> ' +
           '<button class="btn ghost" id="stImport">导入 JSON</button> ' +
