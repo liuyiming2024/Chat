@@ -185,6 +185,12 @@
 
     <div class="composer">
       <div id="replyBar" class="reply-bar hidden"></div>
+      <!-- ⚠ 这个元素原来根本不存在（S-056）：
+           showTyping() 里 $('typingBar') 返回 null，然后 if (!bar) return ——
+           不报错、不提示，"正在输入"功能静默失效。
+           广播发了、状态维护了，就是没人显示。
+           这种"代码全对但少个 DOM 节点"最难发现：看 JS 完全正常。 -->
+      <div id="typingBar" class="typing-bar hidden"></div>
       <div class="composer-tools">
         <button class="tool-btn" id="btnImg" title="发送图片" aria-label="发送图片"><svg class="ic" aria-hidden="true"><use href="#i-image"/></svg></button>
         <button class="tool-btn" id="btnVideo" title="发送视频" aria-label="发送视频"><svg class="ic" aria-hidden="true"><use href="#i-video"/></svg></button>

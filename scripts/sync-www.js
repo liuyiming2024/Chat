@@ -64,9 +64,34 @@ function walk(dir) {
   return out.sort();
 }
 
+/* ⚠ 原来是「先 rmSync 整个目录，再 cpSync 整个目录」。
+   实测在某些文件系统（overlay/gVisor）上 rmSync 会抛
+   ENOTEMPTY: directory not empty —— 目录没删干净，
+   而调用处没有 try/catch，错误直接抛出，
+   于是 dst 处于"删了一半又复制了一半"的状态。
+   更糟的是脚本仍然继续往下比对，输出 ✓ 或 ✗ 随删没删干净而随机 ——
+   **同一个脚本、同一份代码，结论不稳定**，这比稳定报错更难查。
+
+   所以改成：不整目录删除，逐文件比对后只覆盖内容不同的那些。
+   好处：① 不会遇到 ENOTEMPTY；② 快得多（不必每次全量重写）；
+        ③ 只动真正变的文件，副作用小。 */
 function copyDir(src, dst) {
-  fs.rmSync(dst, { recursive: true, force: true });
-  fs.cpSync(src, dst, { recursive: true });
+  fs.mkdirSync(dst, { recursive: true });
+  const rel = walk(src).map(f => path.relative(src, f));
+  let copied = 0;
+  for (const f of rel) {
+    const a = path.join(src, f), b = path.join(dst, f);
+    try {
+      if (same(a, b)) continue;
+      fs.mkdirSync(path.dirname(b), { recursive: true });
+      fs.copyFileSync(a, b);
+      copied++;
+    } catch (e) {
+      console.error('✗ 同步失败 %s：%s', f, e.message);
+      throw e;      /* 失败必须暴露，不能带着半同步状态继续 */
+    }
+  }
+  return copied;
 }
 
 function same(a, b) {

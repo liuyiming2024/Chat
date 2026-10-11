@@ -547,16 +547,33 @@
             });
             return;
           }
+          /* ⚠ 原来分两种提示（S-069）："用户不存在" / "密码错误"。
+             服务端做对了（统一返回"昵称或密码错误"防枚举），
+             但本地模式把昵称是否存在直接说了出来 ——
+             **换设备或断网降级时，这套保护归零**，
+             任何人都能在登录框里枚举出站内有哪些昵称。
+
+             所以本地也要统一措辞。安全强度不该取决于当前是否联网。 */
           var u = byNick(card.querySelector('#lNick').value);
-          if (!u) { g.UI.toast('用户不存在', 'err'); return; }
-          var lv = verifyPwd(card.querySelector('#lPwd').value, u.pwdSalt, u.pwdHash);
-          if (!lv.ok) { g.UI.toast('密码错误', 'err'); return; }
+          var lv = u ? verifyPwd(card.querySelector('#lPwd').value, u.pwdSalt, u.pwdHash) : null;
+          if (!u || !lv.ok) {
+            /* 顺带做本地失败计数：原来本地模式完全不限流，
+               而服务端 8 次就锁 —— 降级路径反而比正常路径松。 */
+            var lf = localLoginFail();
+            if (lf >= LOCAL_LOGIN_MAX) {
+              g.UI.toast('尝试次数过多，请稍后再试', 'err');
+              return;
+            }
+            g.UI.toast('昵称或密码错误', 'err');
+            return;
+          }
           if (lv.legacy) { u.pwdHash = hashPwd(card.querySelector('#lPwd').value, u.pwdSalt); save(); }
           if (u.banned) { g.UI.toast('该账号已被封禁', 'err'); return; }
           if (u.status === 'pending') { g.UI.toast('申请已提交，请等待站长通过', 'err'); return; }
           if (u.status === 'rejected') {
             g.UI.toast('申请未通过：' + (u.rejectReason || '站长未说明理由'), 'err'); return;
           }
+          clearLocalLoginFail();
           setMeId(u.id, typeof __rem !== 'undefined' ? __rem : rememberOn());
           publishBridge(u.nick);
           me = u; touch(me); me.lastSeen = now(); save(true);
@@ -760,8 +777,51 @@
     msgs(rid).push({ id: uid('msg'), room: rid, from: 'system', type: 'system', text: text, ts: now() });
   }
 
+  /* 本地模式下每个房间的消息上限（S-059）。
+     服务端有 30 天窗口 + 字数上限，本地模式**完全没有** ——
+     消息可以无限累积。叠加心跳每次全量序列化整个状态写盘，
+     结果是：用得越久越慢，到某个点 localStorage 写满，
+     然后"发送失败"但界面看不出原因。
+
+     所以本地也要有上限。超过就丢最老的 ——
+     但**不能静默丢**：静默丢历史等于数据丢失却没人知道。 */
+  var LOCAL_MSG_MAX = 5000;
+
+  /* 本地模式的登录失败计数（S-069）。
+     服务端已经限流了，本地模式却没有 ——
+     而用户在断网/换设备时走的正是本地路径。
+     降级路径不该比正常路径松，否则限流形同虚设：
+     攻击者只要让目标断网就能绕过。 */
+  var LOCAL_LOGIN_MAX = 8;
+  var LOCAL_LOGIN_KEY = 'wxlg_loginfail';
+  function localLoginFail() {
+    try {
+      var raw = JSON.parse(localStorage.getItem(LOCAL_LOGIN_KEY) || '{}');
+      var now2 = Date.now();
+      if (!raw.at || now2 - raw.at > 15 * 60 * 1000) raw = { n: 0, at: now2 };
+      raw.n = (raw.n || 0) + 1;
+      raw.at = now2;
+      localStorage.setItem(LOCAL_LOGIN_KEY, JSON.stringify(raw));
+      return raw.n;
+    } catch (e) { return 0; }
+  }
+  function clearLocalLoginFail() {
+    try { localStorage.removeItem(LOCAL_LOGIN_KEY); } catch (e) { }
+  }
+
   function pushMsg(m) {
-    msgs(m.room).push(m);
+    var arr = msgs(m.room);
+    arr.push(m);
+    if (arr.length > LOCAL_MSG_MAX) {
+      var cut = arr.length - LOCAL_MSG_MAX;
+      arr.splice(0, cut);
+      /* 只在本地模式提示：在线模式下服务端才是权威，
+         本地被裁掉的消息重新拉取就能回来，不值得打扰用户。 */
+      if (!(g.Online && g.Online.isOnline && g.Online.isOnline())) {
+        g.UI.toast('本房间消息超过 ' + LOCAL_MSG_MAX + ' 条，已移除最早 '
+          + cut + ' 条（本地存储有限）', 'err', 5000);
+      }
+    }
     save();
     var atBottom = isBottom();
     renderChat();
@@ -952,9 +1012,16 @@
   var HEARTBEAT_MS = 15000;   /* 心跳间隔 */
   var ONLINE_MS = 45000;      /* 超过此时长无心跳视为离线 */
 
+  /* ⚠ 用服务端时间，不能用本机时钟（E-049）。
+     lastSeen 来自服务端，本机钟快 5 分钟 → 全员离线；慢 → 全员在线。
+     这种错最难排查：现象是"在线状态不准"，根因在时钟。 */
+  function serverNowSafe() {
+    return (g.Online && g.Online.serverNow) ? g.Online.serverNow() : Date.now();
+  }
+
   function isOnline(u) {
     if (!u) return false;
-    return (u.lastSeen || 0) > (now() - ONLINE_MS);
+    return (u.lastSeen || 0) > (serverNowSafe() - ONLINE_MS);
   }
 
   var hbTimer = null;
@@ -963,7 +1030,23 @@
     var beat = function () {
       if (!me) return;
       me.lastSeen = now();
-      try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { }
+      /* ⚠ 原来空 catch（S-053）：写盘失败完全静默。
+         而这个心跳每 15 秒就全量序列化整个状态写一次 ——
+         状态越大越容易失败，失败却没人知道。
+         用户最终看到的现象是"聊了很久之后，某些改动莫名其妙丢了"，
+         而真正的报错早就在空 catch 里被吞掉了。
+
+         所以失败要说出来。但不能每次心跳都弹（15 秒一次太吵），
+         用一个标志节流成"只报一次"。 */
+      try { localStorage.setItem(KEY, JSON.stringify(S)); }
+      catch (e2) {
+        if (!beat._warned) {
+          beat._warned = true;
+          g.UI.toast('本地存储写入失败，改动可能不会保存。'
+            + '建议导出备份后清理旧媒体', 'err', 8000);
+          try { console.error('[save] localStorage 写入失败', e2); } catch (e3) { }
+        }
+      }
       /* 轻量广播，让其他标签刷新在线状态 */
       g.Sync.ping();
       /* 账号凭据续期：只要还在线，"在线即有效"就一直成立 */
@@ -1212,13 +1295,13 @@
       /* 编辑：只有本人、只有文本消息、且在时限内。
          媒体消息不给改 —— 换附件等于换内容，性质不同于改错别字。 */
       if (mine && m.type === 'text' && !m.deleted &&
-          g.ACL.can(me, 'msg.edit', r) && (now() - (m.ts || 0)) < EDIT_MS) {
+          g.ACL.can(me, 'msg.edit', r) && (serverNowSafe() - (m.ts || 0)) < EDIT_MS) {
         var bE = elc('button', 'msg-act', '编辑');
         bE.onclick = function () { doEdit(m, r); };
         acts.appendChild(bE);
       }
       /* 撤回：作者本人，限时 RECALL_MS 内 */
-      if (mine && g.ACL.can(me, 'msg.recall', r) && (now() - (m.ts || 0)) < RECALL_MS) {
+      if (mine && g.ACL.can(me, 'msg.recall', r) && (serverNowSafe() - (m.ts || 0)) < RECALL_MS) {
         var bR = elc('button', 'msg-act', '撤回');
         bR.onclick = function () { doRemove(m, 'recall'); };
         acts.appendChild(bR);
@@ -1395,6 +1478,11 @@
     }
   }
 
+  /* ⚠ 时限必须用服务端时间算（S-065）。
+     m.ts 在线模式下来自服务端 created_at，而 now() 是本机时钟 ——
+     钟慢的人可以把任意旧消息判成"刚发的"，从而撤回本不该撤回的；
+     钟快的人刚发的消息都撤不回。
+     **时限是业务规则，不能由客户端时钟决定谁守规则。** */
   var RECALL_MS = 5 * 60 * 1000;   /* 撤回时限：5 分钟 */
   var EDIT_MS = 10 * 60 * 1000;    /* 编辑时限：10 分钟，比撤回宽松一点 */
 
@@ -1404,7 +1492,7 @@
     /* mode: recall 本人撤回 / remove 管理员移除 / purge 站长物理删除 */
     if (mode === 'recall') {
       if (m.from !== me.id) { g.UI.toast('只能撤回自己的消息', 'err'); return; }
-      if ((now() - (m.ts || 0)) >= RECALL_MS) { g.UI.toast('超过 5 分钟，不能撤回了', 'err'); return; }
+      if ((serverNowSafe() - (m.ts || 0)) >= RECALL_MS) { g.UI.toast('超过 5 分钟，不能撤回了', 'err'); return; }
       m.deleted = true; m.removedBy = null;
       log('recall', '撤回自己的消息', r.id);
       save(); g.UI.toast('已撤回', 'ok');
@@ -2209,7 +2297,16 @@
         box.appendChild(it);
       });
     };
-    d.querySelector('#swK').oninput = run;
+    /* ⚠ 原来 oninput 直接跑（S-076）：每敲一个字就遍历所有房间的所有消息。
+       房间多、消息多的时候，打字会明显卡顿，
+       而用户感知到的只是"这个软件很卡"，不会想到是搜索。
+       加 180ms 防抖：人打字的间隔通常大于这个数，
+       所以看起来仍是"边打边出结果"，但扫描次数少一个数量级。 */
+    var swTimer = null;
+    d.querySelector('#swK').oninput = function () {
+      if (swTimer) clearTimeout(swTimer);
+      swTimer = setTimeout(run, 180);
+    };
     d.querySelector('#swWho').oninput = run;
     d.querySelector('#swScope').onchange = run;
     g.UI.modal({ title: '消息搜索', body: d, okText: '关闭', cancelText: null, wide: true });
@@ -2335,10 +2432,29 @@
             ? g.Media.videoPoster(u).then(function (p) { if (p) m.poster = p; return m; })
                 .catch(function () { return m; })
             : Promise.resolve(m)).then(function (mm) {
-              /* 在线模式：同时往云端传一份，换设备才看得到。
-                 本地已经存好了，云端失败不影响这条消息发出去 ——
-                 只是对方换设备看不到，所以失败要提示。 */
-              uploadRemote(mm, u);
+              /* ⚠ 离线时原来什么都不做，只 toast「已发送」（E-055）。
+                 结果：图片/视频/语音/文件**永远只在自己这台设备上**，
+                 联网后也不会补发，对方一条都收不到，
+                 而本机看着是"已发送" —— 用户完全不知道没发出去。
+
+                 所以离线也要入队。队列里放 mediaId（不放大段 dataUrl：
+                 localStorage 总共 5 MB，存不下图片），
+                 补发时再按 id 从 IndexedDB 取回本体上传。 */
+              if (g.Online && g.Online.isOnline() && g.Online.isOnline()) {
+                uploadRemote(mm, u);
+              } else if (g.Online && g.Online.enqueue) {
+                var res = g.Online.enqueue({
+                  room: mm.room, type: mm.type, localId: mm.id,
+                  mediaId: mm.mediaId, name: mm.name || '', size: mm.size || 0
+                });
+                /* 存不下要如实说，不能照样显示"已发送" */
+                if (!res.ok) {
+                  mm.pending = false;
+                  g.UI.toast('待发送队列已满，这条媒体只存在本机', 'err', 5000);
+                } else {
+                  mm.pending = true;
+                }
+              }
               return mm;
             });
         });
@@ -2350,7 +2466,10 @@
          如果第一条直接说「已发送」，用户会看到一绿一红自相矛盾，
          不知道到底发出去没有。 */
       var onl = !!(g.Online && g.Online.isOnline());
-      g.UI.toast(onl ? '已发送（本机），正在同步到云端…' : '已发送', 'ok');
+      /* 离线：说清"待联网后补发"，别只说"已发送" ——
+         后者会让用户以为对方已经收到了。 */
+      g.UI.toast(onl ? '已发送（本机），正在同步到云端…'
+        : (m.pending ? '已加入待发送队列，联网后自动补发' : '已保存到本机（未加入队列）'), 'ok');
     })
       .catch(function (e) { g.UI.toast('发送失败：' + (e && e.message ? e.message : '未知错误'), 'err'); });
   }
@@ -2682,11 +2801,25 @@
           notice: '', muted: [], createdAt: now(), updatedAt: now()
         };
         if (pwd) { var s = g.SHA256.randomId(12); r.pwd = { hash: hashPwd(pwd, s), salt: s }; }
+        /* ⚠ 原来找不到昵称就静默跳过（E-048）。
+           填「小明,小红」结果一个人都没进来，界面什么也不说 ——
+           用户会以为建群成功了、人也在里面，
+           直到发现群里只有自己，还得一个个重新加。
+           本条曾被 ghpull 覆盖丢失，故重新应用。 */
+        var notFound = [];
         cMem.value.split(/[,，\s]+/).forEach(function (n) {
           if (!n) return;
           var u = byNick(n);
-          if (u && r.members.indexOf(u.id) < 0) r.members.push(u.id);
+          if (!u) { notFound.push(n); return; }
+          if (r.members.indexOf(u.id) < 0) r.members.push(u.id);
         });
+        /* 不因此阻断建群：群名等其他信息都填好了，
+           因为一个昵称拼错就全部作废更烦。建完提示即可。 */
+        if (notFound.length) {
+          setTimeout(function () {
+            g.UI.toast('以下昵称没找到，未加入：' + notFound.join('、'), 'err', 6000);
+          }, 300);
+        }
         /* 在线模式：群必须在服务端建，否则换设备就没了。
            服务端返回真实 id，用它替换本地临时 id。 */
         if (g.Online && g.Online.isOnline()) {
@@ -2702,6 +2835,7 @@
                 cMem.value.split(/[,，\s]+/).forEach(function (n) {
                   if (!n) return;
                   var u = byNick(n);
+                  if (!u) { failed.push(n); return; }   /* 昵称不存在也要报出来 */
                   if (u && r.members.indexOf(u.id) < 0) {
                     r.members.push(u.id);
                     /* 加人失败必须让用户知道。
@@ -3467,6 +3601,35 @@
     };
     lBar.appendChild(lSel);
     d.appendChild(lBar);
+
+    /* 发送键设置（E-047）。
+       ⚠ 原来这个入口只在管理面板的「站点」tab 里 ——
+       普通用户根本够不着。而输入框是 textarea，
+       绝大多数多行输入框 Enter 是换行，用户打第一行回车就直接发出去了。
+       **一个影响所有人的默认行为，改它的开关却只有管理员能碰。**
+       所以放一份到「我的资料」，谁都能改自己的。
+
+       本条曾被 ghpull 覆盖丢失（上一轮改动未推送即拉取），故重新应用，
+       并已加断言 [3.17] 防再次丢失。 */
+    var eBar = elc('div', 'pref-row');
+    eBar.innerHTML = '<span>Enter 键</span>';
+    var eSel = elc('select', 'field sm');
+    [['send', 'Enter 发送 / Shift+Enter 换行'],
+     ['newline', 'Enter 换行 / Ctrl+Enter 发送']].forEach(function (o) {
+      var op = document.createElement('option');
+      op.value = o[0]; op.textContent = o[1];
+      if (enterSends() === o[0]) op.selected = true;
+      eSel.appendChild(op);
+    });
+    eSel.onchange = function () {
+      /* 必须用 ENTER_KEY 常量，不能另写一个字符串。
+         写成两个不同的 key 的话，这里改了那边读不到 ——
+         表现为「改了没生效」，而两处代码看着都对。 */
+      try { localStorage.setItem(ENTER_KEY, eSel.value); } catch (e) { }
+      g.UI.toast(eSel.value === 'send' ? '已改为 Enter 发送' : '已改为 Enter 换行');
+    };
+    eBar.appendChild(eSel);
+    d.appendChild(eBar);
 
     /* 检查更新。桌面版/安卓版才有意义 —— 网页版本身就是最新的，
        但入口保留，用户也能从这里拿到客户端下载地址。 */
@@ -4411,6 +4574,19 @@
           }
         });
         if (done) { save(); renderChatSoon(); }
+      });
+    }
+
+    /* 注册"mediaId → Blob"解码器，让队列能补发媒体（E-055）。
+       队列在 localStorage（5 MB），存不下图片本体，
+       所以只记 mediaId；补发时由这里从 IndexedDB 取回真实内容。 */
+    if (g.Online.outboxSetMediaResolver) {
+      g.Online.outboxSetMediaResolver(function (mediaId) {
+        if (!g.Media || !g.Media.get) return Promise.resolve(null);
+        return g.Media.get(mediaId).then(function (dataUrl) {
+          if (!dataUrl) return null;
+          return g.Media.toBlob ? g.Media.toBlob(dataUrl) : null;
+        }).catch(function () { return null; });
       });
     }
 

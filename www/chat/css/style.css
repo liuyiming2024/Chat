@@ -410,6 +410,34 @@ video.thumb { width: 320px; height: 180px; background: #000; }
   padding: 6px 12px 8px;
   position: relative;
 }
+/* 「正在输入」提示条（S-056）。
+   JS 里 showTyping() 一直存在，但页面没有这个元素，
+   功能静默失效了很久 —— 所以样式和 DOM 必须一起补，
+   只补一边照样看不见。 */
+.typing-bar {
+  font-size: 12px;
+  color: #1a6fd4;
+  padding: 3px 8px;
+  margin-bottom: 4px;
+  min-height: 18px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.typing-bar::before {
+  content: '';
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: #1a6fd4;
+  animation: typing-pulse 1.2s ease-in-out infinite;
+}
+@keyframes typing-pulse {
+  0%, 100% { opacity: .3; }
+  50% { opacity: 1; }
+}
+body.dark .typing-bar { color: #6ab0ff; }
+body.dark .typing-bar::before { background: #6ab0ff; }
+
 .reply-bar {
   display: flex;
   align-items: center;

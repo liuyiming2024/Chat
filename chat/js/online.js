@@ -151,10 +151,31 @@
     };
   }
 
+  /* 服务端时钟与本机时钟的偏差（E-049 / S-065）。
+     在线判定时不能拿 Date.now() 直接比服务端的 last_seen ——
+     本机钟快 5 分钟，所有人的 last_seen 都落在窗口外 → 全员显示离线；
+     本机钟慢 → 全员显示在线，且撤回时限形同虚设。
+
+     拿到服务端时间后算出 offset，之后凡是与服务端时间戳比较的地方
+     都用 serverNow() 代替 Date.now()。 */
+  var clockOffset = 0;
+  function noteServerTime(t) {
+    if (!t) return;
+    clockOffset = t - Date.now();
+    /* 偏差超过 60 秒就值得记一笔：通常意味着用户系统时间没同步 */
+    if (Math.abs(clockOffset) > 60000) {
+      try { console.warn('[clock] 本机与服务端时间相差 '
+        + Math.round(clockOffset / 1000) + ' 秒，已按服务端时间校正'); } catch (e) { }
+    }
+  }
+  /* 校正后的"现在"。用于一切与服务端时间戳的比较。 */
+  function serverNow() { return Date.now() + clockOffset; }
+
   /* 把服务端整包 state 转成前端 mergeState() 能吃的结构 */
   function convert(j) {
     if (!j) return null;
     var out = { users: [], rooms: [], messages: {}, logs: [] };
+    if (j.serverNow) noteServerTime(j.serverNow);
     if (j.rev != null) out.rev = j.rev;
     (j.users || []).forEach(function (u) { out.users.push(tUser(u)); });
     (j.rooms || []).forEach(function (r) { out.rooms.push(tRoom(r)); });
@@ -338,6 +359,15 @@
   var outboxSentHandler = null;
   function outboxOnSent(fn) { outboxSentHandler = fn; }
 
+  /* 媒体补发需要一个"mediaId → Blob"的解码器（E-055）。
+     媒体本体存在 IndexedDB（可以几十 MB），
+     而队列在 localStorage（总共 5 MB）——
+     **所以队列里只能放 mediaId，不能放 dataUrl。**
+     补发时再按 id 取回本体上传。
+     这里不直接依赖 Media 模块，由 app.js 注册进来，层不反。 */
+  var mediaBlobResolver = null;
+  function outboxSetMediaResolver(fn) { mediaBlobResolver = fn; }
+
   /* 补发。按顺序逐条发 ——
      顺序错了比少发一条更糟，所以不能并发。
 
@@ -355,6 +385,20 @@
     var chain = Promise.resolve();
     list.slice().forEach(function (it) {
       chain = chain.then(function () {
+        /* 媒体消息：补发前先上传本体（E-055）。
+           离线时发图发视频根本没进队列 —— 在线后也不会补发，
+           对方永远收不到，而本机看着"已发送"。
+           顺序不能反：必须先上传拿 path，再发消息带 path。 */
+        var prep = Promise.resolve();
+        if (it.mediaId && !it.media && mediaBlobResolver) {
+          prep = mediaBlobResolver(it.mediaId).then(function (blob) {
+            if (!blob) throw new Error('媒体已不在本机');
+            return g.Online.uploadMedia(it.room, it.name || '', blob);
+          }).then(function (slot) {
+            it.media = slot.path;
+          });
+        }
+        return prep.then(function () {
         return g.SB.rpc('msg_send', {
           p_room: it.room, p_type: it.type, p_body: it.body,
           p_media: it.media || null, p_name: it.name || '',
@@ -365,6 +409,7 @@
             try { outboxSentHandler(it.localId, res.id, it); } catch (e) { }
           }
           sent++;
+        });
         }).catch(function (e) {
           failed++;
           lastErr = (e && e.message) ? e.message : '网络错误';
@@ -542,6 +587,8 @@
     sendMsg: sendMsg, editMsg: editMsg, convert: convert,
     joinRoom: joinRoom, createRoom: createRoom, updateRoom: updateRoom,
     enqueue: enqueue, flushOutbox: flushOutbox, outbox: outbox, dequeue: dequeue,
-    outboxOnSent: outboxOnSent, onReconnect: onReconnect
+    outboxOnSent: outboxOnSent, outboxSetMediaResolver: outboxSetMediaResolver,
+    serverNow: serverNow, clockOffset: function () { return clockOffset; },
+    onReconnect: onReconnect
   };
 })(window);
