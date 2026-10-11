@@ -2573,10 +2573,29 @@
     switch (cmd) {
       case 'help': helpModal(); return;
       case 'me': sysMsg(cur, '*' + me.nick + ' ' + rest + '*'); save(); return;
-      case 'nick':
+      case 'nick': {
         if (!rest.trim()) { g.UI.toast('用法：/nick 新昵称'); return; }
-        me.nick = rest.trim(); touch(me);
-        sysMsg(cur, '「' + me.nick + '」修改了昵称'); save(); return;
+        var nn2 = rest.trim();
+        /* ⚠ 原来只改本地（S-061）：在线模式下刷新即回滚，
+           其他设备完全不知道，而界面已经弹了"修改了昵称"。
+           **说了改了却没改，比不支持更糟** ——
+           用户会以为别人看到的是新昵称，其实别人看到的还是旧的。
+           服务端 profile_update 一直存在，只是没接。 */
+        if (g.Online && g.Online.isOnline() && g.Online.profileUpdate) {
+          g.Online.profileUpdate({ nick: nn2 }).then(function () {
+            me.nick = nn2; touch(me);
+            sysMsg(cur, '「' + nn2 + '」修改了昵称'); save();
+          }).catch(function (e) {
+            /* 改名失败必须说清楚，尤其是"昵称已被占用" ——
+               不说的话用户会以为改成了，其实还是旧名字。 */
+            g.UI.toast('修改昵称失败：' + (e && e.message ? e.message : '网络错误'), 'err');
+          });
+        } else {
+          me.nick = nn2; touch(me);
+          sysMsg(cur, '「' + nn2 + '」修改了昵称'); save();
+        }
+        return;
+      }
       case 'who':
         var names = membersOf(r).map(function (u) { return u.nick; }).join('、');
         sysMsg(cur, '本会话成员：' + names); save(); return;
@@ -2608,7 +2627,15 @@
       }
       case 'notice': {
         if (!g.ACL.can(me, 'room.notice', r)) { g.UI.toast('没有设置公告的权限', 'err'); return; }
-        r.notice = rest; touch(r); log('notice', '修改公告', r.id); save(); return;
+        /* ⚠ 这条（以及下面 ban/unban/admin/transfer 等）目前只改本地（S-061）。
+           在线模式下刷新就回滚、其他设备看不到 ——
+           而系统消息已经播了"修改了公告"，等于承诺了没兑现。
+           逐个接服务端是下一轮的事；
+           **但在接之前，不能假装同步成功** —— 所以在线模式下明确告知。 */
+        var onl2 = !!(g.Online && g.Online.isOnline && g.Online.isOnline());
+        r.notice = rest; touch(r); log('notice', '修改公告', r.id); save();
+        if (onl2) g.UI.toast('公告只改了本机，其他设备暂不会同步', 'err', 5000);
+        return;
       }
       case 'mute': {
         var p = rest.split(/\s+/), u2 = byNick(p[0] || '');
