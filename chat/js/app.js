@@ -2398,6 +2398,20 @@
 
   function doOpenRoom(rid) {
     var r = findRoom(rid);
+    /* 切房间时要清掉的跨房间状态。两处，都是模块级变量，
+       不清就会从一个房间"漏"到另一个房间：
+
+       1) MSG_PAGE 翻页数 —— 在 A 翻到 3000 条，切到消息多的 B
+          会一口气渲染几千条，首屏直接卡死。
+       2) replyTo 回复引用 —— 在 A 选了条消息点回复，切到 B 后
+          回复条还挂着，发出去就变成"B 房间里回复 A 某人"，
+          而那个人根本不在这个房间。 */
+    if (cur !== rid) {
+      MSG_PAGE = 300;
+      replyTo = null;
+      var rb = $('replyBar');
+      if (rb) { rb.classList.add('hidden'); rb.innerHTML = ''; }
+    }
     if (!r) return;
     if (r.pwd && r.members && r.members.indexOf(me.id) < 0) {
       g.UI.prompt('需要群密码', '请输入「' + r.name + '」的进入密码', '', function (v) {
