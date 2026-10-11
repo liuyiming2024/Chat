@@ -84,8 +84,17 @@
   var lb = null;
   function lightbox(src, kind, name) {
     closeLightbox();
+    /* ⚠ 原来 className 写 'lb-wrap'（E-057）。
+       而 CSS 里 .lightbox 才是那个 fixed + 黑底 88% + z-index 1100 + flex 居中的浮层；
+       .lb-wrap 只是 position:relative + max-width —— 没有定位、没有背景、没有层级。
+       结果是：预览图**插在页面流里**（通常在最底部），没有遮罩、不居中，
+       用户点开图什么也没看到，只会觉得"点了没反应"。
+
+       正确做法是两层：外层 .lightbox 负责遮罩与居中，内层 .lb-wrap 负责尺寸。 */
     lb = document.createElement('div');
-    lb.className = 'lb-wrap';
+    lb.className = 'lightbox';
+    var inner = document.createElement('div');
+    inner.className = 'lb-wrap';
     var media;
     if (kind === 'video') {
       media = document.createElement('video');
@@ -101,8 +110,11 @@
       '<span class="lb-acts">' +
       '<a class="lb-btn" download href="' + esc(src) + '">下载</a>' +
       '<button class="lb-btn" data-act="close">关闭 (Esc)</button></span>';
-    lb.appendChild(media);
-    lb.appendChild(bar);
+    inner.appendChild(media);
+    inner.appendChild(bar);
+    lb.appendChild(inner);
+    /* 点遮罩（最外层空白处）关闭。加了 inner 之后这条依然成立：
+       只有点在 inner 之外的区域，e.target 才等于 lb。 */
     lb.addEventListener('click', function (e) { if (e.target === lb) closeLightbox(); });
     bar.querySelector('[data-act="close"]').onclick = closeLightbox;
     document.addEventListener('keydown', escHandler);

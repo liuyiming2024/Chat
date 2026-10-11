@@ -668,6 +668,14 @@ begin
   if not gate_passed() then raise exception '请先通过站点保护密码'; end if;
   me := cur_user();
   return json_build_object(
+    /* ⚠ 服务端时间必须下发（E-049 / S-065）。
+       前端的"在线判定"和"撤回时限"都拿本机 Date.now()
+       去比服务端的 last_seen / created_at ——
+       本机钟快 5 分钟 → 所有人永远显示离线；
+       本机钟慢 → 所有人永远在线，且能撤回任意旧消息。
+       这种偏差用户看不出原因，只会觉得软件不准。
+       所以下发服务端时间，客户端据此算出偏移量。 */
+    'serverNow', (extract(epoch from now()) * 1000)::bigint,
     'me', me,
     'site', (select row_to_json(s) from (
       select site_name, allow_register, (gate_hash is not null) as has_gate from site where id = true) s),
