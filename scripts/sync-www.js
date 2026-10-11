@@ -32,6 +32,15 @@ const ROOT = path.resolve(__dirname, '..');
 const DIRS = ['chat', 'docs', 'tieba', 'api', 'assets'];
 const FILES = ['LICENSE', 'README.md'];
 
+/* www/ 下不该存在 electron/ —— package.json 的 build.files 同时列了
+   www/** 和 electron/**，所以 electron 会被打进去两次，
+   而 www/electron 这份是冗余的：
+     · main.js 里 __dirname/../www 在它下面会解析成 www/www（不存在）
+     · 它不在同步列表里，改了源码也不会跟着变，迟早是旧版
+   审查官提过两次（S-013 / S-046）都说它在，因为之前只是"以为删了"。
+   这里检查它确实不在了。 */
+const FORBIDDEN = ['www/electron'];
+
 /* www/index.html 是【特制】的重定向页（一行 meta refresh），
    让 APP 打开直接进聊天室。它不是根 index.html 的副本，
    绝不能被覆盖 —— 所以不在同步列表里，且 --check 时会专门验证。 */
@@ -117,6 +126,16 @@ function main() {
       bad++;
     } else {
       console.log('✓ %s 与 www/%s 一致（%d 个文件）', d, d, relA.length);
+    }
+  }
+
+  for (const d of FORBIDDEN) {
+    if (fs.existsSync(path.join(ROOT, d))) {
+      console.error('✗ %s 不该存在 —— 它是 electron/ 的冗余副本，'
+        + '被 www/** 一起打包且路径会算错', d);
+      bad++;
+    } else {
+      console.log('✓ %s 不存在（正确）', d);
     }
   }
 
