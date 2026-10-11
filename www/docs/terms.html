@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%233b7ff2'/%3E%3Cpath d='M8 11h16M8 16h11' stroke='%23fff' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E">
+<title>使用须知 · 使用手册</title>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+  <symbol id="i-moon" viewBox="0 0 24 24">
+    <path d="M20.2 14.6A8.6 8.6 0 0 1 9.4 3.8a8.6 8.6 0 1 0 10.8 10.8z"/>
+  </symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="4.2"/>
+    <path d="M12 2.4v2.2M12 19.4v2.2M4.2 12H2M22 12h-2.2M6.4 6.4 4.8 4.8M19.2 19.2l-1.6-1.6M17.6 6.4l1.6-1.6M4.8 19.2l1.6-1.6"/>
+  </symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24">
+    <path d="M12 3 5 6v5.5c0 4.2 3 7.9 7 9 4-1.1 7-4.8 7-9V6z"/>
+    <path d="M9.2 12.2 11.2 14.2 15 10.4"/>
+  </symbol>
+</svg>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="logo" href="../index.html"><span class="logo-mark">聊</span>聊天室</a>
+    <div class="nav-links">
+      <a href="../index.html" data-nav="home">首页</a>
+      <a href="../chat/index.html" data-nav="chat">聊天室</a>
+      <a href="../tieba/index.html" data-nav="tieba">贴吧</a>
+      <a href="../docs/index.html" data-nav="docs">使用手册</a>
+    </div>
+    <div class="nav-tools"><button class="icon-btn" id="btnTheme" title="切换深色 / 浅色"><svg class="ic" aria-hidden="true"><use href="#i-moon"/></svg></button></div>
+  </div>
+</nav>
+<div class="wrap">
+  <div class="doc-layout">
+    <nav class="doc-side">
+      <a href="index.html" data-doc="index">手册首页</a>
+      <a href="getting-started.html" data-doc="getting-started">新手入门</a>
+      <a href="markdown.html" data-doc="markdown">Markdown 与公式</a>
+      <a href="permissions.html" data-doc="permissions">权限与命令</a>
+      <a href="admin.html" data-doc="admin">管理员手册</a>
+      <a href="client.html" data-doc="client">客户端下载</a>
+      <a href="deploy.html" data-doc="deploy">部署与数据</a>
+      <a href="privacy.html" data-doc="privacy">隐私声明</a>
+      <a href="terms.html" data-doc="terms">使用须知</a>
+    </nav>
+    <main class="doc-main">
+      <div class="panel">
+<h2>使用须知</h2>
+<p>这份须知说清楚三件事：<b>谁能用</b>、<b>你要负责什么</b>、
+   <b>什么东西本站不保证</b>。不长，但请看完——
+   尤其是最后一节。</p>
+
+<h3>一、谁能用</h3>
+<p>本站<b>不是公开论坛</b>。注册后需要站长审核通过才能发言，
+   站长有权拒绝任何申请，不需要说明理由。</p>
+<p>进站还有一道<b>站点保护密码</b>，由站长设定并分发。
+   拿到密码的人才能到注册这一步。</p>
+
+<h3>二、你要负责</h3>
+<ul>
+  <li><b>保管自己的账号。</b>密码忘了找不回（只存单向哈希，站长也看不到原文），
+      只能重置。别在公用设备上勾「记住我」。</li>
+  <li><b>对自己发的内容负责。</b>你发的文字、图片、语音、文件都算你的。</li>
+  <li><b>别在聊天里传高度敏感信息</b>——身份证号、银行卡、各类密码。
+      任何聊天工具都不适合传这些。</li>
+  <li><b>重要内容自己留一份。</b>见第五节。</li>
+</ul>
+
+<h3>三、不要做</h3>
+<table>
+  <tr><th>不要</th><th>说明</th></tr>
+  <tr><td>违法内容</td><td>违反所在地法律的任何内容</td></tr>
+  <tr><td>骚扰与人身攻击</td><td>包括反复纠缠、恶意刷屏@某人</td></tr>
+  <tr><td>冒用他人身份</td><td>冒充站长、管理员或其他成员</td></tr>
+  <tr><td>垃圾与广告</td><td>无关推广、刷屏、机器批量发送</td></tr>
+  <tr><td>尝试破坏</td><td>撞库、注入、压测、绕过权限</td></tr>
+  <tr><td>搬运他人隐私</td><td>未经同意公开别人的个人信息或私聊记录</td></tr>
+</table>
+<p>违反的后果由站长决定：警告、禁言、移出群、封禁账号，
+   严重的直接删除账号并保留记录。</p>
+
+<h3>四、站长能做什么</h3>
+<p>站长（及其授权的管理员）在本站拥有全部管理权限，包括：</p>
+<ul>
+  <li>审核、拒绝、删除账号</li>
+  <li>禁言、封禁、移出群</li>
+  <li>处置消息：移除、物理删除、置顶</li>
+  <li>修改群名、公告、群密码、成员</li>
+  <li>导出或重置全站数据</li>
+</ul>
+<p>这些操作会记在<b>审核日志</b>里，有相应权限的人可以查。</p>
+
+<h3>五、不保证什么</h3>
+<div class="tip warn">
+  <p><b>这是个人项目，没有服务等级承诺。</b>具体说：</p>
+  <ul>
+    <li><b>可能不可用。</b>依赖第三方免费额度，可能超额、变更或停服。</li>
+    <li><b>可能丢数据。</b>没有异地备份。误操作、配额耗尽、
+        服务变更都可能造成<b>不可恢复</b>的丢失。</li>
+    <li><b>可能变更。</b>功能会改，界面会改，本须知也会改。</li>
+    <li><b>没有客服。</b>出问题找站长，但他是义务维护，没有响应时间承诺。</li>
+  </ul>
+</div>
+<p>所以：<b>重要的聊天记录请自行导出留存</b>
+   （管理面板 → 站点 → 导出聊天记录）。这是唯一可靠的备份方式。</p>
+
+<h3>六、客户端</h3>
+<p>桌面版与安卓安装包<b>没有商业签名</b>，
+   安装时系统会提示"未知来源"或"身份不明的开发者"。
+   这不是文件有问题，是小规模个人项目没法承担证书费用。
+   绕行方法见 <a href="client.html">客户端下载</a> 第二节。</p>
+<p>安装包与网页版功能一致，<b>不装不会少任何功能</b>。</p>
+
+<h3>七、许可</h3>
+<p>本站代码与页面<b>保留所有权利</b>：不授权复制、修改、再发布，
+   也不授权部署到其他站点或用于二次分发。</p>
+<p>你在这里发的<b>内容归你</b>。但为避免误解：
+   既然服务端需要存储才能完成投递，你发送即表示同意本站
+   为提供聊天服务而进行必要的存储与传输。</p>
+
+<h3>八、变更与联系</h3>
+<p>本须知会随功能迭代调整，更新即生效。
+   继续使用视为知晓最新版本。</p>
+<p>有疑问、想删账号、想导出数据——直接找站长。
+   这是个熟人小站，沟通成本比填工单低得多。</p>
+
+<p style="color:var(--dim);font-size:13.5px;margin-top:20px">
+  相关：<a href="privacy.html">隐私声明</a> ·
+  <a href="permissions.html">权限与命令</a></p>
+      </div>
+    </main>
+  </div>
+</div>
+<div class="foot"><div>使用手册 · <a href="../index.html">返回首页</a> · <a href="privacy.html">隐私声明</a> · <a href="terms.html">使用须知</a></div></div>
+<script src="../assets/site.js"></script>
+<script>
+(function () {
+  var m = /\/([a-z-]+)\.html$/.exec(location.pathname);
+  var k = m ? m[1] : 'index';
+  var links = document.querySelectorAll('.doc-side a');
+  for (var i = 0; i < links.length; i++) {
+    if (links[i].getAttribute('data-doc') === k) links[i].classList.add('on');
+  }
+})();
+</script>
+</body>
+</html>
