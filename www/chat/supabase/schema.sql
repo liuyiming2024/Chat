@@ -1411,6 +1411,18 @@ begin
      bridge_ticket 刚加时就漏了 —— 跟门禁会话堆积是同一类缺陷。 */
   delete from bridge_ticket where expires_at < now() or used_at is not null;
 
+  /* 未提交的媒体记录（S-009）。
+     media_prepare() 插 committed=false 的记录占好路径，
+     用户中途放弃上传（关页面、断网、改主意）就永远留下 ——
+     还占着 storage 里已经传上去的字节。
+     留 24 小时宽限：正常上传不会超过这个时间。
+
+     ⚠ 必须放在这里，不能放在"某人登录成功"时 ——
+     那等于清理依赖有人来登录，跟 S-007 是同一个错误。 */
+  delete from media_objects
+   where committed = false
+     and created_at < now() - interval '24 hours';
+
   /* 门禁会话只保留最近 200 条，多的删掉。
      门禁每次成功检查都建一条，且没有限流（plpgsql 里 raise 会回滚，
      失败计数加不上去 —— 真实限流只能在网关层做）。
