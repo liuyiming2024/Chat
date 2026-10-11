@@ -1,150 +1,146 @@
-alter table room_members add column if not exists can_invite boolean not null default true;
-
-create table if not exists invites (
-  code       text primary key,
-  room_id    text not null references rooms(id) on delete cascade,
-  by_user    uuid references users(id) on delete set null,
-  expire_at  timestamptz,                    -- null = 长期有效
-  max_use    int not null default 0,         -- 0 = 不限次数
-  used       int not null default 0,
-  revoked_at timestamptz,                    -- 主动作废
-  created_at timestamptz not null default now()
-);
-
-create or replace function invite_create(p_room text, p_hours int default 24, p_max_use int default 5)
-returns json language plpgsql volatile security definer
+create or replace function state_get()
+returns json language plpgsql stable security definer
 set search_path = public, extensions, pg_temp as $$
-declare uid uuid; v_code text; v_is_staff boolean; v_can boolean; i int;
+declare me uuid;
 begin
-  uid := cur_user();
-  if uid is null then raise exception '请先登录'; end if;
+  if not gate_passed() then raise exception '请先通过站点保护密码'; end if;
+  me := cur_user();
+  return json_build_object(
+    'me', me,
+    'site', (select row_to_json(s) from (
+      select site_name, allow_register, (gate_hash is not null) as has_gate from site where id = true) s),
+    'users', coalesce((select json_agg(json_build_object(
+        'id', u.id, 'nick', u.nick, 'realName', u.real_name, 'role', u.role,
+        'status', u.status, 'perms', u.perms, 'bio', u.bio,
+        'mutedUntil', (extract(epoch from u.muted_until) * 1000)::bigint,
+        'createdAt', (extract(epoch from u.created_at) * 1000)::bigint,
+        'lastSeen', (extract(epoch from u.last_seen) * 1000)::bigint
+      )) from users u), '[]'::json),
+    'rooms', coalesce((select json_agg(r) from (
+      select json_build_object(
+        'id', rm.id, 'name', rm.name, 'type', rm.type, 'owner', rm.owner_id,
+        'desc', rm.description, 'notice', rm.notice,
+        'hasPwd', (rm.pwd_hash is not null),
+        'createdAt', (extract(epoch from rm.created_at) * 1000)::bigint,
+        'members', coalesce((select json_agg(mm.user_id) from room_members mm where mm.room_id = rm.id), '[]'::json),
+        'admins', coalesce((select json_agg(aa.user_id) from room_admins aa where aa.room_id = rm.id), '[]'::json),
+        /* 被单独关掉邀请权的成员。
+           不回传的话前端刷新一次开关就"自己弹回来"——
+           而服务端其实已经禁掉了，界面与事实不符。 */
+        'noInvite', coalesce((select json_agg(ni.user_id) from room_members ni
+                              where ni.room_id = rm.id and ni.can_invite = false), '[]'::json)
+      ) as r from rooms rm) x), '[]'::json),
+    /* order by 必须写在 json_agg(...) 内部。
+       写成 json_agg(x) ... order by m.created_at 会让整句变成聚合查询，
+       报 "column must appear in the GROUP BY clause" —— 本地测试没跑到
+       state_get 所以没暴露，真连上才炸。 */
+    'messages', coalesce((select json_agg(json_build_object(
+        'id', m.id, 'room', m.room_id, 'from', m.from_id, 'type', m.type,
+        'text', m.body, 'mediaId', m.media_path, 'name', m.media_name,
+        'size', m.media_size, 'replyTo', m.reply_to,
+        'deleted', m.deleted,
+   'edited',  m.edited_at,
+        'ts', (extract(epoch from m.created_at) * 1000)::bigint
+      ) order by m.created_at) from messages m
+      where m.created_at > now() - interval '30 days'
+        -- 只能看到自己所在房间的消息。
+        -- 原来不加这层：私聊和别人的群聊会一视同仁全量返回。
+        and (
+          exists (select 1 from rooms r where r.id = m.room_id and r.type = 'public')
+          or exists (select 1 from room_members mm
+                     where mm.room_id = m.room_id and mm.user_id = me)
+        )
+      ), '[]'::json),
+    'logs', coalesce((select json_agg(json_build_object(
+        'id', l.id, 'who', l.who_id, 'act', l.act, 'detail', l.detail,
+        'target', l.target, 'ts', (extract(epoch from l.created_at) * 1000)::bigint
+      )) from (select * from logs order by created_at desc limit 200) l), '[]'::json)
+  );
+end;
+$$;
 
-  if not exists (select 1 from rooms r where r.id = p_room) then
-    raise exception '房间不存在';
+
+create or replace function state_delta(p_since bigint default 0)
+returns json language plpgsql stable security definer
+set search_path = public, extensions, pg_temp as $$
+declare me uuid; v_from timestamptz; v_rev bigint;
+begin
+  if not gate_passed() then raise exception '请先通过站点保护密码'; end if;
+  me := cur_user();
+  v_rev := (select last_value from state_rev);
+
+  /* 时间窗只给 logs 用（它没 rev 列）。
+     ⚠ messages 曾经也用这个窗拉增量，那是错的：
+       rev 差 × 2 秒只是估算，站点冷清时 rev 差小、窗窄，
+       离线期间的消息会落在窗外 —— 前端按 id merge，缺了就永远缺了。
+     messages 现在直接比 rev（见下方 where m.rev > p_since），精确且可索引。 */
+  if coalesce(p_since, 0) <= 0 then
+    v_from := now() - interval '30 days';
+  else
+    v_from := now() - make_interval(secs => greatest(0, v_rev - p_since) * 2 + 30);
   end if;
 
-  /* 房主 / 房间管理员 / 站长 / 全站管理员：不受 can_invite 开关限制 */
-  select exists (
-    select 1 from rooms r
-     where r.id = p_room and (
-       r.owner_id = uid
-       or exists (select 1 from room_admins a where a.room_id = r.id and a.user_id = uid)
-     )
-  ) or exists (select 1 from users u where u.id = uid and u.role in ('owner','admin'))
-    into v_is_staff;
-
-  if not v_is_staff then
-    /* 普通成员：先看是不是成员，再看有没有被单独禁掉邀请 */
-    if not exists (select 1 from room_members m where m.room_id = p_room and m.user_id = uid) then
-      raise exception '不是该房间成员';
-    end if;
-    select coalesce(m.can_invite, true) into v_can
-      from room_members m where m.room_id = p_room and m.user_id = uid;
-    if not v_can then
-      raise exception '你在本房间的邀请权限已被管理员关闭';
-    end if;
-  end if;
-
-  /* 生成 6 位口令，避开易混淆字符（0/O、1/I/L） */
-  <<gen>>
-  loop
-    v_code := '';
-    for i in 1..6 loop
-      v_code := v_code || substr('ABCDEFGHJKMNPQRSTUVWXYZ23456789',
-                                 1 + floor(random() * 31)::int, 1);
-    end loop;
-    exit gen when not exists (select 1 from invites where code = v_code);
-  end loop;
-
-  insert into invites (code, room_id, by_user, expire_at, max_use)
-  values (v_code, p_room, uid,
-          case when coalesce(p_hours,0) > 0 then now() + (p_hours || ' hours')::interval else null end,
-          greatest(coalesce(p_max_use,0), 0));
-  perform nextval('state_rev');
-  return json_build_object('ok', true, 'code', v_code);
+  return json_build_object(
+    'rev', v_rev,
+    'me', me,
+    'site', (select row_to_json(s) from (
+      select site_name, allow_register, (gate_hash is not null) as has_gate from site where id = true) s),
+    /* 用户与房间量小且变动会牵动权限，每次都带上，不做增量 */
+    'users', coalesce((select json_agg(json_build_object(
+        'id', u.id, 'nick', u.nick, 'realName', u.real_name, 'role', u.role,
+        'status', u.status, 'perms', u.perms, 'bio', u.bio,
+        'mutedUntil', (extract(epoch from u.muted_until) * 1000)::bigint,
+        'createdAt', (extract(epoch from u.created_at) * 1000)::bigint,
+        'lastSeen', (extract(epoch from u.last_seen) * 1000)::bigint
+      )) from users u), '[]'::json),
+    'rooms', coalesce((select json_agg(r) from (
+      select json_build_object(
+        'id', rm.id, 'name', rm.name, 'type', rm.type, 'owner', rm.owner_id,
+        'desc', rm.description, 'notice', rm.notice,
+        'hasPwd', (rm.pwd_hash is not null),
+        'createdAt', (extract(epoch from rm.created_at) * 1000)::bigint,
+        'members', coalesce((select json_agg(mm.user_id) from room_members mm where mm.room_id = rm.id), '[]'::json),
+        'admins', coalesce((select json_agg(aa.user_id) from room_admins aa where aa.room_id = rm.id), '[]'::json),
+        /* 被单独关掉邀请权的成员。
+           不回传的话前端刷新一次开关就"自己弹回来"——
+           而服务端其实已经禁掉了，界面与事实不符。 */
+        'noInvite', coalesce((select json_agg(ni.user_id) from room_members ni
+                              where ni.room_id = rm.id and ni.can_invite = false), '[]'::json)
+      ) as r from rooms rm) x), '[]'::json),
+    'messages', coalesce((select json_agg(json_build_object(
+        'id', m.id, 'room', m.room_id, 'from', m.from_id, 'type', m.type,
+        'text', m.body, 'mediaId', m.media_path, 'name', m.media_name,
+        'size', m.media_size, 'replyTo', m.reply_to,
+        'deleted', m.deleted,
+   'edited',  m.edited_at,
+        'ts', (extract(epoch from m.created_at) * 1000)::bigint
+      ) order by m.rev) from messages m
+      /* ⚠ 是 >= 不是 >。
+         客户端拿到的 p_since 来自 state_peek()，那是"最后分配出去的号"，
+         而最后分配的号往往正是刚发的那条消息的 rev。
+         用 > 会把这条漏掉 —— 用户自己发的消息，自己这边看不到。
+         用 >= 最多重复送最后一条，前端按 id merge 会去重，无害。 */
+      where coalesce(m.rev, 0) >= coalesce(p_since, 0)
+        and (
+          exists (select 1 from rooms r where r.id = m.room_id and r.type = 'public')
+          or exists (select 1 from room_members mm
+                     where mm.room_id = m.room_id and mm.user_id = me)
+        )
+      ), '[]'::json),
+    'logs', coalesce((select json_agg(json_build_object(
+        'id', l.id, 'who', l.who_id, 'act', l.act, 'detail', l.detail,
+        'target', l.target, 'ts', (extract(epoch from l.created_at) * 1000)::bigint
+      ) order by l.created_at desc) from (
+        select * from logs where created_at > v_from order by created_at desc limit 200
+      ) l), '[]'::json)
+  );
 end;
 $$;
 
 
-create or replace function invite_redeem(p_code text)
-returns json language plpgsql volatile security definer
-set search_path = public, extensions, pg_temp as $$
-declare uid uuid; v record; v_name text;
-begin
-  uid := cur_user();
-  if uid is null then raise exception '请先登录'; end if;
-
-  select * into v from invites
-   where code = upper(btrim(coalesce(p_code,''))) for update;
-
-  if not found then raise exception '邀请码不存在'; end if;
-  if v.revoked_at is not null then raise exception '邀请码已被作废'; end if;
-  if v.expire_at is not null and v.expire_at < now() then raise exception '邀请码已过期'; end if;
-  if v.max_use > 0 and v.used >= v.max_use then raise exception '邀请码使用次数已用完'; end if;
-
-  if not exists (select 1 from rooms r where r.id = v.room_id) then
-    raise exception '目标房间已被解散';
-  end if;
-
-  insert into room_members (room_id, user_id) values (v.room_id, uid) on conflict do nothing;
-  update invites set used = used + 1 where code = v.code;
-  select name into v_name from rooms where id = v.room_id;
-  perform nextval('state_rev');
-  return json_build_object('ok', true, 'room', v.room_id, 'name', v_name);
-end;
-$$;
-
-
-create or replace function invite_revoke(p_code text)
-returns boolean language plpgsql volatile security definer
-set search_path = public, extensions, pg_temp as $$
-declare uid uuid; v record;
-begin
-  uid := cur_user();
-  if uid is null then raise exception '请先登录'; end if;
-  select * into v from invites where code = upper(btrim(coalesce(p_code,'')));
-  if not found then raise exception '邀请码不存在'; end if;
-  if v.by_user <> uid
-     and not exists (select 1 from rooms r where r.id = v.room_id and r.owner_id = uid)
-     and not exists (select 1 from room_admins a where a.room_id = v.room_id and a.user_id = uid)
-     and not exists (select 1 from users u where u.id = uid and u.role in ('owner','admin'))
-  then raise exception '无权作废该邀请码'; end if;
-  update invites set revoked_at = now() where code = v.code;
-  perform nextval('state_rev');
-  return true;
-end;
-$$;
-
-
-create or replace function member_set_can_invite(p_room text, p_user uuid, p_can boolean)
-returns boolean language plpgsql volatile security definer
-set search_path = public, extensions, pg_temp as $$
-declare uid uuid;
-begin
-  uid := cur_user();
-  if uid is null then raise exception '请先登录'; end if;
-  -- 只有房主 / 房间管理员 / 站长 / 全站管理员能改别人的开关
-  if not exists (select 1 from rooms r where r.id = p_room and (
-       r.owner_id = uid
-       or exists (select 1 from room_admins a where a.room_id = r.id and a.user_id = uid)
-     ))
-     and not exists (select 1 from users u where u.id = uid and u.role in ('owner','admin'))
-  then raise exception '无权设置'; end if;
-
-  update room_members set can_invite = coalesce(p_can, true)
-   where room_id = p_room and user_id = p_user;
-  if not found then raise exception '该用户不是本房间成员'; end if;
-  perform nextval('state_rev');
-  return true;
-end;
-$$;
-
--- ---------- 行为验证 ----------
-\echo '=== invites 表 ==='
-select count(*) as invites_table from information_schema.tables
- where table_name='invites';
-\echo '=== can_invite 列 ==='
-select count(*) as can_invite_col from information_schema.columns
- where table_name='room_members' and column_name='can_invite';
-\echo '=== 四个函数 ==='
-select proname from pg_proc where proname like 'invite_%' or proname='member_set_can_invite' order by proname;
+-- ---------- 验证 ----------
+\echo '=== state_get 是否回传 noInvite ==='
+select case when prosrc like '%noInvite%' then 'OK 有 noInvite'
+       else '缺 noInvite' end from pg_proc where proname='state_get';
+select case when prosrc like '%noInvite%' then 'OK 有 noInvite'
+       else '缺 noInvite' end from pg_proc where proname='state_delta';

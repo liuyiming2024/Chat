@@ -953,7 +953,20 @@ video.thumb { width: 320px; height: 180px; background: #000; }
 /* ================= 窄屏 ================= */
 @media (max-width: 1000px) {
   .app { grid-template-columns: 260px minmax(0, 1fr); }
-  .side-panel { display: none; }
+  /* ⚠ 原来是 display:none（E-046）。
+     而「成员」按钮只是 toggle 一个 .hidden 类 ——
+     窄屏下按钮照样能点、类照样加删，但面板永远不显示，
+     表现为"点了没反应"。用户会以为是软件坏了。
+
+     正确做法：窄屏不是"没有成员面板"，而是"它变成浮层盖在上面"。
+     所以这里改成绝对定位浮层，打开时盖住内容区。 */
+  .side-panel {
+    position: absolute; right: 0; top: 0; bottom: 0;
+    width: min(300px, 86vw);
+    z-index: 60;
+    box-shadow: -8px 0 24px rgba(0, 0, 0, .18);
+  }
+  .side-panel.hidden { display: none; }
 }
 @media (max-width: 720px) {
   .app { grid-template-columns: minmax(0, 1fr); }
@@ -1100,7 +1113,11 @@ body.dark .at-mention {
 body.dark .gate-card { background: var(--bg-panel); }
 
 /* @提及高亮 */
+/* cursor:pointer 不能少（E-054）：
+   有高亮样式 + 有点击处理，但没 pointer，
+   用户看不出它能点 —— 视觉上就是一段带底色的普通文字。 */
 .at-mention {
+  cursor: pointer;
   color: #1a6fd4;
   background: #e8f2ff;
   border-radius: 3px;

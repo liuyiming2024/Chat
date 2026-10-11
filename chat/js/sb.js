@@ -80,11 +80,31 @@
     if (json) h['Content-Type'] = 'application/json';
     return h;
   }
+  /* RPC 超时。
+     ⚠ 原来是裸 fetch（E-050），弱网/断网时会永久挂起：
+     界面停在"处理中…"，既不成功也不失败，用户只能刷新。
+     有超时至少能给出"网络超时，请重试"这种能指导下一步的话。
+
+     超时要有区分：拉取（读）可以等久一点，
+     写操作（发消息）用户盯着，等太久更难受。 */
+  var RPC_TIMEOUT_MS = 20000;
+
   function rpc(name, params) {
     if (!isOn()) return Promise.reject(new Error('未配置 Supabase'));
-    return fetch(url + '/rest/v1/rpc/' + name, {
-      method: 'POST', headers: headers(true), body: JSON.stringify(params || {})
-    }).then(function (r) {
+    var ctl = (typeof AbortController === 'function') ? new AbortController() : null;
+    var timer = null;
+    var p = fetch(url + '/rest/v1/rpc/' + name, {
+      method: 'POST', headers: headers(true), body: JSON.stringify(params || {}),
+      signal: ctl ? ctl.signal : undefined
+    });
+    if (ctl) {
+      timer = setTimeout(function () {
+        try { ctl.abort(); } catch (e) { }
+      }, RPC_TIMEOUT_MS);
+    }
+    var done = function () { if (timer) clearTimeout(timer); };
+    p.then(done, done);
+    return p.then(function (r) {
       if (!r.ok) {
         return r.text().then(function (t) {
           var m = /"message"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(t);
@@ -95,6 +115,15 @@
       if (r.status === 204 || !ct) return null;
       if (ct.indexOf('json') < 0) return r.text();
       return r.json();
+    }).catch(function (e) {
+      /* AbortError 是超时自己造的，得说成人话。
+         不转换的话用户看到的是 "The user aborted a request"，
+         完全不知道发生了什么。 */
+      if (e && (e.name === 'AbortError' || /aborted/i.test(String(e.message || '')))) {
+        throw new Error('网络超时，请重试');
+      }
+      if (e instanceof TypeError) throw new Error('网络异常，请检查连接');
+      throw e;
     });
   }
 
