@@ -1,0 +1,22 @@
+  • electron-builder  version=26.15.3 os=6.17.0-1022-azure
+  • loaded configuration  file=package.json ("build" field)
+  • Specified application directory equals to project dir — superfluous or wrong configuration  appDirectory=.
+  • executing @electron/rebuild  electronVersion=33.4.11 arch=x64 buildFromSource=false workspaceRoot=/home/runner/work/Chat/Chat projectDir=./ appDir=./
+  • installing native dependencies  arch=x64
+  • completed installing native dependencies
+  • packaging       platform=linux arch=x64 electron=33.4.11 appOutDir=dist/linux-unpacked
+  • downloaded      label=electron progress=100%
+  • downloaded electron zip extracted successfully  output=/home/runner/work/Chat/Chat/dist/linux-unpacked
+  • searching for node modules  pm=npm searchDir=/home/runner/work/Chat/Chat
+  • searching for node modules  pm=traversal searchDir=/home/runner/work/Chat/Chat
+  • using manual traversal of node_modules to build dependency tree
+  • no node modules returned while searching directories  searchDirectories=[""]
+  • building        target=AppImage arch=x64 file=dist/chat-linux.AppImage
+  • electron uses desktopName as app_id / WM_CLASS for window association. Without it desktop environments may not link running windows to this .desktop entry. Set desktopName in package.json and linux.syncDesktopName: true to fix.  reason=desktopName is not set in package.json docs=https://www.electron.build/linux#window-association-desktopname--syncdesktopname
+  • downloaded      label=appimage-12.0.1.7z progress=100%
+  • downloaded      label=7zip-linux-x64.tar.gz progress=100%
+  • building embedded block map  file=dist/chat-linux.AppImage
+builder-debug.yml
+chat-linux.AppImage
+latest-linux.yml
+linux-unpacked
