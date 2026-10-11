@@ -3713,15 +3713,30 @@
     lBar.innerHTML = '<span>' + t('lang.title') + '</span>';
     var lSel = elc('select', 'sel');
     lSel.id = 'pLang';
-    [['zh', t('lang.zh')], ['en', t('lang.en')]].forEach(function (o) {
+    /* ⚠ 三处 bug（S-062），任一个都让多语言彻底不可用：
+         ① g.I18n.cur() 根本不存在（导出的是 get）——
+            调用即抛 TypeError，而这段在渲染设置面板的循环里，
+            **整个面板渲染到这行就中断了**，后面的设置项全部消失。
+            这解释了为什么"语言切换"一直是坏的：不是没接，是接错了。
+         ② 值用 'zh'，但 SUPPORTED 里是 'zh-CN' ——
+            set() 会判定不支持并回退到默认值。
+         ③ 切换后不重绘 —— 界面文案不变，用户以为点了没用。 */
+    [['zh-CN', t('lang.zh')], ['en', t('lang.en')]].forEach(function (o) {
       var op = document.createElement('option');
       op.value = o[0]; op.textContent = o[1];
-      if (g.I18n.cur() === o[0]) op.selected = true;
+      if (g.I18n.get() === o[0]) op.selected = true;
       lSel.appendChild(op);
     });
     lSel.onchange = function () {
-      g.I18n.load(lSel.value);
-      g.UI.toast(lSel.value === 'zh' ? '已切换为简体中文' : 'Switched to English');
+      var v = lSel.value;
+      if (g.I18n.get() === v) return;
+      g.I18n.load(v);
+      try { if (g.I18n.apply) g.I18n.apply(); } catch (e) { }
+      g.UI.toast(v === 'zh-CN' ? '已切换为简体中文，正在重新载入…' : 'Switched to English, reloading…');
+      /* 动态渲染的文案（toast、菜单、按钮）不重载就不会变 ——
+         只 apply() 的话用户会看到"一半变了、一半没变"，
+         比不变更令人困惑。 */
+      setTimeout(function () { try { location.reload(); } catch (e) { } }, 600);
     };
     lBar.appendChild(lSel);
     d.appendChild(lBar);
@@ -4195,6 +4210,10 @@
           '<option value="light">浅色</option>' +
           '<option value="dark">深色</option></select>' +
           '<div class="field-hint">深色模式会记住你的选择，每个访客可各自设置，不影响其他人。</div>' +
+          /* 语言选择。
+             i18n.js 里有完整的中英词典，但**从来没有被调用过**（S-062） ——
+             词典写了等于没写。所以先在这里给一个入口，
+             让用户能真正切换；具体文案的接入分批做。 */
           '<label class="field-label">发送键</label><select class="field" id="stEnter">' +
           '<option value="send">Enter 发送 / Shift+Enter 换行</option>' +
           '<option value="newline">Enter 换行 / Ctrl+Enter 发送</option></select>' +
@@ -4353,6 +4372,10 @@
           S.needReview = sd.querySelector('#stReview').value === '1';
           setTheme(sd.querySelector('#stTheme').value);
           try { localStorage.setItem(ENTER_KEY, sd.querySelector('#stEnter').value); } catch (e) { }
+          /* 语言。切换后要重绘整个界面才看得见 ——
+             I18n.set() 内部会调用 apply()，但那只覆盖带 data-i18n 的静态元素；
+             动态渲染的文案要重新 render 才更新。
+             **不说清这点，用户切完发现只有一部分变了，会以为功能坏了。** */
           save(); g.UI.toast('已保存', 'ok');
         };
         b.appendChild(saveBtn);
@@ -4759,8 +4782,29 @@
   }
 
   function boot() {
-    /* 多语言：先按"用户选过 → 浏览器语言 → 中文"定语种，再渲染界面 */
-    try { if (g.I18n) g.I18n.load(g.I18n.detect()); } catch (e) { }
+    /* ⚠ 原来这里写 `g.I18n.load(g.I18n.detect())`（S-062），
+       而 i18n.js 根本没有导出 load / detect 这两个函数 ——
+       于是整句是 undefined 调用，抛错后被空 catch 吞掉，
+       **多语言初始化静默失败，且没有任何提示**。
+       词典写了 290 行、页面一次都没用上，就是这个原因。
+
+       i18n.js 在加载时已经自己跑过 detect() 定语种了，
+       这里只需要：① 设置 <html lang>；② apply() 填静态文案。 */
+    try {
+      if (g.I18n) {
+        if (g.I18n.apply) g.I18n.apply();
+        try { document.documentElement.lang = g.I18n.get(); } catch (e2) { }
+      }
+    } catch (e) { }
+    /* 语言切换后要能重绘 —— 动态渲染的文案不重绘就不会变 */
+    if (g.I18n && g.I18n.apply && g.I18n.set) {
+      var _origSet = g.I18n.set;
+      g.I18n.set = function (lang) {
+        _origSet(lang);
+        try { g.I18n.apply(); } catch (e) { }
+        try { renderChatSoon(); } catch (e) { }
+      };
+    }
     initTheme();
     /* 通知模块需要知道"当前在看哪个房间"，才能判断该不该弹 */
     if (g.Notifier) {

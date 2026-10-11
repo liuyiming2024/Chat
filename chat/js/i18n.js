@@ -38,6 +38,12 @@
       'copied': '已复制',
       'unknown': '未知',
       'retry': '重试',
+      /* ⚠ 这几个 key 在 app.js 里被 t() 调用过，但词典里没有 ——
+         t() 取不到就返回 key 本身，中文用户会看到 'common.close' 这种英文串。
+         **缺 key 比不翻译更糟**：不翻译至少还看得懂，露出 key 则是明显错误。 */
+      'common.close': '关闭',
+      'common.unknownReason': '未知原因',
+      'common.networkError': '网络错误',
 
       /* ---- 导航 ---- */
       'nav.home': '首页',
@@ -118,7 +124,16 @@
       'update.checking': '正在检查更新…',
       'update.fail': '检查更新失败',
       'update.mirror': '下载源',
-      'update.speed': '测速中…'
+      'update.speed': '测速中…',
+      'update.latest': '最新版本',
+      'update.source': '下载源',
+      'update.downloading': '下载中…',
+      'lang.title': '语言',
+      'lang.zh': '中文',
+      'lang.en': 'English',
+      /* 用到了但词典没有 —— 会露出英文 key，补上 */
+      'update.upToDate': '已是最新版',
+      'update.available': '发现新版本'
     },
 
     'en': {
@@ -137,6 +152,9 @@
       'copied': 'Copied',
       'unknown': 'Unknown',
       'retry': 'Retry',
+      'common.close': 'Close',
+      'common.unknownReason': 'Unknown reason',
+      'common.networkError': 'Network error',
 
       /* ---- Nav ---- */
       'nav.home': 'Home',
@@ -217,7 +235,15 @@
       'update.checking': 'Checking for updates…',
       'update.fail': 'Update check failed',
       'update.mirror': 'Download source',
-      'update.speed': 'Testing speed…'
+      'update.speed': 'Testing speed…',
+      'update.latest': 'Latest version',
+      'update.source': 'Download source',
+      'update.downloading': 'Downloading…',
+      'lang.title': 'Language',
+      'lang.zh': 'Chinese',
+      'lang.en': 'English',
+      'update.upToDate': 'Up to date',
+      'update.available': 'New version available'
     }
   };
 
@@ -283,7 +309,15 @@
 
   g.I18n = {
     t: t, set: set, get: get, apply: apply, list: list,
-    SUPPORTED: SUPPORTED
+    SUPPORTED: SUPPORTED,
+    /* ⚠ detect / load 原来没导出（S-062）。
+       app.js 里写的是 I18n.load(I18n.detect())，
+       两个都不存在 → undefined 调用 → 抛错被空 catch 吞掉 →
+       多语言静默失效。
+       这里补上，让那句调用至少是合法的；
+       同时 detect 对外可见，将来别处要判断语种也不必重写一遍。 */
+    detect: detect,
+    load: function (lang) { set(lang || detect()); return cur; }
   };
   /* 全局简写 t(...)。app.js 里大量直接调用，没有它就全是 ReferenceError。 */
   g.t = t;
