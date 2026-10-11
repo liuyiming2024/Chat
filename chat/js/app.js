@@ -2415,6 +2415,20 @@
     if (!r) return;
     if (r.pwd && r.members && r.members.indexOf(me.id) < 0) {
       g.UI.prompt('需要群密码', '请输入「' + r.name + '」的进入密码', '', function (v) {
+        /* 在线时密码必须交给服务端校验。
+           本地校验在这里必然失败：online.js 的 tRoom() 把 pwd 转成了
+           字符串 '(已设置)'（在线模式下 salt/hash 本来就不下发），
+           而 verifyPwd 要的是 {salt,hash} 对象 ——
+           结果是输对密码也提示"密码错误"，房间永远进不去。 */
+        if (g.Online && g.Online.isOnline && g.Online.isOnline() && g.Online.joinRoom) {
+          g.Online.joinRoom(rid, v).then(function () {
+            cur = rid; unread[rid] = 0; atMe[rid] = 0; syncBadge();
+            renderAll(); scrollBottom();
+          }, function (e) {
+            g.UI.toast('密码错误' + (e && e.message ? '：' + e.message : ''), 'err');
+          });
+          return;
+        }
         var rv = verifyPwd(v, r.pwd.salt, r.pwd.hash);
         if (!rv.ok) { g.UI.toast('密码错误', 'err'); return; }
         if (rv.legacy) { r.pwd.hash = hashPwd(v, r.pwd.salt); save(); }

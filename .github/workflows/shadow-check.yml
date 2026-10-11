@@ -1,0 +1,51 @@
+name: 影子副本一致性
+
+# capacitor.config.json 的 webDir 指向 www/，而源码在 chat/。
+# 这两份之间没有同步机制，改了源码会打进旧版本 —— 已经真实发生过一次：
+#
+#   2026-10-11 修了 app.js 的跨房间状态泄漏（MSG_PAGE / replyTo），
+#   改动只在 chat/ 里，www/chat/js/app.js 还是旧的。
+#   而安卓打包读 www/ → 用户装到的 APP 里，那个 bug 根本没修到，
+#   当时还以为已经修好了。
+#
+# 这个检查独立成一个 workflow，不挂在安卓构建上：
+# 安卓构建要跑十几分钟，这里只要几秒。早失败比晚失败便宜得多。
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'chat/**'
+      - 'www/chat/**'
+      - 'capacitor.config.json'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: 比对 chat/ 与 www/chat/
+        run: |
+          echo "源码目录：chat/"
+          echo "打包目录：www/chat/（capacitor webDir 指向 www）"
+          echo ""
+
+          if diff -r chat www/chat > /tmp/d.txt 2>&1; then
+            echo "✅ 两份一致"
+            exit 0
+          fi
+
+          echo "::error::chat/ 与 www/chat/ 不一致 —— 安卓包会打进旧版本"
+          echo ""
+          echo "差异摘要（前 30 行）："
+          head -30 /tmp/d.txt
+          echo ""
+          echo "总计：$(grep -c '^diff\|^Files.*differ\|^Only in' /tmp/d.txt) 处"
+          echo ""
+          echo "修法：把源码同步过去再提交"
+          echo "  rsync -a --delete chat/ www/chat/"
+          exit 1
