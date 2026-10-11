@@ -273,9 +273,19 @@
             /* 回到在线：先把离线期间攒的消息补发出去。
                时间戳由服务端给 —— 本机时钟可能不准，用它会导致乱序。 */
             if (g.Online.flushOutbox) {
-              g.Online.flushOutbox().then(function (n) {
-                if (n > 0) {
-                  g.UI.toast('已补发 ' + n + ' 条离线消息', 'ok');
+              g.Online.flushOutbox().then(function (r) {
+                var sent = (r && r.sent) || 0;
+                var failed = (r && r.failed) || 0;
+                if (sent > 0) {
+                  g.UI.toast('已补发 ' + sent + ' 条离线消息', 'ok');
+                  save(); renderChatSoon();
+                }
+                /* 失败必须说出来（S-044）。
+                   静默的后果：那几条一直挂着"待发送"，
+                   用户以为迟早会发出去，其实每次都在失败。 */
+                if (failed > 0) {
+                  g.UI.toast('还有 ' + failed + ' 条没发出去'
+                    + (r.err ? '（' + r.err + '）' : ''), 'err');
                   save(); renderChatSoon();
                 }
               });
@@ -1323,13 +1333,26 @@
           g.UI.toast('发送失败：' + (e && e.message ? e.message : '网络错误'), 'err');
         });
     } else if (g.Online && g.Online.enqueue) {
-      m.pending = true;
-      g.Online.enqueue({
+      /* localId 必须带上：补发成功时要用它把本地临时 id 换成服务端 id，
+         否则 pull 回来后同一条消息会有两个 id，界面上出现两遍（S-043）。 */
+      var res = g.Online.enqueue({
         room: cur, type: 'text', body: text, media: null,
-        name: '', size: 0, replyTo: m.replyTo || null
+        name: '', size: 0, replyTo: m.replyTo || null, localId: m.id
       });
-      save(); renderChat();
-      g.UI.toast('已存入待发送队列，联网后自动发出', 'ok');
+      if (res && res.ok === false) {
+        /* 没存住就不能标"待发送" —— 标了等于告诉用户"迟早会发出去"，
+           而它其实已经丢了。这是最糟的一种骗法（S-045）。 */
+        m.pending = false;
+        m.failed = true;
+        save(); renderChat();
+        g.UI.toast(res.reason === 'quota'
+          ? '本地存储已满，这条消息没能存下'
+          : '这条消息没能存入待发送队列', 'err');
+      } else {
+        m.pending = true;
+        save(); renderChat();
+        g.UI.toast('已存入待发送队列，联网后自动发出', 'ok');
+      }
     }
   }
 
@@ -3968,6 +3991,47 @@
      降级必须是静默的 —— 后端挂了不该让用户进不去聊天室。 */
   function bootOnline() {
     if (!g.Online) return Promise.resolve(false);
+
+    /* 离线补发成功：把界面上那条本地 id 换成服务端 id。
+       不换的话，pull 回来的同一条消息（服务端 id）会和本地那条
+       （本地生成的 id）id 不同，按 id merge 就会并存 ——
+       用户看到自己刚发的话出现两遍（S-043）。 */
+    if (g.Online.outboxOnSent) {
+      g.Online.outboxOnSent(function (localId, serverId) {
+        var done = false;
+        Object.keys(S.messages || {}).forEach(function (rid) {
+          var arr = S.messages[rid] || [];
+          for (var i = 0; i < arr.length; i++) {
+            if (arr[i].id === localId) {
+              arr[i].id = serverId;
+              arr[i].pending = false;
+              done = true;
+              break;
+            }
+          }
+        });
+        if (done) { save(); renderChatSoon(); }
+      });
+    }
+
+    /* 网络恢复时补发离线队列。
+       补发不能只挂在建站初始化那一条路径上 ——
+       已登录用户断网再联网是更常见的情况。 */
+    if (g.Online.onReconnect) {
+      g.Online.onReconnect(function () {
+        if (!g.Online.flushOutbox) return;
+        g.Online.flushOutbox().then(function (r) {
+          var sent = (r && r.sent) || 0, failed = (r && r.failed) || 0;
+          if (sent > 0) { g.UI.toast('已补发 ' + sent + ' 条离线消息', 'ok'); save(); renderChatSoon(); }
+          if (failed > 0) {
+            g.UI.toast('还有 ' + failed + ' 条没发出去'
+              + (r.err ? '（' + r.err + '）' : ''), 'err');
+            save(); renderChatSoon();
+          }
+        });
+      });
+    }
+
     return g.Online.init({
       onState: function (inS) { if (mergeState(inS)) renderAll(); },
       /* 后端不可用 → 明确告知，不再静默回零 */
