@@ -65,7 +65,15 @@
   }
 
   function setMeId(id, remember) {
-    try { localStorage.setItem(REMEMBER_KEY, remember ? '1' : '0'); } catch (e) { }
+    /* ⚠ 原来空 catch（S-060）：写失败完全静默。
+       后果很隐蔽 —— 用户勾了"记住账号"，实际没记住，
+       下次打开要重新登录，而他不知道为什么。
+       **"设置没生效"和"设置生效了但被清掉"在用户看来一模一样，
+       只有告知才能区分。** */
+    try { localStorage.setItem(REMEMBER_KEY, remember ? '1' : '0'); }
+    catch (e) {
+      try { g.UI.toast('无法保存"记住账号"设置，本次登录状态不会保留', 'err', 5000); } catch (e2) { }
+    }
     if (remember) ckSet(ME_KEY, id, REMEMBER_DAYS);
     else ckSetMin(ME_KEY, id, IDLE_MIN);
   }
