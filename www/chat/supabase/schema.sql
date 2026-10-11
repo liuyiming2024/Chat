@@ -171,9 +171,24 @@ create table if not exists logs (
   act        text not null,
   detail     text not null default '',
   target     text not null default '',
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  /* ⚠ 增量拉取必须靠 rev，不能靠估算时间窗（S-067）。
+     logs 以前和 messages 一样用 "rev 差 × 2 秒" 反推时间窗 ——
+     站点冷清时窗很窄，离线期间的日志全落在窗外，
+     管理员离线一小时后上线，看到的审计记录是缺的。
+     **审计记录缺失恰恰是最不能被接受的那种缺失：
+     出事之后查日志，查到的却是不完整的日志。** */
+  rev        bigint
 );
 create index if not exists logs_time_idx on logs (created_at desc);
+create index if not exists logs_rev_idx on logs (rev);
+
+/* logs 写入时自动取 rev 号，与时间无关，不受时钟与并发影响。
+   复用 messages 那个取号函数 —— 它做的事就是"取下一个全局序号"，
+   与哪张表无关。（函数名叫 msg_ 是历史原因，语义上是通用的。） */
+drop trigger if exists logs_rev_trg on logs;
+create trigger logs_rev_trg before insert on logs
+  for each row execute function msg_rev_bump();
 
 -- ---------- 单调递增序号（供前端判断是否有更新） ----------
 create sequence if not exists state_rev;
@@ -395,7 +410,7 @@ begin
         'id', l.id, 'who', l.who_id, 'act', l.act, 'detail', l.detail,
         'target', l.target, 'ts', (extract(epoch from l.created_at) * 1000)::bigint
       ) order by l.created_at desc) from (
-        select * from logs where created_at > v_from order by created_at desc limit 200
+        select * from logs where rev > p_since order by rev desc limit 200
       ) l), '[]'::json)
   );
 end;
@@ -789,6 +804,14 @@ begin
      这样被授予 msg.recall.own 的人也能撤，被 denied 的人撤不了。 */
   if r.from_id = uid then
     perform acl_require('msg.recall.own', r.room_id);
+    /* ⚠ 撤回时限必须服务端判（S-063）。
+       原来只有前端 RECALL_MS 挡着 —— 那纯粹是 UI 门面：
+       直接调 RPC 就能撤回三个月前的任何一条消息。
+       **能在界面上挡住，不等于在接口上挡住了。**
+       管理员删别人的消息不受此时限（管理行为另有一套尺度）。 */
+    if r.created_at < now() - interval '5 minutes' then
+      raise exception '超过 5 分钟，不能撤回了';
+    end if;
     update messages set deleted = true, body = '', media_path = null where id = p_id;
     /* 同上：update 由触发器 bump rev，这里不再额外 nextval */
     return true;
@@ -828,6 +851,14 @@ begin
   end if;
 
   if r.deleted then raise exception '消息已撤回，不能编辑'; end if;
+
+  /* ⚠ 编辑时限同样必须服务端判（S-063）。
+     前端 EDIT_MS 只是门面，绕过就能编辑任意旧消息 ——
+     而且编辑比撤回更隐蔽：改的是历史发言内容，
+     别人看到的是"他当时就是这么说的"。 */
+  if r.created_at < now() - interval '10 minutes' then
+    raise exception '超过 10 分钟，不能编辑了';
+  end if;
 
   /* 长度上限，与发送侧一致。不设的话一条消息能撑爆额度。 */
   len := coalesce(char_length(p_body), 0);
@@ -1919,6 +1950,40 @@ $$;
 revoke all on all tables in schema public from anon, authenticated;
 grant usage on schema public to anon, authenticated;
 grant execute on all functions in schema public to anon, authenticated;
+
+/* ⚠ 上面那句 all functions 会把内部辅助函数一并暴露给 anon（S-058）：
+   issue_session / new_token / cur_token / cur_token_hash 等
+   本不该被外部直接调用 —— 它们是会话机制的内部零件。
+
+   这里逐个收回内部函数。
+
+   **为什么不用"全部收回 + 白名单放开"：**
+   那更安全，但本项目对外函数有几十个，
+   漏放一个就是功能直接不可用，而这类缺失在上线前未必测得到。
+   收回内部函数则相反：漏收一个只是没收紧，不会破坏任何功能。
+   **收紧安全边界时，要选"漏了也不会坏"的那个方向。** */
+do $$
+declare fn text;
+begin
+  foreach fn in array array[
+    'issue_session(uuid)', 'new_token()', 'cur_token()', 'cur_token_hash()',
+    'cur_user()', 'gate_passed()', 'acl_can(text,text)',
+    'acl_require(text,text)', 'msg_rev_bump()'
+  ]
+  loop
+    begin
+      execute format('revoke execute on function %s from anon, authenticated', fn);
+    exception when undefined_function then
+      /* 函数不存在就跳过 —— 收紧权限不该反过来搞挂部署 */
+      null;
+    end;
+  end loop;
+end $$;
+
+/* 上面这些 revoke 里，凡是参数类型对不上或函数不存在的，
+   执行时会报 error 而不是静默跳过 —— 一条报错就会中断整份迁移。
+   所以逐个用 do 块包起来：不存在就跳过，不影响主流程。
+   （下面用动态 SQL 实现，避免"为了收紧权限反而把部署搞挂"。） */
 -- session_cleanup 只影响过期记录，保留给 anon 便于外部定时调用
 grant execute on function session_cleanup() to anon, authenticated;
 
@@ -2001,9 +2066,15 @@ $$;
 create or replace function media_upload_allowed(p_path text)
 returns boolean language sql stable security definer
 set search_path = public, extensions, pg_temp as $$
+  /* ⚠ 必须校验槽位主人（S-071）。
+     原来只判 path + 未提交 + 15 分钟内 —— 不看是谁申请的。
+     于是任何人只要猜到/拿到别人的 path，
+     就能往别人申请的槽位里写内容，覆盖掉别人正要发的图。
+     path 不是秘密，它会出现在消息体里。 */
   select exists (
     select 1 from media_objects
     where path = p_path
+      and uploader = cur_user()
       and committed = false
       and created_at > now() - interval '15 minutes'
   );
