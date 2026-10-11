@@ -130,7 +130,7 @@
     if (!r || !me) return false;
     if (r.type === 'public') return true;
     if (r.ownerId === me.id) return true;
-    if (g.ACL && g.ACL.isStaff && g.ACL.isStaff(me)) return true;
+    if (g.ACL && g.ACL.can && g.ACL.can(me, 'site.manage')) return true;
     return (r.members || []).indexOf(me.id) >= 0;
   }
 
@@ -3942,6 +3942,7 @@
           '要换设备或备份，用下面的「完整备份」（含图片 / 视频 / 语音）；' +
           '「导出 JSON」只含文字与结构，不含媒体。</div>' +
           '<div class="sec-title">数据</div>' +
+          '<button class="btn ghost" id="stExportFull">完整备份（含媒体）</button> ' +
           '<button class="btn ghost" id="stExport">导出 JSON</button> ' +
           '<button class="btn ghost" id="stImport">导入 JSON</button> ' +
           '<button class="btn ghost" id="stEnv">运行环境</button> ' +
@@ -3952,6 +3953,31 @@
           '<button class="btn ghost" id="stQuota">存储用量</button> ' +
           '<input type="file" id="stFile" accept="application/json" class="hidden">';
         b.appendChild(sd);
+        /* 完整备份：连媒体一起打包，用于换设备 / 清理前备份。
+           普通「导出 JSON」只含结构与文字 —— 那个搬不了图片视频。 */
+        sd.querySelector('#stExportFull').onclick = function () {
+          var btn = this;
+          btn.disabled = true;
+          var label = btn.textContent;
+          buildFullBackup(function (done, total) {
+            btn.textContent = '打包中 ' + done + '/' + total;
+          }).then(function (pack) {
+            var n = Object.keys(pack.media || {}).length;
+            var blob = new Blob([JSON.stringify(pack)], { type: 'application/json' });
+            var a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            setTimeout(function () { try { URL.revokeObjectURL(a.href); } catch (e) { } }, 60000);
+            a.download = 'chat-full-' + new Date().toISOString().slice(0, 10) + '.json';
+            a.click();
+            markBackup();
+            g.UI.toast('已导出完整备份（含 ' + n + ' 个媒体，'
+              + (blob.size / 1048576).toFixed(1) + ' MB）', 'ok');
+            btn.disabled = false; btn.textContent = label;
+          }).catch(function (e) {
+            g.UI.toast('导出失败：' + (e && e.message ? e.message : '未知错误'), 'err');
+            btn.disabled = false; btn.textContent = label;
+          });
+        };
         sd.querySelector('#stExport').onclick = function () {
           var blob = new Blob([JSON.stringify(S, null, 2)], { type: 'application/json' });
           var a = document.createElement('a');
@@ -3968,6 +3994,17 @@
           fr.onload = function () {
             try {
               var o = JSON.parse(fr.result);
+              /* 完整备份包（含媒体）走另一条路：
+                 先还原媒体再覆盖状态，顺序不能反。 */
+              if (o && o.kind === 'chat-full-backup') {
+                restoreFullBackup(o).then(function () {
+                  g.UI.toast('已导入完整备份（含 '
+                    + Object.keys(o.media || {}).length + ' 个媒体）', 'ok');
+                  mo.close();
+                  try { location.reload(); } catch (e) { }
+                });
+                return;
+              }
               if (mergeState(o)) { save(); g.UI.toast('已导入并合并', 'ok'); mo.close(); }
               else g.UI.toast('文件格式不正确', 'err');
             } catch (er) { g.UI.toast('解析失败', 'err'); }
