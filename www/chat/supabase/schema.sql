@@ -1376,13 +1376,25 @@ begin
       raise exception '无权访问该媒体';
     end if;
   end if;
-  v_url := null;
+  /* ⚠ 签名失败原来静默返回 null（S-074）。
+     用户看到的是一张破图，而背后可能是三种完全不同的情况：
+       ① 签名接口挂了     —— 等一会儿就好
+       ② 没权限           —— 再试多少次也没用
+       ③ 文件真没了       —— 永远不可能再显示
+     三种失败被合并成同一种表现（破图），
+     用户既不知道该怎么办，也没法向站长描述问题。
+
+     所以抛错并带上原因。前端拿到明确原因，
+     才能告诉用户"是权限问题"还是"文件已不存在"。 */
   begin
     execute 'select storage.create_signed_url($1, $2, $3)'
       into v_url using 'media', m.path, 3600;
   exception when others then
-    v_url := null;
+    raise exception '媒体签名失败（可能文件已不存在或存储不可用）：%', SQLERRM;
   end;
+  if v_url is null then
+    raise exception '媒体签名返回空（文件可能已被删除）';
+  end if;
   return v_url;
 end;
 $$;
