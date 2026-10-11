@@ -1,6 +1,4 @@
-\echo '--- code_ 开头的表 ---'
-select table_name from information_schema.tables where table_schema='public' and table_name like 'code%' order by 1;
-\echo '--- code_ 开头的函数 ---'
-select routine_name from information_schema.routines where routine_schema='public' and routine_name like 'code%' order by 1;
-\echo '--- 全库 public 表（前30）---'
-select table_name from information_schema.tables where table_schema='public' order by 1 limit 30;
+-- 临时执行脚本占位。
+-- 用完必须清空：本文件在公开仓库且会被 Actions 直接执行，
+-- 绝不能留下任何凭据或破坏性语句。
+-- 用法：把要执行的 SQL 粘到这里，跑「数据库执行」workflow，然后立刻清空。
