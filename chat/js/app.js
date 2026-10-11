@@ -164,6 +164,17 @@
   function save(silent) {
     if (!S) return;
     S.seq = (S.seq || 0) + 1;
+    /* 未读数、@我、草稿必须一起持久化（E-010 / E-011）。
+       这三个是模块级变量，而 save() 只序列化 S ——
+       关掉页面再打开，未读红点和「有人@我」全部清零，
+       消息还在，但用户不知道哪几条是新的、哪几条 @ 了自己。
+       @我 恰恰是最该被记住的：它是"有人专门找你"的信号。
+
+       放在 save 里而不是另开一个 key：
+       避免两份数据不一致（一个写成功一个失败）。 */
+    S.unread = unread;
+    S.atMe = atMe;
+    S.drafts = drafts;
     /* 唯一写入路径：先落快照，再由统一同步层广播（不区分部署形态） */
     try { localStorage.setItem(KEY, JSON.stringify(S)); }
     catch (e) { g.UI.toast('本地存储写入失败，请清理旧图片/视频', 'err'); }
@@ -1835,6 +1846,11 @@
     var blob = new Blob([head + body], { type: 'text/plain;charset=utf-8' });
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
+    /* 下载完必须 revoke（S-066）。
+       createObjectURL 拿到的 URL 会一直持有 blob 引用，
+       不释放的话导出几次大文件，内存就下不来了 ——
+       而且这个泄漏不报错，只是越来越卡。 */
+    setTimeout(function () { try { URL.revokeObjectURL(a.href); } catch (e) { } }, 60000);
     a.download = (r ? r.name : cur).replace(/[\/:*?"<>|]/g, '_') + '-' +
       new Date().toISOString().slice(0, 10) + '.' + (fmt === 'md' ? 'md' : 'txt');
     a.click();
@@ -1918,6 +1934,7 @@
       var blob = new Blob([JSON.stringify(S, null, 2)], { type: 'application/json' });
       var a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
+      setTimeout(function () { try { URL.revokeObjectURL(a.href); } catch (e) { } }, 60000);
       a.download = 'chat-backup-' + new Date().toISOString().slice(0, 10) + '.json';
       a.click();
       backed = true;
@@ -1937,6 +1954,30 @@
     return r;
   }
 
+  /* 展示生成的口令。抽成函数是因为在线/本机两条路径都要用，
+     写两份迟早对不上（一份改了另一份没改）。 */
+  function showCode(box, code, h, u) {
+    if (!box) return;
+    box.innerHTML = '<div class="invite-code">' + code + '</div>' +
+      '<div class="field-hint">有效期：' + (h > 0 ? h + ' 小时' : '长期') +
+      ' · 可用 ' + (u > 0 ? u + ' 次' : '不限次数') + '</div>' +
+      '<button class="btn ghost" id="icCopy">复制口令</button>';
+    var cb = box.querySelector('#icCopy');
+    if (cb) cb.onclick = function () {
+      try { navigator.clipboard.writeText(code); g.UI.toast('已复制', 'ok'); }
+      catch (e) { g.UI.toast('复制失败，请手动记下：' + code); }
+    };
+  }
+
+  /* 能不能邀请别人：默认能（群聊里互相拉人是常态），
+     除非被管理员单独关掉。房主与房间管理员不受限制。 */
+  function canInvite(u, r) {
+    if (!u || !r) return false;
+    if (r.owner === u.id || (r.admins || []).indexOf(u.id) >= 0) return true;
+    if (u.role === 'owner' || u.role === 'admin') return true;
+    return ((r.noInvite || []).indexOf(u.id) < 0);
+  }
+
   function inviteCodeDialog(r) {
     var d = elc('div', '');
     d.innerHTML =
@@ -1952,6 +1993,23 @@
       title: '生成邀请口令 · ' + r.name, body: d, okText: '生成', onOk: function (body) {
         var h = parseInt(body.querySelector('#icHour').value, 10);
         var u = parseInt(body.querySelector('#icUse').value, 10);
+        var out0 = body.querySelector('#icOut');
+        /* 在线模式：口令必须建在服务端，否则换台设备就"不存在"。
+           这里改成异步，所以先占位提示，拿到再显示。 */
+        if (g.Online && g.Online.isOnline && g.Online.isOnline()) {
+          out0.textContent = '正在生成…';
+          g.Online.inviteCreate(r.id, h, u).then(function (res) {
+            var code = res && res.code;
+            if (!code) throw new Error('服务端未返回口令');
+            log('invite', '为「' + r.name + '」生成邀请口令（服务端）');
+            showCode(out0, code, h, u);
+          }).catch(function (e) {
+            /* 服务端会明确报"你的邀请权限已被管理员关闭"，必须显示出来 */
+            out0.textContent = '生成失败：' + (e && e.message ? e.message : '网络错误');
+            g.UI.toast('生成失败：' + (e && e.message ? e.message : '网络错误'), 'err');
+          });
+          return false;
+        }
         var code = genCode();
         S.invites = S.invites || [];
         S.invites.push({
@@ -1961,15 +2019,8 @@
         });
         save();
         var out = body.querySelector('#icOut');
-        out.innerHTML = '<div class="invite-code">' + code + '</div>' +
-          '<div class="field-hint">有效期：' + (h > 0 ? h + ' 小时' : '长期') +
-          ' · 可用 ' + (u > 0 ? u + ' 次' : '不限次数') + '</div>' +
-          '<button class="btn ghost" id="icCopy">复制口令</button>';
-        body.querySelector('#icCopy').onclick = function () {
-          try { navigator.clipboard.writeText(code); g.UI.toast('已复制', 'ok'); }
-          catch (e) { g.UI.toast('复制失败，请手动记下：' + code); }
-        };
-        log('invite', '为「' + r.name + '」生成邀请口令');
+        showCode(out, code, h, u);
+        log('invite', '为「' + r.name + '」生成邀请口令（本机）');
         return false;   /* 保持弹窗打开，便于看到口令 */
       }
     });
@@ -1985,8 +2036,31 @@
       title: '用口令加入房间', body: d, okText: '加入', onOk: function (body) {
         var c = (body.querySelector('#jcCode').value || '').trim().toUpperCase();
         if (!c) { g.UI.toast('请输入口令'); return false; }
-        var inv = (S.invites || []).filter(function (x) { return x.code === c; })[0];
         var tip = body.querySelector('#jcMsg');
+
+        /* 在线：走服务端兑换。
+           本地那份 S.invites 是别人机器上的，本机压根看不到。 */
+        if (g.Online && g.Online.isOnline && g.Online.isOnline()) {
+          tip.textContent = '正在验证…';
+          g.Online.inviteRedeem(c).then(function (res) {
+            var rid = res && res.room;
+            if (!rid) throw new Error('服务端未返回房间');
+            joinRoom(rid, me, true);
+            /* 成员表在服务端已改，拉一次增量让界面跟上 */
+            return g.Online.pull().then(function (inS) {
+              if (inS && mergeState(inS)) save(true);
+            }).then(function () {
+              openRoom(rid);
+              g.UI.toast('已加入「' + ((res && res.name) || rid) + '」', 'ok');
+            });
+          }).catch(function (e) {
+            /* 这些提示都是用户要照着行动的判断，不能吞 */
+            tip.textContent = (e && e.message) ? e.message : '加入失败';
+          });
+          return false;
+        }
+
+        var inv = (S.invites || []).filter(function (x) { return x.code === c; })[0];
         if (!inv) { tip.textContent = '口令不存在或已失效'; return false; }
         if (inv.expireAt && inv.expireAt < Date.now()) { tip.textContent = '口令已过期'; return false; }
         if (inv.maxUse > 0 && inv.used >= inv.maxUse) { tip.textContent = '口令使用次数已用完'; return false; }
@@ -2607,7 +2681,12 @@
         renderRooms(); renderDndTip();
       }]);
     if (g.ACL.can(me, 'room.manage', r)) {
-      items.push(['生成邀请口令', function () { inviteCodeDialog(r); }]);
+      /* 「生成邀请口令」入口：默认给成员，但被单独禁掉的看不到。
+         藏起来比"点了报权限不足"好 ——
+         但真正的闸门在服务端 invite_create()，藏只是省一次点击。 */
+      if (canInvite(me, r)) {
+        items.push(['生成邀请口令', function () { inviteCodeDialog(r); }]);
+      }
     }
     if (g.ACL.can(me, 'room.manage', r)) items.push(['导出本群记录', function () { cur = r.id; exportDialog(); }]);
     if (g.ACL.can(me, 'room.manage', r)) items.push(['群设置', function () { roomSettings(r); }]);
@@ -2824,8 +2903,42 @@
     }
     btn('私聊', 'primary', function () { openDM(u); });
     btn('@TA', '', function () {
-      var ta = $('input'); ta.value += '@' + u.nick + ' '; ta.focus();
+      insertAtCursor('@' + u.nick + ' ');
     });
+
+    /* 「禁止 TA 邀请别人」开关。
+       群聊里成员互相拉人是常态，所以默认允许；
+       但遇到不可信的人（乱拉人、拉进来的是广告号），
+       管理员要能【单独关掉他的邀请权】——
+       而不是只能把他踢出去或撤销管理员（那两招都太重）。
+       房主与管理员本身不受这个开关影响。 */
+    var isStaff = (r && (r.owner === me.id || (r.admins || []).indexOf(me.id) >= 0))
+      || me.role === 'owner' || me.role === 'admin';
+    if (r && isStaff && u.id !== me.id) {
+      var cur = (r.noInvite || []).indexOf(u.id) < 0;   /* true = 现在能邀请 */
+      var b2 = elc('button', 'btn ' + (cur ? 'ghost' : 'danger'),
+        cur ? '禁止 TA 邀请别人' : '恢复 TA 的邀请权');
+      b2.onclick = function () {
+        var want = !cur;                                 /* true = 恢复 */
+        r.noInvite = r.noInvite || [];
+        var i = r.noInvite.indexOf(u.id);
+        if (want) { if (i >= 0) r.noInvite.splice(i, 1); }
+        else if (i < 0) r.noInvite.push(u.id);
+        touch(r); save(true);
+        g.UI.toast(want ? '已恢复「' + u.nick + '」的邀请权' : '已禁止「' + u.nick + '」邀请别人', 'ok');
+        if (g.Online && g.Online.isOnline()) {
+          g.Online.setCanInvite(r.id, u.id, want).catch(function (e) {
+            /* 服务端失败要回滚本地，否则界面说禁止了、服务端还能生成 */
+            if (want) r.noInvite.push(u.id);
+            else r.noInvite = r.noInvite.filter(function (x) { return x !== u.id; });
+            save(true);
+            g.UI.toast('操作失败：' + ((e && e.message) || '网络错误'), 'err');
+          });
+        }
+        mo.close();
+      };
+      acts.appendChild(b2);
+    }
     if (g.ACL.can(me, 'user.mute', r)) {
       btn(g.ACL.muted(u) ? '解除禁言' : '禁言', '', function () {
         if (g.ACL.muted(u)) { u.mutedUntil = 0; touch(u); save(); syncMute(u, 0); }
@@ -3517,7 +3630,15 @@
             if (g.Online && g.Online.isOnline()) {
               g.Online.userReview(u.id, 'active')
                 .then(function () {
-                  if (g.Online.addMember) g.Online.addMember('public', u.id).catch(function () { });
+                  if (g.Online.addMember) {
+                    g.Online.addMember('public', u.id).catch(function (e2) {
+                      /* 别静默吞（S-054 同族）：
+                         审核通过了但没进公屏，用户会在成员列表里找不到人，
+                         而界面上什么都没说。 */
+                      g.UI.toast('已通过，但加入公屏失败：'
+                        + (e2 && e2.message ? e2.message : '网络错误'), 'err');
+                    });
+                  }
                 })
                 .catch(function (e) {
                   g.UI.toast('已通过本地审核，但服务端同步失败：' + ((e && e.message) || '网络错误'), 'err');
@@ -3721,7 +3842,16 @@
             }, 0);
             return '';
           })() +
-          '<div class="field-hint">数据全部保存在本机浏览器（localStorage + IndexedDB），不上传任何服务器。' +
+          /* ⚠ 这句话原来【硬编码】写"不上传任何服务器"（E-051）。
+             在线模式下账号与消息都在服务端 —— 声明与实际相反，
+             用户看到它会以为内容没离开本机，从而放进去不该放的东西。
+             这类"界面在骗人"比功能坏了更糟：用户按它做判断。
+             所以按当前模式分别写。 */
+          ((g.Online && g.Online.isOnline && g.Online.isOnline())
+            ? '<div class="field-hint">当前为<b>在线模式</b>：账号与消息存在服务端数据库，' +
+              '换设备可见；媒体文件存在云端存储。本机只保留一份缓存。'
+            : '<div class="field-hint">当前为<b>本机模式</b>（未连后端）：' +
+              '数据保存在本机浏览器（localStorage + IndexedDB），不上传任何服务器。') +
           '需要换设备或备份时，用下面的「导出 / 导入 JSON」搬运，本地版与上线版操作完全相同。</div>' +
           '<div class="sec-title">数据</div>' +
           '<button class="btn ghost" id="stExport">导出 JSON</button> ' +
@@ -3738,6 +3868,7 @@
           var blob = new Blob([JSON.stringify(S, null, 2)], { type: 'application/json' });
           var a = document.createElement('a');
           a.href = URL.createObjectURL(blob);
+          setTimeout(function () { try { URL.revokeObjectURL(a.href); } catch (e) { } }, 60000);
           a.download = 'chat-state-' + new Date().toISOString().slice(0, 10) + '.json';
           a.click();
           markBackup();
@@ -3998,6 +4129,64 @@
   }
 
   /* @ 提及面板：列出本会话成员，点一下插入 @昵称；管理员另有 @全体成员 */
+  /* 在输入框光标处插入文本。
+     ⚠ 这个函数原来【只有调用、零处定义】（E-056）：
+     toggleAtPanel 里每个名字按钮都调它，点任何一个都抛 ReferenceError，
+     而抛错发生在 closeTop() 之前，所以面板还不关 ——
+     表现为"点人名没反应，面板也关不掉"。@ 功能完全不可用，只能手敲。
+
+     为什么不直接 value += val：
+       用户可能把光标放在句子中间（正在写"大家好 @|"），
+       追加到末尾会插到错误的位置。必须按 selectionStart/End 拆。 */
+  function insertAtCursor(text) {
+    var ta = $('input');
+    if (!ta) return;
+    var v = ta.value || '';
+    var a = ta.selectionStart, b = ta.selectionEnd;
+    /* 浏览器不支持选区（老 WebView）时退回追加，别整个功能失效 */
+    if (typeof a !== 'number' || typeof b !== 'number') { ta.value = v + text; }
+    else { ta.value = v.slice(0, a) + text + v.slice(b); }
+    /* 光标移到插入内容之后，接着打字才顺手 */
+    var pos = (typeof a === 'number' ? a : v.length) + text.length;
+    try { ta.setSelectionRange(pos, pos); } catch (e) { }
+    ta.focus();
+    /* 触发 input 事件：草稿保存、输入框自动增高都挂在它上面，
+       不触发的话界面高度不会更新。 */
+    try { ta.dispatchEvent(new Event('input', { bubbles: true })); } catch (e) { }
+  }
+
+  /* @提及可点击（E-054）。
+     渲染时已经把名字写进 data-at 了，说明本来就打算做成可点的，
+     但没有 cursor:pointer、也没有任何点击处理 ——
+     用户看到蓝底自然会去点，点了什么反应都没有。
+
+     用事件委托而不是给每个 span 绑 onclick：
+     消息节点是缓存复用的（cachedMsgNode），逐条绑定会在复用时重复绑，
+     而且翻页/切房间要反复解绑重绑。委托一次挂在容器上就行。 */
+  function bindAtMentionClicks() {
+    var box = $('msgScroll');
+    if (!box || box.__atBound) return;
+    box.__atBound = true;
+    box.addEventListener('click', function (e) {
+      var el = e.target;
+      for (var i = 0; el && i < 3; i++) {
+        if (el.classList && el.classList.contains('at-mention')) break;
+        el = el.parentNode;
+      }
+      if (!el || !el.classList || !el.classList.contains('at-mention')) return;
+      var name = el.getAttribute('data-at') || '';
+      if (!name) return;
+      if (name === '全体成员') {
+        g.UI.toast('@全体成员：会提醒本会话所有人', 'ok');
+        return;
+      }
+      /* 点 @某人 = 把 @名字 插进输入框。
+         这是最符合直觉的动作（想回复他就顺手 @ 他），
+         比弹一个只能看的资料卡有用。 */
+      insertAtCursor('@' + name + ' ');
+    });
+  }
+
   function toggleAtPanel() {
     var r = findRoom(cur);
     var list = membersOf(r).filter(function (u) { return u.id !== me.id && u.status !== 'pending'; });
@@ -4007,7 +4196,7 @@
       me.role === 'owner' || me.role === 'admin');
     var mk = function (text, val) {
       var b = elc('button', 'btn ghost sm', text);
-      b.onclick = function () { insertAtCursor(val); g.UI.closeModal && g.UI.closeModal(); closeTop(); };
+      b.onclick = function () { insertAtCursor(val); g.UI.closeModal(); closeTop(); };
       return b;
     };
     if (canAll && r.type !== 'private') box.appendChild(mk('@全体成员', '@全体成员 '));
@@ -4130,6 +4319,11 @@
     }
     S = load();
     if (!S) { S = fresh(); ensurePublic(); save(true); }
+    /* 恢复未读 / @我 / 草稿 —— 不恢复的话上面三样一刷新就清零 */
+    if (S.unread) unread = S.unread;
+    if (S.atMe) atMe = S.atMe;
+    if (S.drafts) drafts = S.drafts;
+    bindAtMentionClicks();   /* @提及可点（E-054），容器级委托，绑一次 */
     initSync();
     bootOnline().then(function (handled) {
       if (handled) { g.Online.startPoll(); return; }   /* 在线模式已接管 */

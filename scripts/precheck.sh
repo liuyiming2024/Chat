@@ -11,6 +11,15 @@
 # 退出码非 0 就是没过，别推。
 set -u
 cd "$(dirname "$0")/.."
+
+# 依赖自检：沙箱重建后会丢 pip 包，
+# 届时 SQL e2e 会以"缺少依赖"退出，看起来像测试失败，其实是环境没了。
+# 先检查，缺了就装上，别让人误以为改坏了代码。
+if ! python3 -c "import pgserver, psycopg2" >/dev/null 2>&1; then
+  echo "缺少 SQL 测试依赖，正在安装..."
+  pip install pgserver psycopg2-binary --quiet || {
+    echo "❌ 依赖装不上，SQL e2e 会跑不了"; exit 1; }
+fi
 ROOT="$(pwd)"
 TOOL="$(cd "$ROOT/.." && pwd)/Tool"
 fail=0

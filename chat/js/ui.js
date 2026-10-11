@@ -180,7 +180,20 @@
     return svg;
   }
 
+  /* 关掉最上面那层 modal。
+     ⚠ 这个方法被调用了（app.js 的 @提及面板），但 ui.js 里没导出 ——
+     调用处写了 `g.UI.closeModal && ...` 所以不报错，
+     表现是"点了没反应"。这种"有保护就不报错"的写法会把缺失藏很久。 */
+  function closeModal() {
+    var ms = document.querySelectorAll('.modal-mask');
+    if (ms && ms.length) {
+      var last = ms[ms.length - 1];
+      if (last.parentNode) last.parentNode.removeChild(last);
+    }
+  }
+
   g.UI = {
+    closeModal: closeModal,
     svgIcon: svgIcon,
     esc: esc, toast: toast, modal: modal, confirm: confirm, prompt: prompt,
     lightbox: lightbox, closeLightbox: closeLightbox,
