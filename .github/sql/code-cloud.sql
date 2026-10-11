@@ -1,6 +1,14 @@
 -- ==================================================================
 -- Code · 云盘（接同一个 Supabase、同一套账号）
 --
+-- ⚠ 本文件有【两份】，改任何一份都要同步另一份：
+--     1. Code 仓库：code/supabase/cloud.sql        （源码所在地，供阅读与版本追溯）
+--     2. Chat 仓库：.github/sql/code-cloud.sql     （实际执行的那份）
+--   执行走 Chat 那边，因为 Code 仓库的 SUPABASE_DB_URL Secret 密码已失效。
+--
+--   全部语句幂等（create table if not exists / create or replace），
+--   重复执行安全 —— 这也是"放那边跑"能成立的前提。
+--
 -- 前提：本脚本只建 Code 自己的部分，不碰 Chat 已有的表与函数。
 --       账号、会话、门禁全部复用 public.users / sessions / site。
 --
