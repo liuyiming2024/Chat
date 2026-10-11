@@ -1,4 +1,2 @@
--- 临时执行脚本占位。
--- 用完必须清空：本文件在公开仓库且会被 Actions 直接执行，
--- 绝不能留下任何凭据或破坏性语句。
--- 用法：把要执行的 SQL 粘到这里，跑「数据库执行」workflow，然后立刻清空。
+\echo '--- state_delta 里的消息过滤条件 ---'
+select prosrc from pg_proc where proname='state_delta';
