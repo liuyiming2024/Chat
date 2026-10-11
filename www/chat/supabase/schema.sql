@@ -130,9 +130,33 @@ create table if not exists messages (
   reply_to   uuid,
   deleted    boolean not null default false,
   edited_at timestamptz,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  /* 全局单调递增序号，取自 state_rev。
+     增量拉取直接比大小（m.rev > p_since），不再用时间窗估算。
+     insert 与 update 都要 bump（触发器保证）——
+     只 bump insert 的话，编辑/撤回后的消息客户端永远拉不到。 */
+  rev        bigint
 );
 create index if not exists messages_room_idx on messages (room_id, created_at);
+create index if not exists messages_rev_idx on messages (rev);
+
+/* rev 由触发器写入：insert 时取号，update（编辑/撤回）时也要重新取号，
+   否则改完的消息序号没变，按 rev 增量拉取就拉不到这次变更。 */
+create or replace function msg_rev_bump() returns trigger
+language plpgsql volatile security definer
+set search_path = public, extensions, pg_temp as $$
+begin
+  new.rev := nextval('state_rev');
+  return new;
+end $$;
+
+drop trigger if exists messages_rev_bi on messages;
+create trigger messages_rev_bi before insert on messages
+  for each row execute function msg_rev_bump();
+
+drop trigger if exists messages_rev_bu on messages;
+create trigger messages_rev_bu before update on messages
+  for each row execute function msg_rev_bump();
 
 -- ---------- 操作日志 ----------
 create table if not exists logs (
@@ -303,7 +327,11 @@ begin
   me := cur_user();
   v_rev := (select last_value from state_rev);
 
-  /* 序号对应的大致时间。用 rev 差值估秒数，避免额外维护时间戳列。 */
+  /* 时间窗只给 logs 用（它没 rev 列）。
+     ⚠ messages 曾经也用这个窗拉增量，那是错的：
+       rev 差 × 2 秒只是估算，站点冷清时 rev 差小、窗窄，
+       离线期间的消息会落在窗外 —— 前端按 id merge，缺了就永远缺了。
+     messages 现在直接比 rev（见下方 where m.rev > p_since），精确且可索引。 */
   if coalesce(p_since, 0) <= 0 then
     v_from := now() - interval '30 days';
   else
@@ -339,8 +367,13 @@ begin
         'deleted', m.deleted,
    'edited',  m.edited_at,
         'ts', (extract(epoch from m.created_at) * 1000)::bigint
-      ) order by m.created_at) from messages m
-      where m.created_at > v_from
+      ) order by m.rev) from messages m
+      /* ⚠ 是 >= 不是 >。
+         客户端拿到的 p_since 来自 state_peek()，那是"最后分配出去的号"，
+         而最后分配的号往往正是刚发的那条消息的 rev。
+         用 > 会把这条漏掉 —— 用户自己发的消息，自己这边看不到。
+         用 >= 最多重复送最后一条，前端按 id merge 会去重，无害。 */
+      where coalesce(m.rev, 0) >= coalesce(p_since, 0)
         and (
           exists (select 1 from rooms r where r.id = m.room_id and r.type = 'public')
           or exists (select 1 from room_members mm
@@ -676,7 +709,12 @@ begin
   insert into messages (room_id, from_id, type, body, media_path, media_name, media_size, reply_to)
   values (p_room, uid, p_type, coalesce(p_body,''), p_media, p_name, coalesce(p_size,0), p_reply)
   returning id into mid;
-  perform nextval('state_rev');
+  /* ⚠ 这里原来还有一句 perform nextval('state_rev')。
+     现在 rev 由触发器写入，insert 时序列已经前进了 ——
+     再多取一个号会把序列推到消息 rev 之上，
+     客户端 state_peek 拿到的是推过头的号，
+     再按它拉增量就永远拿不到这条刚发的消息。
+     所以删掉。 */
   return json_build_object('id', mid);
 end;
 $$;
@@ -696,7 +734,7 @@ begin
   if r.from_id = uid then
     perform acl_require('msg.recall.own', r.room_id);
     update messages set deleted = true, body = '', media_path = null where id = p_id;
-    perform nextval('state_rev');
+    /* 同上：update 由触发器 bump rev，这里不再额外 nextval */
     return true;
   end if;
   /* 别人的消息：走统一的权限判定，不再硬编码 role in ('owner','admin')。
@@ -704,7 +742,7 @@ begin
   if acl_can('msg.remove', r.room_id) then
     update messages set deleted = true, body = '', media_path = null where id = p_id;
     insert into logs (who_id, act, detail) values (uid, 'delete', '删除消息 ' || p_id);
-    perform nextval('state_rev');
+    /* 同上 */
     return true;
   end if;
   raise exception '无权删除该消息';
@@ -746,7 +784,7 @@ begin
   insert into logs (who_id, act, detail)
   values (uid, 'edit', '编辑消息 ' || p_id);
 
-  perform nextval('state_rev');
+  /* 同上：update 由触发器 bump rev，不再额外 nextval */
   return true;
 end;
 $$;
@@ -1119,7 +1157,7 @@ begin
   update messages set media_path = p_media
    where id = p_msg and from_id = uid;
   if not found then raise exception '消息不存在或不是你发的'; end if;
-  perform nextval('state_rev');
+  /* 同上：update 由触发器 bump rev */
   return true;
 end;
 $$;
