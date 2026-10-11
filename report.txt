@@ -1,0 +1,19 @@
+时间: Sun Oct 11 03:40:07 UTC 2026
+模式: 只读
+
+=== 待执行 ===
+select p.proname,
+  (pg_get_functiondef(p.oid) like '%1 day%') as has_1day,
+  (pg_get_functiondef(p.oid) like '%limit 200%') as has_limit200
+from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+where n.nspname='public' and p.proname in ('issue_session','session_cleanup');
+
+=== 结果 ===
+BEGIN
+     proname     | has_1day | has_limit200 
+-----------------+----------+--------------
+ issue_session   | t        | f
+ session_cleanup | f        | t
+(2 rows)
+
+COMMIT
