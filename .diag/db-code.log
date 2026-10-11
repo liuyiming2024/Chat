@@ -1,0 +1,28 @@
+psql:/tmp/code-cloud.sql:38: NOTICE:  relation "code_files" already exists, skipping
+CREATE TABLE
+psql:/tmp/code-cloud.sql:40: NOTICE:  relation "code_files_user_idx" already exists, skipping
+CREATE INDEX
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+GRANT
+GRANT
+REVOKE
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+psql 退出码 0
+=== 校验 ===
+code_files 表: 1
+code_ 函数数: 8
+Chat 账号数: 1
