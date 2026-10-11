@@ -23,7 +23,7 @@
       var d = new Date();
       d.setTime(d.getTime() + (days || 1) * 86400000);
       document.cookie = name + '=' + encodeURIComponent(val) +
-        ';path=/;expires=' + d.toUTCString() + ';SameSite=Lax';
+        ';path=/;expires=' + d.toUTCString() + ';SameSite=Lax;Secure';
     } catch (e) { }
   }
   function ckGet(name) {
@@ -60,7 +60,7 @@
       var d = new Date();
       d.setTime(d.getTime() + minutes * 60000);
       document.cookie = name + '=' + encodeURIComponent(val) +
-        ';path=/;expires=' + d.toUTCString() + ';SameSite=Lax';
+        ';path=/;expires=' + d.toUTCString() + ';SameSite=Lax;Secure';
     } catch (e) { }
   }
 
@@ -160,19 +160,71 @@
   }
 
   /* ================= 状态存取 ================= */
+
+  /* ⚠ 本地状态原来没有版本字段，也没有迁移逻辑（S-073）。
+     没有版本号就无法判断"要不要迁移"，也无法安全地拒绝读不懂的结构。 */
+  var STATE_VER = 2;
+  var STATE_BACKUP_KEY = KEY + '_bak';
+
   function fresh() {
     return {
-      version: 1, createdAt: now(), seq: 0, siteName: '聊天室',
+      version: STATE_VER, createdAt: now(), seq: 0, siteName: '聊天室',
       gate: null, allowRegister: true, needReview: true,
       users: [], rooms: [], messages: {}, logs: []
     };
   }
+  /* ⚠ 本地状态原来没有版本字段，也没有迁移逻辑（S-073）。
+     后果：将来往 S 里加字段时，老用户 localStorage 里的旧结构
+     会被原样读入 —— 新代码读到没有那个字段的对象，
+     轻则功能不对，重则 undefined 报错，而用户只会看到"打不开了"。
+     没有版本号就无法判断"要不要迁移"，也无法安全地拒绝读不懂的结构。
+
+     所以：① 存的时候带上 version；② 读的时候按版本处理；
+           ③ 版本比代码新的（用户降级了）不能直接丢，先备份再提示。 */
   function load() {
-    try {
-      var s = JSON.parse(localStorage.getItem(KEY));
-      if (s && s.version) return s;
-    } catch (e) { }
-    return null;
+    var raw;
+    try { raw = localStorage.getItem(KEY); } catch (e) { return null; }
+    if (!raw) return null;
+    var s;
+    try { s = JSON.parse(raw); } catch (e) {
+      /* 结构坏了。不能直接返回 null —— 那等于把用户数据全丢了。
+         先备份原始字符串，让用户有机会找回来。 */
+      try { localStorage.setItem(STATE_BACKUP_KEY, raw); } catch (e2) { }
+      g.UI.toast('本地数据已损坏，已备份原始数据（' + STATE_BACKUP_KEY + '）', 'err', 8000);
+      return null;
+    }
+    if (!s || typeof s !== 'object') return null;
+
+    var v = s.version || 1;   /* 没有 version 字段的就是第 1 版 */
+    if (v > STATE_VER) {
+      /* 数据比代码新：通常是用户把客户端降级了。
+         硬读会丢字段，直接丢掉更糟 —— 备份后提示。 */
+      try { localStorage.setItem(STATE_BACKUP_KEY, raw); } catch (e) { }
+      g.UI.toast('本地数据来自更新版本，已备份。请升级到最新版再打开。', 'err', 8000);
+      return null;
+    }
+    if (v < STATE_VER) {
+      try { localStorage.setItem(STATE_BACKUP_KEY, raw); } catch (e) { }
+      s = migrate(s, v);
+    }
+    s.version = STATE_VER;
+    return s;
+  }
+
+  /* 迁移：从 v 升到 STATE_VER。
+     每次加字段都要在这里补一步 —— 否则老用户读到的是半个对象。
+     只做"补默认值"，绝不删数据：迁移里丢数据是最难查的事故。 */
+  function migrate(s, from) {
+    var v = from;
+    if (v < 2) {
+      /* v1 → v2：v2 新增了媒体槽位路径与已读位置，
+         老数据没有这些字段，补空值即可，不改动已有消息。 */
+      if (typeof s.unread !== 'object') s.unread = s.unread || {};
+      if (typeof s.atMe !== 'object') s.atMe = s.atMe || {};
+      if (typeof s.drafts !== 'object') s.drafts = s.drafts || {};
+      v = 2;
+    }
+    return s;
   }
   var pushTimer = null;
   function save(silent) {
@@ -1920,6 +1972,23 @@
   }
 
   /* ================= 导出聊天记录 ================= */
+  /* 把任意用户可控字符串变成安全文件名。
+     三件事：去分隔符与非法字符、去控制字符、避开 Windows 保留名。 */
+  function safeFileName(name) {
+    var s = String(name || '');
+    s = s.replace(/[\/\\:*?"<>|]/g, '_');      /* 分隔符与非法字符 */
+    s = s.replace(/[\x00-\x1f\x7f]/g, '');       /* 控制字符 */
+    s = s.replace(/^[\s.]+/, '');                   /* 开头空白与点（隐藏文件） */
+    s = s.replace(/[\s.]+$/, '');                   /* 结尾空白与点（Windows 会吃掉） */
+    /* Windows 保留名：CON、PRN、AUX、NUL、COM1-9、LPT1-9（不分大小写，
+       且后面带扩展名也不行，如 CON.txt 同样非法） */
+    if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i.test(s)) s = '_' + s;
+    if (!s) s = '未命名';
+    /* 长度兜底：文件名过长会被系统截断，截断后可能撞名 */
+    if (s.length > 80) s = s.slice(0, 80);
+    return s;
+  }
+
   function exportChat(fmt) {
     var r = findRoom(cur);
     var list = (msgs(cur) || []).filter(function (m) { return !m.deleted; }).filter(visibleToMe);
@@ -1960,7 +2029,14 @@
        不释放的话导出几次大文件，内存就下不来了 ——
        而且这个泄漏不报错，只是越来越卡。 */
     setTimeout(function () { try { URL.revokeObjectURL(a.href); } catch (e) { } }, 60000);
-    a.download = (r ? r.name : cur).replace(/[\/:*?"<>|]/g, '_') + '-' +
+    /* ⚠ 原来只过滤 / : * ? " < > | 这 8 个字符（S-070）。
+       房间名是用户可控的，还缺三类：
+         ① 反斜杠 \         —— Windows 路径分隔符
+         ② 控制字符 \x00-\x1f —— 会让文件名行为异常
+         ③ 保留名 CON/PRN/AUX/NUL/COM1..9/LPT1..9 —— Windows 下直接非法
+       依赖浏览器自己净化是不可靠的：不同浏览器行为不同，
+       而且出错时用户只知道"下载失败"，不知道是房间名的问题。 */
+    a.download = safeFileName(r ? r.name : cur) + '-' +
       new Date().toISOString().slice(0, 10) + '.' + (fmt === 'md' ? 'md' : 'txt');
     a.click();
     /* 不必手动 remove：下一次 toast 会复用同一个元素并覆盖内容。
