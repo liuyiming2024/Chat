@@ -104,8 +104,13 @@
     });
   }
 
-  function register(nick, pwd) {
-    return g.SB.rpc('user_register', { p_nick: nick, p_real: '', p_pwd: pwd });
+  /* ⚠ 第三个参数是"申请说明"（E-058）。
+     原签名只有 (nick, pwd)，而注册表单里明摆着有「申请说明」输入框，
+     还写着"站长据此决定是否通过" —— 用户认真填了，提交时被丢掉。
+     站长那边看到的永远是空的说明，于是只能凭昵称猜。 */
+  function register(nick, pwd, note) {
+    return g.SB.rpc('user_register',
+      { p_nick: nick, p_real: String(note || ''), p_pwd: pwd });
   }
 
   /* ---------------- 状态转换（服务端 → 前端） ----------------

@@ -579,7 +579,7 @@
           if (a !== b) { g.UI.toast('两次密码不一致'); return; }
           /* 在线模式：注册交给服务端，密码只在服务端 bcrypt */
           if (g.Online && g.Online.isOnline()) {
-            g.Online.register(n, a).then(function () {
+            g.Online.register(n, a, note).then(function () {
               g.UI.toast('申请已提交，请等待站长通过', 'ok');
               pane('login');
             }).catch(function (e) {
@@ -4114,6 +4114,34 @@
       var r = findRoom(cur);
       if (r) editNotice(r);
     };
+
+    /* Markdown 里的图片点了要能放大（E-053）。
+       CSS 给了 cursor:zoom-in 却没有任何点击处理 ——
+       **光标在告诉用户"可以点"，点了却没反应**，
+       这比不给 zoom-in 更让人困惑。要么都给，要么都不给。 */
+    document.addEventListener('click', function (e) {
+      var t = e.target;
+      if (!t || !t.classList || !t.classList.contains('md-img')) return;
+      if (g.UI && g.UI.lightbox) g.UI.lightbox(t.getAttribute('src') || '');
+    });
+
+    /* @ 提及要能点（E-054）。
+       渲染时给了蓝底高亮 + data-at，看起来像链接，
+       但没有 cursor:pointer 也没有点击处理。
+       点一下的效果：把输入框填上 @昵称 —— 这是用户最可能的意图。 */
+    document.addEventListener('click', function (e) {
+      var t = e.target;
+      if (!t || !t.getAttribute) return;
+      if (!t.classList || !t.classList.contains('at-mention')) return;
+      var name = t.getAttribute('data-at') || '';
+      if (!name) return;
+      if (typeof insertAtCursor === 'function') {
+        insertAtCursor('@' + name + ' ');
+      } else {
+        var ta = $('input');
+        if (ta) { ta.value += '@' + name + ' '; ta.focus(); }
+      }
+    });
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape') { g.UI.closeLightbox(); }
     });
