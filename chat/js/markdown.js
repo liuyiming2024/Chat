@@ -138,7 +138,11 @@
     s = s.replace(R.italicStar, '$1<em>$2</em>');
     s = s.replace(R.italicUnder, '$1<em>$2</em>');
     s = s.replace(R.autolink, function (m, pre, u) {
-      return pre + '<a class="md-link" href="' + esc(safeUrl(u)) + '" target="_blank" rel="noopener noreferrer">' + u + '</a>';
+      /* ⚠ href 转义了，但链接文本用的是原始 u ——
+         URL 里可以含 < 和 "，原样插进标签内部会拼出额外标签。
+         自动链接是从消息正文里匹配出来的，用户输入什么就匹配什么，
+         所以文本也必须 esc。 */
+      return pre + '<a class="md-link" href="' + esc(safeUrl(u)) + '" target="_blank" rel="noopener noreferrer">' + esc(u) + '</a>';
     });
     return s;
   }

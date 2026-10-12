@@ -125,7 +125,7 @@
 
 
 <!-- 返回站点首页（聊天室为全屏应用，仅在角落放一个小入口，不干扰布局） -->
-<a class="back-home" href="../index.html" title="返回首页" aria-label="返回首页">← 首页</a>
+<a class="back-home" href="../index.html" data-i18n="nav.backHome" data-i18n-title="nav.backHome" title="返回首页" aria-label="返回首页">← 首页</a>
 
 <!-- ============ 门禁 / 登录 ============ -->
 <div id="gate" class="mask hidden" style="display:flex"></div>
@@ -152,7 +152,7 @@
     <div class="room-list" id="roomList"></div>
     <div class="side-foot">
       <button class="mini-btn" id="btnAdmin">管理面板</button>
-      <button class="mini-btn" id="btnLogout">退出</button>
+      <button class="mini-btn" id="btnLogout" data-i18n="logout">退出</button>
     </div>
   </aside>
 
@@ -165,7 +165,7 @@
         <div class="ch-sub" id="roomSub">公屏大厅</div>
       </div>
       <div class="ch-actions">
-        <button class="icon-btn mode-btn" id="btnMode" title="切换极简 / 专业模式" aria-label="切换极简 / 专业模式">专业</button>
+        <button class="icon-btn mode-btn" id="btnMode" data-i18n="settings.themePro" title="切换极简 / 专业模式" aria-label="切换极简 / 专业模式">专业</button>
         <button class="icon-btn" id="btnRoomSet" title="会话设置" aria-label="会话设置"><svg class="ic" aria-hidden="true"><use href="#i-settings"/></svg></button>
         <button class="icon-btn" id="btnMembers" title="成员面板" aria-label="成员面板"><svg class="ic" aria-hidden="true"><use href="#i-members"/></svg></button>
       </div>
@@ -217,7 +217,7 @@
       </div>
       <textarea id="input" rows="1" placeholder="说点什么…（/help 查看命令）"></textarea>
       <div class="composer-foot">
-        <button class="btn primary" id="btnSend">发送(S)</button>
+        <button class="btn primary" id="btnSend" data-i18n="send">发送(S)</button>
       </div>
     </div>
   </main>
@@ -227,7 +227,7 @@
     <div class="sp-head">成员 <span id="memberCount" class="tag gray">0</span></div>
     <div class="sp-body" id="memberList"></div>
     <div class="sp-sec">
-      <div class="sec-title"><span>群公告</span><button class="mini-btn" id="btnEditNotice">编辑</button></div>
+      <div class="sec-title"><span>群公告</span><button class="mini-btn" id="btnEditNotice" data-i18n="edit">编辑</button></div>
       <div class="notice-text" id="noticeText">暂无公告</div>
     </div>
   </aside>

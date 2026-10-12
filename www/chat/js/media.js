@@ -10,29 +10,58 @@
 
   function open() {
     if (dbp) return dbp;
-    dbp = new Promise(function (res, rej) {
-      if (!g.indexedDB) { res(null); return; }
-      var r = indexedDB.open(DB_NAME, 1);
-      r.onupgradeneeded = function () {
-        var d = r.result;
-        if (!d.objectStoreNames.contains(STORE)) d.createObjectStore(STORE);
-      };
-      r.onsuccess = function () { res(r.result); };
-      r.onerror = function () { res(null); };
+    dbp = new Promise(function (res) {
+      /* ⚠ 原来这里只处理了 onerror/onupgradeneeded，
+         但 indexedDB.open() **本身可能同步抛异常**（隐私模式、策略禁用）。
+         抛在 Promise 构造器里会被吞成 reject，而外部没人 catch ——
+         dbp 变成一个已 reject 的 Promise 并被缓存下来，
+         之后每次 put/get 都立刻失败或永远卡住。
+         表现为"发图片一直转圈，不报错也不成功"。
+         整个探测过程都要包在 try 里，失败一律降级到 localStorage。 */
+      try {
+        if (!g.indexedDB) { res(null); return; }
+        var r = indexedDB.open(DB_NAME, 1);
+        r.onupgradeneeded = function () {
+          var d = r.result;
+          if (!d.objectStoreNames.contains(STORE)) d.createObjectStore(STORE);
+        };
+        r.onsuccess = function () { res(r.result); };
+        r.onerror = function () { res(null); };
+        /* blocked：别的标签正占用旧版本连接。也不能让它悬着 */
+        r.onblocked = function () { res(null); };
+      } catch (e) { res(null); }
     });
     return dbp;
   }
 
+  /* 返回 { ok, reason }。
+     ⚠ 原来两个分支都是"失败也 resolve()"，调用方无从判断 ——
+        IndexedDB 配额满 / localStorage 写不进去时，
+        界面照样显示图片已发送，重启后图片没了。
+        **"看起来成功但没存住"是这类存储最难发现的事故**：
+        它不报错，只在下次打开时才暴露，而那时用户已经忘了当时发过什么。 */
   function put(id, dataUrl) {
     return open().then(function (db) {
-      if (!db) { try { localStorage.setItem('wxlg_m_' + id, dataUrl); } catch (e) { } return; }
+      if (!db) {
+        /* 降级：IndexedDB 不可用时放 localStorage。
+           注意这里也有配额，写不进去必须如实说，不能静默。 */
+        try {
+          localStorage.setItem('wxlg_m_' + id, dataUrl);
+          return { ok: true };
+        } catch (e) {
+          return { ok: false, reason: 'storage-full' };
+        }
+      }
       return new Promise(function (res) {
-        var tx = db.transaction(STORE, 'readwrite');
+        var tx;
+        try { tx = db.transaction(STORE, 'readwrite'); }
+        catch (e) { res({ ok: false, reason: 'tx-failed' }); return; }
         tx.objectStore(STORE).put(dataUrl, id);
-        tx.oncomplete = function () { res(); };
-        tx.onerror = function () { res(); };
+        tx.oncomplete = function () { res({ ok: true }); };
+        tx.onerror = function () { res({ ok: false, reason: 'quota' }); };
+        tx.onabort = function () { res({ ok: false, reason: 'abort' }); };
       });
-    });
+    }).catch(function () { return { ok: false, reason: 'unknown' }; });
   }
 
   /* 远端解析器：由 online.js 注入。
@@ -134,11 +163,17 @@
           c.width = Math.min(480, v.videoWidth || 320);
           c.height = Math.round(c.width * ((v.videoHeight || 240) / (v.videoWidth || 320)));
           c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
-          res(c.toDataURL('image/jpeg', 0.7));
-        } catch (e) { res(null); }
+          finish(c.toDataURL('image/jpeg', 0.7));
+        } catch (e) { finish(null); }
       };
-      v.onerror = function () { res(null); };
-      setTimeout(function () { res(null); }, 4000);
+      /* ⚠ 原来 setTimeout 从不清理：
+         Promise 一旦定型，再 res(null) 虽然无害，
+         但定时器会一直挂着（4 秒内每个视频占一个），
+         批量生成封面时白占一堆。定完就清掉。
+         另外 onerror 后要停掉定时器，别等满 4 秒。 */
+      var t = setTimeout(function () { res(null); }, 4000);
+      function finish(val) { clearTimeout(t); res(val); }
+      v.onerror = function () { finish(null); };
     });
   }
 
