@@ -39,8 +39,22 @@
       return c;
     } catch (e) { return JSON.parse(JSON.stringify(DEF)); }
   }
+  /* ⚠ 原来写失败完全静默：用户关掉免打扰、静音某个房间，
+     界面上立刻生效（内存里的 cfg 改了），
+     但**刷新页面就全回默认** —— 他会以为是自己没保存，
+     于是再设一遍，再失效一次。
+     和 app.js 的 save() 保持一致：写不进去要告诉用户，
+     而不是让设置看起来存住了。 */
   function save() {
-    try { localStorage.setItem(KEY, JSON.stringify(cfg)); } catch (e) { }
+    try {
+      localStorage.setItem(KEY, JSON.stringify(cfg));
+      return true;
+    } catch (e) {
+      if (g.UI && g.UI.toast) {
+        g.UI.toast('通知设置没能保存（存储已满），刷新后会恢复默认', 'err', 6000);
+      }
+      return false;
+    }
   }
   function get(k) { return cfg[k]; }
   function set(k, v) { cfg[k] = v; save(); }

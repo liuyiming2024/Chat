@@ -57,17 +57,29 @@
     document.body.appendChild(wrap);
 
     function close() { wrap.remove(); }
-    box.querySelector('.modal-x').onclick = close;
-    wrap.addEventListener('click', function (e) { if (e.target === wrap) close(); });
     var cancelBtn = box.querySelector('[data-act="cancel"]');
     var okBtn = box.querySelector('[data-act="ok"]');
+    if (opts.onOpen) opts.onOpen(body);
+    var first = body.querySelector('input,textarea,select');
+    if (first) setTimeout(function () { first.focus(); }, 30);
+    /* ⚠ Esc 关闭。灯箱有，模态框原来没有 ——
+       不一致的结果是：用户养成了按 Esc 关掉大图的习惯，
+       在对话框上按 Esc 却没反应，只能伸手去点"取消"。
+       对话框比灯箱更常用，更该支持。
+       关闭时要连同监听器一起摘掉，否则每开一个框就多挂一个。 */
+    function onEsc(e) { if (e.key === 'Escape') { close(); } }
+    document.addEventListener('keydown', onEsc);
+    var origClose = close;
+    close = function () {
+      document.removeEventListener('keydown', onEsc);
+      origClose();
+    };
+    box.querySelector('.modal-x').onclick = close;
+    wrap.addEventListener('click', function (e) { if (e.target === wrap) close(); });
     if (cancelBtn) cancelBtn.onclick = close;
     if (okBtn) okBtn.onclick = function () {
       if (!opts.onOk || opts.onOk(body) !== false) close();
     };
-    if (opts.onOpen) opts.onOpen(body);
-    var first = body.querySelector('input,textarea,select');
-    if (first) setTimeout(function () { first.focus(); }, 30);
     return { close: close, body: body };
   }
 
@@ -141,7 +153,14 @@
   /* ---------- 时间 ---------- */
   function pad2(n) { return n < 10 ? '0' + n : '' + n; }
   function fmtTime(ts) {
+    /* ⚠ 原来不判断有效性：ts 是 undefined / 空串 / 非法字符串时
+       new Date() 得到 Invalid Date，toDateString() 返回 "Invalid Date"，
+       最后拼出 "NaN月NaN日 NaN:NaN" 这种东西显示在消息旁边。
+       消息时间戳来自服务端、localStorage、导入文件，哪一路都可能缺字段。
+       宁可显示"时间未知"，也不要显示一串 NaN ——
+       后者用户会以为自己客户端坏了。 */
     var d = new Date(ts), now = new Date();
+    if (isNaN(d.getTime())) return '时间未知';
     var hm = pad2(d.getHours()) + ':' + pad2(d.getMinutes());
     if (d.toDateString() === now.toDateString()) return hm;
     var y = new Date(now - 86400000);
@@ -150,13 +169,25 @@
   }
   function fmtFull(ts) {
     var d = new Date(ts);
+    if (isNaN(d.getTime())) return '时间未知';
     return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + ' ' +
       pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
   }
 
-  var avCache = {};   // 自定义头像：userId -> dataURL
-
-  function setAvatarCache(uid, url) { if (url) avCache[uid] = url; else delete avCache[uid]; }
+  /* 自定义头像：userId -> dataURL。
+     ⚠ 原来无上限。头像动辄几十 KB 的 dataURL，
+       成员多、房间多的站点一路涨下去，内存只增不减 ——
+       而且都是同一个页面生命周期内再也用不到的数据。
+       给个上限，超了就把最早放进去的丢掉（简单 FIFO，够用）。 */
+  var avCache = {};
+  var AV_MAX = 60;
+  function setAvatarCache(uid, url) {
+    if (url) {
+      avCache[uid] = url;
+      var ks = Object.keys(avCache);
+      if (ks.length > AV_MAX) { for (var i = 0; i < ks.length - AV_MAX; i++) delete avCache[ks[i]]; }
+    } else delete avCache[uid];
+  }
 
   function avatar(user, size) {
     var name = (user && user.nick) ? user.nick : '?';
@@ -205,11 +236,17 @@
   }
 
   /* 关掉最上面那层 modal。
-     ⚠ 这个方法被调用了（app.js 的 @提及面板），但 ui.js 里没导出 ——
-     调用处写了 `g.UI.closeModal && ...` 所以不报错，
-     表现是"点了没反应"。这种"有保护就不报错"的写法会把缺失藏很久。 */
+     ⚠⚠ 原来这里查的是 '.modal-mask'，而 modal() 建的容器类名是 '.modal-wrap' ——
+        CSS 里也根本没有 .modal-mask 这个东西。
+        结果：querySelectorAll 永远返回空列表，closeModal() 什么都不做。
+        app.js 里 @提及面板点人名后就是靠它关闭的 ——
+        **选完人，文本插进去了，面板却关不掉**，只能去点"关闭"。
+        更麻烦的是 app.js 里还有个同款的 closeTop()，犯的是同一个错。
+
+        为什么这个 bug 能活这么久：调用处写了 `g.UI.closeModal && ...`，
+        函数存在、不报错、只是没效果 —— "有保护就不报错"的写法把缺失藏住了。 */
   function closeModal() {
-    var ms = document.querySelectorAll('.modal-mask');
+    var ms = document.querySelectorAll('.modal-wrap');
     if (ms && ms.length) {
       var last = ms[ms.length - 1];
       if (last.parentNode) last.parentNode.removeChild(last);

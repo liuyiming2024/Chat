@@ -189,6 +189,16 @@
 
      所以：① 存的时候带上 version；② 读的时候按版本处理；
            ③ 版本比代码新的（用户降级了）不能直接丢，先备份再提示。 */
+  /* 备份原始状态串。**返回是否真的写成了**，让调用方能如实告知用户。
+     原来所有调用点都是 `try{...}catch(e){}` 然后照样提示"已备份" ——
+     存储满的时候这个提示是假的。 */
+  function backupRaw(raw) {
+    try {
+      localStorage.setItem(STATE_BACKUP_KEY, raw);
+      return localStorage.getItem(STATE_BACKUP_KEY) === raw;
+    } catch (e) { return false; }
+  }
+
   function load() {
     var raw;
     try { raw = localStorage.getItem(KEY); } catch (e) { return null; }
@@ -196,9 +206,16 @@
     var s;
     try { s = JSON.parse(raw); } catch (e) {
       /* 结构坏了。不能直接返回 null —— 那等于把用户数据全丢了。
-         先备份原始字符串，让用户有机会找回来。 */
-      try { localStorage.setItem(STATE_BACKUP_KEY, raw); } catch (e2) { }
-      g.UI.toast('本地数据已损坏，已备份原始数据（' + STATE_BACKUP_KEY + '）', 'err', 8000);
+         先备份原始字符串，让用户有机会找回来。
+         ⚠ 但"备份成功"必须真的成功才能说"已备份"：
+            localStorage 写不进去时（配额满、隐私模式）原来照样提示已备份，
+            用户去找 STATE_BACKUP_KEY 却发现是空的 ——
+            **在最需要兜底的那一刻给了假消息**，比不提示更糟。
+            备份失败要如实说"没备份成功"，并提示先腾空间。 */
+      g.UI.toast(backupRaw(raw)
+        ? '本地数据已损坏，已备份原始数据（' + STATE_BACKUP_KEY + '）'
+        : '本地数据已损坏，且备份也没写成（存储已满）。请先清理空间再刷新，否则数据会丢失。',
+        'err', 10000);
       return null;
     }
     if (!s || typeof s !== 'object') return null;
@@ -207,12 +224,17 @@
     if (v > STATE_VER) {
       /* 数据比代码新：通常是用户把客户端降级了。
          硬读会丢字段，直接丢掉更糟 —— 备份后提示。 */
-      try { localStorage.setItem(STATE_BACKUP_KEY, raw); } catch (e) { }
-      g.UI.toast('本地数据来自更新版本，已备份。请升级到最新版再打开。', 'err', 8000);
+      /* 同上：备份失败不能说"已备份" */
+      var okB = backupRaw(raw);
+      g.UI.toast(okB
+        ? '本地数据来自更新版本，已备份。请升级到最新版再打开。'
+        : '本地数据来自更新版本，但备份没写成（存储已满）。请升级到最新版，并先清理空间。',
+        'err', 10000);
       return null;
     }
     if (v < STATE_VER) {
-      try { localStorage.setItem(STATE_BACKUP_KEY, raw); } catch (e) { }
+      /* 迁移前备份：迁移是不可逆的，留一份旧版可退回 */
+      backupRaw(raw);
       s = migrate(s, v);
     }
     s.version = STATE_VER;
@@ -1894,7 +1916,14 @@
     rec = null;
     g.Media.readFile(blob).then(function (dataUrl) {
       var id = uid('v');
-      return g.Media.put(id, dataUrl).then(function () {
+      /* Media.put 现在返回 { ok, reason }：存不住就不能说"已发送"。
+         原来无条件提示成功，实际上配额满时音频根本没落盘，
+         重启后这条语音变成空的。 */
+      return g.Media.put(id, dataUrl).then(function (r) {
+        if (!r || r.ok === false) {
+          g.UI.toast('语音没能存下来（存储空间不足），没有发送。请先清理旧图片视频。', 'err', 8000);
+          return;
+        }
         pushMsg({
           id: uid('msg'), room: cur, from: me.id, type: 'voice',
           mediaId: id, name: '语音消息', size: g.Media.dataUrlSize(dataUrl),
@@ -2375,9 +2404,16 @@
       });
       if (!hits.length) { box.appendChild(elc('div', 'empty-tip', '没有找到相关消息')); return; }
       hits.sort(function (a, b) { return (b.m.ts || 0) - (a.m.ts || 0); });
-      var tip = elc('div', 'field-hint', '共 ' + hits.length + ' 条，按时间倒序');
+      /* ⚠ 原来只写"共 N 条"，然后 slice(0, 60) 悄悄截断。
+         N=800 时用户看到的仍是 60 条，而提示说 800 ——
+         他会以为搜索坏了（"明明说有 800 条，怎么只有 60 条？"），
+         或者以为漏了什么。**截断了就必须说清楚截断了。** */
+      var SHOWN = Math.min(hits.length, 60);
+      var tip = elc('div', 'field-hint', hits.length > SHOWN
+        ? ('共 ' + hits.length + ' 条，先显示最新 ' + SHOWN + ' 条（按时间倒序）；换个更具体的词可以缩小范围')
+        : ('共 ' + hits.length + ' 条，按时间倒序'));
       box.appendChild(tip);
-      hits.slice(0, 60).forEach(function (h) {
+      hits.slice(0, SHOWN).forEach(function (h) {
         var it = elc('div', 'search-item');
         var u = findUser(h.m.from);
         var rn = findRoom(h.rid);
@@ -2404,7 +2440,13 @@
       if (swTimer) clearTimeout(swTimer);
       swTimer = setTimeout(run, 180);
     };
-    d.querySelector('#swWho').oninput = run;
+    /* ⚠ 防抖只加在关键词框上了，发送者框还是 oninput 直接跑 ——
+       同样是全量扫描，只是触发频率低一些，卡顿照样存在。
+       两个框共用同一个防抖：任一输入都重新计时。 */
+    d.querySelector('#swWho').oninput = function () {
+      if (swTimer) clearTimeout(swTimer);
+      swTimer = setTimeout(run, 180);
+    };
     d.querySelector('#swScope').onchange = run;
     g.UI.modal({ title: '消息搜索', body: d, okText: '关闭', cancelText: null, wide: true });
     run();
@@ -2520,7 +2562,14 @@
       return (kind === 'image' ? g.Media.compressImage(dataUrl) : Promise.resolve(dataUrl)).then(function (u) {
         var id = uid('m');
         /* 唯一媒体路径：压缩后写入 IndexedDB，消息只记 mediaId */
-        return g.Media.put(id, u).then(function () {
+        return g.Media.put(id, u).then(function (r) {
+          /* 存不住就别发 —— 发了也是一条打不开的空消息，
+             而且对方看到的是"有个文件"，点开却什么都没有，
+             比直接告诉他没发出去更困惑。 */
+          if (!r || r.ok === false) {
+            g.UI.toast('文件没能存下来（存储空间不足），没有发送。请先清理旧图片视频。', 'err', 8000);
+            return null;
+          }
           var m = {
             id: uid('msg'), room: cur, from: me.id, type: kind,
             mediaId: id, name: file.name, size: g.Media.dataUrlSize(u), ts: now()
@@ -2529,6 +2578,10 @@
             ? g.Media.videoPoster(u).then(function (p) { if (p) m.poster = p; return m; })
                 .catch(function () { return m; })
             : Promise.resolve(m)).then(function (mm) {
+              /* 上一步存不住时传下来的是 null —— 必须挡住，
+                 否则下面读 mm.room 直接抛 TypeError，
+                 变成一个"点发送没反应"的诡异现象。 */
+              if (!mm) return null;
               /* ⚠ 离线时原来什么都不做，只 toast「已发送」（E-055）。
                  结果：图片/视频/语音/文件**永远只在自己这台设备上**，
                  联网后也不会补发，对方一条都收不到，
@@ -2557,6 +2610,8 @@
         });
       });
     }).then(function (m) {
+      /* 存不住时是 null，不能 pushMsg(null) —— 会往房间塞一条空消息 */
+      if (!m) return;
       pushMsg(m);
       /* 在线模式下先说「已发送（本机）」。
          上传是异步的、不等结果，几秒后才可能弹「云端上传失败」——
@@ -4672,8 +4727,11 @@
     g.UI.modal({ title: '提及某人', body: d, okText: '关闭', cancelText: null });
   }
 
+  /* ⚠ 原来查 '.modal-mask'，而 ui.js 建的容器是 '.modal-wrap' ——
+     同 ui.js closeModal 那个错。**选择器写错不会报错，只会静默失效**，
+     所以两处一起错、一起没人发现。 */
   function closeTop() {
-    var ms = document.querySelectorAll('.modal-mask');
+    var ms = document.querySelectorAll('.modal-wrap');
     for (var i = ms.length - 1; i >= 0; i--) { ms[i].remove(); break; }
   }
 
