@@ -4257,14 +4257,7 @@
           '<button class="btn ghost" id="stClean">清理旧媒体</button> ' +
           '<button class="btn ghost" id="stUnhide">恢复已删除</button> ' +
           '<button class="btn ghost" id="stQuota">存储用量</button> ' +
-          /* 人物档案入口。
-             ⚠ 用户要求："最多一个小小按钮，并且显示先鉴定权限"。
-             所以按钮本身不做权限预判 —— 点了才去问服务端，
-             没权限就提示"无法打开"。
-             不在按钮上做"非站长就隐藏"的判定：
-             前端判定只能决定按钮显不显示，**服务端才是真正的闸门**，
-             而这里即使按钮显示了，点开也拿不到任何数据。 */
-          '<button class="btn ghost" id="stProfile">人物档案</button> ' +
+
           '<input type="file" id="stFile" accept="application/json" class="hidden">';
         b.appendChild(sd);
         /* 完整备份：连媒体一起打包，用于换设备 / 清理前备份。
@@ -4334,11 +4327,6 @@
           if (!c) { g.UI.toast('你没有删除过消息'); return; }
           g.UI.confirm('你删除了 ' + c + ' 条消息（仅你自己不可见）。要恢复显示吗？',
             function () { restoreHidden(); });
-        };
-        var pfb = sd.querySelector('#stProfile');
-        if (pfb) pfb.onclick = function () {
-          if (!g.Profile || !g.Profile.open) { g.UI.toast('档案模块未加载', 'err'); return; }
-          g.Profile.open().catch(function () { });
         };
         sd.querySelector('#stQuota').onclick = function () {
           var st = storageInfo();
