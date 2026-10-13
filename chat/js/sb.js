@@ -144,6 +144,30 @@
     ls(TOK_KEY, null); ls(UID_KEY, null);
   }
 
+  /* ⚠ 退出登录必须同时通知服务端（E-079，考古补回）。
+     服务端 `logout()` 函数**早就写好了**，但 sb.js 里**根本没有调用它的方法**，
+     前端也就一次都没调过 —— 于是只清了本地两个 storage，
+     服务端那条 session 继续有效到 expires_at（**14 天**）。
+
+     而会话同时写 localStorage 的注释里明明白白写着：
+     「关闭浏览器不会自动登出，靠服务端的 expires_at 兜底」。
+     **既然靠服务端兜底，退出时却不通知服务端，兜底就反成了风险** ——
+     用户在网吧/公用电脑点了退出，两周内任何人拿到那台机器（或那份 token 备份）
+     都能继续以他的身份登录，而他以为已经退出了。
+
+     先清本地再通知服务端：本地先清保证"界面上已经退了"，
+     服务端失败也不能让本地回到已登录状态。 */
+  function logout() {
+    var t = token();
+    dropSession();
+    if (!t) return Promise.resolve(true);
+    return rpc('logout', {}).then(function () { return true; })
+      .catch(function (e) {
+        try { console.warn('[sb] 服务端登出失败（本地已清）', e); } catch (e2) { }
+        return false;
+      });
+  }
+
   /* ---------------- 站点与账号 ---------------- */
 
 
@@ -246,6 +270,7 @@
   g.SB = {
     loadCfg: loadCfg, configure: configure, isOn: isOn, clearCfg: clearCfg,
     syncAcl: syncAcl, uploadToStorage: uploadToStorage, token: token, uid: uid, setSession: setSession, dropSession: dropSession,
+    logout: logout,
     rpc: rpc,
     gateCheck: gateCheck, login: login, register: register, initSite: initSite,
     changePwd: changePwd, setGate: setGate,

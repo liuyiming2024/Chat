@@ -495,15 +495,27 @@
   /* 邀请码：必须走服务端。
      原来口令存在本地 S.invites —— 在 A 机器生成的码，B 机器输入说"不存在"。
      邀请码是要发给别人的，天生跨设备、跨人，本地存就只在生成那台成立。 */
-  function inviteCreate(room, hours, maxUse) {
-    return g.SB.rpc('invite_create',
-      { p_room: room, p_hours: hours || 0, p_max_use: maxUse || 0 });
+  /* custom 为自定义口令（INV-CUSTOM，可空）。服务端会校验权限与合法性，
+     前端只是把输入传过去 —— 校验必须以服务端为准。 */
+  function inviteCreate(room, hours, maxUse, custom) {
+    var args = { p_room: room, p_hours: hours || 0, p_max_use: maxUse || 0 };
+    if (custom) args.p_code = String(custom);
+    return g.SB.rpc('invite_create', args);
   }
   function inviteRedeem(code) {
-    return g.SB.rpc('invite_redeem', { p_code: String(code || '').toUpperCase() });
+    /* 不再 toUpperCase：自定义口令是小写，
+       大小写兼容交给服务端（同时查 lower 与 upper）。 */
+    return g.SB.rpc('invite_redeem', { p_code: String(code || '').trim() });
   }
   function inviteRevoke(code) {
     return g.SB.rpc('invite_revoke', { p_code: String(code || '').toUpperCase() });
+  }
+  /* ⚠ 列出已生成的邀请码（E-089，考古补回）。
+     inviteRevoke 导出后全仓零处调用，就因为没有任何界面能列出口令 ——
+     看不见的东西自然没法操作。生成一个"长期·不限次数"的口令后，
+     就再也没有任何办法收回它。 */
+  function inviteList() {
+    return g.SB.rpc('invite_list', {});
   }
   /* 开关某个成员"能不能邀请别人" */
   function setCanInvite(room, uid, can) {
@@ -659,7 +671,7 @@
     createRoom: createRoom, updateRoom: updateRoom, joinRoom: joinRoom,
     userReview: userReview, userDelete: userDelete, msgMedia: msgMedia,
     inviteCreate: inviteCreate, inviteRedeem: inviteRedeem,
-    inviteRevoke: inviteRevoke, setCanInvite: setCanInvite,
+    inviteRevoke: inviteRevoke, inviteList: inviteList, setCanInvite: setCanInvite,
     changePwd: changePwd, profileUpdate: profileUpdate,
     addMember: addMember, removeMember: removeMember, setAdmin: setAdmin,
     setMute: setMute, setPerms: setPerms, setRole: setRole,
