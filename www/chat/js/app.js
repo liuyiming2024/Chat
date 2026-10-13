@@ -779,6 +779,10 @@
           var a = card.querySelector('#rPwd').value, b = card.querySelector('#rPwd2').value;
           if (!n || !note) { g.UI.toast('请填写昵称与申请说明'); return; }
           if (byNick(n)) { g.UI.toast('昵称已被占用'); return; }
+          /* 与服务端同一套规则（S-100）。服务端仍会再判一次，
+             这里只是别让用户填完才被拒。 */
+          var nv = nickValid(n);
+          if (!nv.ok) { g.UI.toast(nv.why, 'err'); return; }
           if (a.length < 4) { g.UI.toast('密码至少 4 位'); return; }
           if (a !== b) { g.UI.toast('两次密码不一致'); return; }
           /* 在线模式：注册交给服务端，密码只在服务端 bcrypt */
@@ -1771,10 +1775,25 @@
   }
 
   /* ================= 发送 ================= */
+  /* ⚠ 消息长度上限必须与服务端一致（S-101，考古补回）。
+     服务端 msg_send / msg_edit 都限 8000 字，超限直接 raise。
+     而前端**零校验**：用户写了 12000 字，一路顺畅地发出去，
+     直到服务端拒绝才弹一句「消息过长」——
+     这时他已经写了很久，且输入框已清空（send 里先 ta.value = ''），
+     **内容没了**。写了半小时的东西因为一个本可提前拦截的限制而丢失，最冤。
+
+     所以：提交前就拦住，并且只提示、不清空输入框。 */
+  var MSG_MAX = 8000;
+
   function send() {
     var ta = $('input');
     var text = ta.value.replace(/\s+$/, '');
     if (!text) return;
+    if (text.length > MSG_MAX) {
+      g.UI.toast('消息太长（' + text.length + ' 字，上限 ' + MSG_MAX +
+        '）。内容已保留，请删减后再发。', 'err', 8000);
+      return;
+    }
     var r = findRoom(cur);
     var sp = g.ACL.canSpeak(me, r);
     if (!sp.ok) { g.UI.toast(sp.why, 'err'); return; }
@@ -2012,6 +2031,32 @@
       }, 300);
     };
     showOnce();
+  }
+
+  /* 字数提示（S-101）：超过 90% 才出现，超过上限变红。 */
+  function updateLenHint(ta) {
+    var el = $('lenHint');
+    if (!el) return;
+    var n = ta.value.length;
+    if (n < MSG_MAX * 0.9) { el.classList.add('hidden'); return; }
+    el.classList.remove('hidden');
+    var over = n > MSG_MAX;
+    el.textContent = n + ' / ' + MSG_MAX;
+    el.classList.toggle('over', over);
+    el.title = over ? '已超过上限 ' + (n - MSG_MAX) + ' 字，发送会被拒绝' : '接近长度上限';
+  }
+
+  /* 昵称合法性校验（S-100）。必须与服务端同一套规则：
+     服务端是真正的闸门，前端只负责**提前**告诉用户，
+     别让他填完一整张表才被拒。 */
+  var NICK_RE = /^[\u4e00-\u9fa5a-zA-Z0-9_\-. ·‧]{1,24}$/;
+  var NICK_INVISIBLE = /[\u0000-\u001f\u007f\u200b-\u200f\u2028\u2029\ufeff]/;
+  function nickValid(n) {
+    n = String(n || '');
+    if (NICK_INVISIBLE.test(n)) return { ok: false, why: '昵称不能包含不可见字符' };
+    if (n.length > 24) return { ok: false, why: '昵称最多 24 个字符' };
+    if (!NICK_RE.test(n)) return { ok: false, why: '昵称只能包含中英文、数字、下划线、连字符和空格' };
+    return { ok: true };
   }
 
   /* 该消息对「我」是否可见：被隐藏或已被撤回/移除都算不可见 */
@@ -4598,6 +4643,8 @@
         var p = body.querySelector('#nuPwd').value;
         var role = body.querySelector('#nuRole').value;
         if (!n) { g.UI.toast('请填写昵称'); return false; }
+        var nv2 = nickValid(n);
+        if (!nv2.ok) { g.UI.toast(nv2.why, 'err'); return false; }
         if (p.length < 4) { g.UI.toast('初始密码至少 4 位'); return false; }
         if (byNick(n)) { g.UI.toast('昵称已被占用'); return false; }
         var salt = g.SHA256.randomId(12);
@@ -5314,6 +5361,9 @@
         drafts[cur] = ta.value;
         autoGrow(ta);
         typingAt = now();
+        /* 接近上限时给出提示，别等提交才说（S-101）。
+           只在超过 90% 时才显示，平时不占地方。 */
+        updateLenHint(ta);
         if (draftTimer) clearTimeout(draftTimer);
         draftTimer = setTimeout(function () { save(true); }, 800);
       });

@@ -255,6 +255,8 @@
         <button class="md-btn" id="btnSym" title="公式符号面板" aria-label="公式符号面板">√</button>
       </div>
       <textarea id="input" rows="1" placeholder="说点什么…（/help 查看命令）"></textarea>
+      <!-- 字数提示（S-101）：只在接近/超过上限时出现 -->
+      <div id="lenHint" class="len-hint hidden"></div>
       <div class="composer-foot">
         <button class="btn primary" id="btnSend" data-i18n="send">发送(S)</button>
       </div>
@@ -268,6 +270,19 @@
     <div class="sp-sec">
       <div class="sec-title"><span>群公告</span><button class="mini-btn" id="btnEditNotice" data-i18n="edit">编辑</button></div>
       <div class="notice-text" id="noticeText">暂无公告</div>
+    </div>
+    <!-- ⚠ 聊天室页必须也有政策入口（E-002，考古补回）。
+         手册 9 册页脚、贴吧页、落地页都有，唯独聊天室没有 ——
+         而**聊天室是用户停留 100% 时间的页面**。
+         定这条的理由原文是"用户从聊天界面进来时不一定经过手册首页"：
+         手册全做到了，真正需要它的那个页面漏了。 -->
+    <div class="sp-sec">
+      <div class="sec-title"><span>政策</span></div>
+      <div class="policy-links">
+        <a href="docs/privacy.html" target="_blank" rel="noopener">隐私声明</a>
+        <a href="docs/terms.html" target="_blank" rel="noopener">使用须知</a>
+        <a href="docs/index.html" target="_blank" rel="noopener">使用手册</a>
+      </div>
     </div>
   </aside>
 </div>

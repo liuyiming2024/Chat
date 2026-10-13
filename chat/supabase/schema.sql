@@ -531,6 +531,40 @@ begin
     raise exception '当前未开放注册';
   end if;
   if coalesce(length(p_nick), 0) < 1 then raise exception '请填写昵称'; end if;
+  if coalesce(length(p_nick), 0) > 24 then raise exception '昵称最多 24 个字符'; end if;
+
+  -- ⚠ 昵称必须限制字符集（S-100，考古补回）。
+  -- 原来只校验 length >= 1，**不过滤控制字符、换行、零宽字符、同形异码字符**。
+  -- 后果是可以注册出跟别人**看起来一模一样**的昵称：
+  -- 用零宽字符或西里尔字母的同形字符冒充站长，其他人 @ 他、点他头像时
+  -- 根本分不出来。而前端没有此校验、只靠服务端兜底，
+  -- 所以这一层一旦漏了，仿冒就是畅通无阻的。
+  --
+  -- 白名单：汉字、ASCII 字母数字、下划线、连字符、点、空格、间隔号。
+  -- **只放行 ASCII 拉丁字母**这一点正是关键：西里尔字母的 а/е/о
+  -- 与拉丁 a/e/o 肉眼几乎无法区分，若放行就能注册出"和站长一模一样"的昵称。
+  -- 再叠加控制字符与零宽字符（U+200B-200F、U+2028/2029、U+FEFF）的显式排除。
+  -- 写法说明：PostgreSQL 的普通字符串字面量**不做** \uXXXX 转义，
+  -- POSIX 正则也不支持 \p{Han}。所以这里直接写汉字范围的字面量，
+  -- 零宽/控制字符用 chr() 显式比对（最稳，不依赖正则方言）。
+  if p_nick !~ '^[一-龥a-zA-Z0-9_\-. ·‧]{1,24}$' then
+    raise exception '昵称只能包含中英文、数字、下划线、连字符和空格';
+  end if;
+  if p_nick ~ '[[:cntrl:]]' then
+    raise exception '昵称不能包含控制字符';
+  end if;
+  -- 零宽与不可见字符：U+200B~200F、U+2028、U+2029、U+FEFF
+  if p_nick like '%' || chr(8203) || '%'
+     or p_nick like '%' || chr(8204) || '%'
+     or p_nick like '%' || chr(8205) || '%'
+     or p_nick like '%' || chr(8206) || '%'
+     or p_nick like '%' || chr(8207) || '%'
+     or p_nick like '%' || chr(8232) || '%'
+     or p_nick like '%' || chr(8233) || '%'
+     or p_nick like '%' || chr(65279) || '%' then
+    raise exception '昵称不能包含不可见字符';
+  end if;
+
   -- real_name 为可选字段（前端无真实姓名输入框），不强制
   if length(p_pwd) < 4 then raise exception '密码至少 4 位'; end if;
   select count(*) into cnt from users where lower(nick) = lower(p_nick);

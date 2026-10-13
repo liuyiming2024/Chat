@@ -239,6 +239,19 @@ input, textarea, select { font-family: inherit; font-size: 14px; }
 }
 @keyframes recWarnPulse { 0%,100% { opacity: 1 } 50% { opacity: .45 } }
 
+.len-hint {
+  font-size: 11px; color: #8a8f98; padding: 2px 4px; text-align: right;
+}
+.len-hint.over { color: #c0392b; font-weight: 700; }
+.len-hint.hidden { display: none; }
+body.dark .len-hint { color: #6b7280; }
+body.dark .len-hint.over { color: #e8735f; }
+
+.policy-links { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; }
+.policy-links a { color: #3b7ff2; text-decoration: none; }
+.policy-links a:hover { text-decoration: underline; }
+body.dark .policy-links a { color: #6ab0ff; }
+
 .save-warn {
   display: inline-flex; align-items: center; gap: 4px;
   margin-top: 2px; padding: 1px 7px;
