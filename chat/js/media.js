@@ -110,16 +110,38 @@
   function del(id) {
     return open().then(function (db) {
       if (!db) { localStorage.removeItem('wxlg_m_' + id); return; }
-      return new Promise(function (res) {
+      return new Promise(function (res, rej) {
         var tx = db.transaction(STORE, 'readwrite');
         tx.objectStore(STORE).delete(id);
+        /* ⚠ 删失败必须 reject，不能只听 oncomplete（S-102，考古找回）。
+           put 有 onerror + onabort 两个兜底，del 原来只有 tx.oncomplete。
+           IndexedDB 事务失败（配额满、磁盘错误、事务被中止）时不触发 oncomplete，
+           于是这个 Promise **永远不 settle** —— 调用方的 .then 永远不执行，
+           界面卡在「正在删除」没有任何下文。
+
+           永久挂起比报错更糟：报错用户还能重试，挂起他只能刷新页面。 */
         tx.oncomplete = function () { res(); };
+        tx.onerror = function () { rej(tx.error || new Error('删除失败')); };
+        tx.onabort = function () { rej(tx.error || new Error('删除被中止')); };
       });
     });
   }
 
   /* ---------- 图片压缩：dataURL -> dataURL(JPEG) ---------- */
+  /* ⚠ 动图不能压成 JPEG（S-099，考古找回）。
+     GIF / APNG 走 canvas 再 toDataURL('image/jpeg') 只会剩下第一帧 ——
+     用户挑了张动图发出去，对方收到的是一张不会动的图，
+     而且**全程没有任何提示**，用户以为发送成功、对方以为本来如此。
+     识别出来就原样透传，不压缩（动图体积通常也不大）。 */
+  function isAnimated(dataUrl) {
+    if (typeof dataUrl !== 'string') return false;
+    if (/^data:image\/(gif|apng)/i.test(dataUrl)) return true;
+    if (/^data:image\/webp/i.test(dataUrl)) return true;   /* webp 也可能是动图，保守放行 */
+    return false;
+  }
+
   function compressImage(dataUrl, maxSide, quality) {
+    if (isAnimated(dataUrl)) return Promise.resolve(dataUrl);
     maxSide = maxSide || 1600; quality = quality || 0.82;
     return new Promise(function (res) {
       var img = new Image();
