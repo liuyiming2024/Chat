@@ -163,6 +163,19 @@
       <div class="ch-info">
         <div class="ch-title" id="roomTitle">公屏大厅</div>
         <div class="ch-sub" id="roomSub">公屏大厅</div>
+        <!-- ⚠ 持续可见的"没存住"警示（S-114，成品审查新增）。
+             心跳写盘失败时，原来只弹一次 toast（8 秒后消失），
+             之后界面完全正常 —— 而**所有改动都还只在内存里**。
+             用户会一直以为在保存，直到崩溃/关页面才发现全丢了。
+
+             一条会消失的提示拦不住这种事：
+             它消失之后，界面上再也没有任何痕迹表明"你现在正在丢数据"。
+             所以这里要有一个**一直在**的红色标记，写盘恢复成功才消失。 -->
+        <div id="saveWarn" class="save-warn hidden" role="alert" aria-live="assertive"
+             title="本地存储写入失败，改动只存在内存里，关闭页面会丢失。建议导出备份后清理。">
+          <svg class="ic" aria-hidden="true"><use href="#i-warn"/></svg>
+          <span>未保存</span>
+        </div>
       </div>
       <div class="ch-actions">
         <!-- ⚠ 不能给这个按钮加 data-i18n（E-022，考古补回）。

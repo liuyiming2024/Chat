@@ -277,9 +277,14 @@
     var wrote = true;
     try {
       localStorage.setItem(KEY, JSON.stringify(S));
+      markSaveOk();
     } catch (e) {
       wrote = false;
-      g.UI.toast('本地存储写入失败，请清理旧图片/视频', 'err');
+      /* save() 是唯一的写入出口，失败同样要挂常驻标记（S-114）。
+         不能只弹一次 toast —— 用户发消息时写盘失败，
+         消息在界面上照常显示（内存里有），看着像发出去了，
+         下次打开却没了。 */
+      markSaveFailed(e2);
     }
     if (pushTimer) clearTimeout(pushTimer);
     pushTimer = setTimeout(function () { g.Sync.commit(S); }, 60);
@@ -903,6 +908,24 @@
     });
     g.Net.loadAccel().then(function (ok) { if (ok) g.UI.toast('已启用 C++/WASM 哈希加速', 'ok'); });
     startHeartbeat();
+    /* ⚠ 上次录音没走完就崩了 / 被关掉了（S-116，成品审查新增）。
+       边录边存的草稿还在，但界面上什么都没有 ——
+       用户不知道自己有一段 40 秒的语音留在那儿。
+       启动时检查一次，有就明确告诉他，而不是让它悄悄烂在存储里
+       还占着本来就紧张的配额。 */
+    (function checkOrphanRecording() {
+      var d = null;
+      try { d = localStorage.getItem('wxlg_rec_draft'); } catch (e) { return; }
+      if (!d) return;
+      g.UI.confirm('上次有一段未完成的录音（约 ' + Math.max(1, Math.round(d.length / 1400)) +
+        ' KB）。它可能是在录的过程中被中断的。要保留吗？', function () {
+        /* 保留：什么都不做，等下次录音开始时会覆盖 */
+        g.UI.toast('已保留。下次开始录音时会被新的覆盖', 'ok');
+      }, function () {
+        try { localStorage.removeItem('wxlg_rec_draft'); } catch (e2) { }
+        g.UI.toast('已清除未完成的录音', 'ok');
+      });
+    })();
     setMode(getMode(), true);
     scrollBottom();
     /* 启动后检查：存储配额（所有人）+ 备份提醒（仅管理员） */
@@ -1240,6 +1263,36 @@
     return (u.lastSeen || 0) > (serverNowSafe() - ONLINE_MS);
   }
 
+  /* 写盘健康状态（S-114，成品审查新增）。
+     一条会消失的 toast 拦不住「以为在保存、实际没存」：
+     它消失后，界面上再无任何痕迹表明"你现在正在丢数据"。
+     所以另设一个**一直挂着**的红色标记，写盘恢复成功才消失。 */
+  var saveFailing = false;
+  function markSaveFailed(reason) {
+    if (!saveFailing) {
+      saveFailing = true;
+      /* 首次仍弹一次详细说明，之后靠常驻标记提醒 */
+      g.UI.toast('本地存储写入失败，改动只存在内存里，关闭页面会丢失。'
+        + '建议导出备份后清理旧媒体。', 'err', 8000);
+      try { console.error('[save] localStorage 写入失败', reason); } catch (e) { }
+    }
+    var w = $('saveWarn');
+    if (w) {
+      w.classList.remove('hidden');
+      w.title = '本地存储写入失败（' + ((reason && reason.name) || '未知原因')
+        + '）：改动只存在内存里，关闭页面会丢失。建议导出备份后清理。';
+    }
+    document.body.classList.add('save-failing');
+  }
+  function markSaveOk() {
+    if (!saveFailing) return;
+    saveFailing = false;
+    var w = $('saveWarn');
+    if (w) w.classList.add('hidden');
+    document.body.classList.remove('save-failing');
+    g.UI.toast('存储已恢复，改动可以正常保存了', 'ok');
+  }
+
   var hbTimer = null;
   function startHeartbeat() {
     if (hbTimer) clearInterval(hbTimer);
@@ -1254,15 +1307,13 @@
 
          所以失败要说出来。但不能每次心跳都弹（15 秒一次太吵），
          用一个标志节流成"只报一次"。 */
-      try { localStorage.setItem(KEY, JSON.stringify(S)); }
-      catch (e2) {
-        if (!beat._warned) {
-          beat._warned = true;
-          g.UI.toast('本地存储写入失败，改动可能不会保存。'
-            + '建议导出备份后清理旧媒体', 'err', 8000);
-          try { console.error('[save] localStorage 写入失败', e2); } catch (e3) { }
-        }
-      }
+      /* ⚠ 失败要持续可见，不能只报一次（S-114）。
+         原来用 beat._warned 节流成"只报一次"——
+         于是存在这样一种状态：**心跳一直在失败，用户只在最初看到过一次提示，
+         之后界面完全正常，而所有改动都只在内存里**。
+         这时候崩溃，全丢，且用户事前毫不知情。 */
+      try { localStorage.setItem(KEY, JSON.stringify(S)); markSaveOk(); }
+      catch (e2) { markSaveFailed(e2); }
       /* 轻量广播，让其他标签刷新在线状态 */
       g.Sync.ping();
       /* 账号凭据续期：只要还在线，"在线即有效"就一直成立 */
@@ -1553,8 +1604,16 @@
       if (m.type === 'text') {
         var bCopy = elc('button', 'msg-act', '复制');
         bCopy.onclick = function () {
-          try { navigator.clipboard.writeText(m.text || ''); g.UI.toast('已复制', 'ok'); }
-          catch (e) { g.UI.toast('复制失败'); }
+          /* ⚠ 不能用同步 try/catch 包 Promise（E-090，考古补回）。
+             writeText() 返回 Promise，它的 reject **不会被同步 catch 捕获** ——
+             于是"复制失败"永远走不到，界面一律显示「已复制」。
+             用户以为复制好了，粘贴出来却是上一次的内容，或者空。
+             **谎报成功比不报更糟**：不报用户还会自己手动选一遍。
+
+             另外 clipboard API 在非安全上下文（file://、http）下 navigator.clipboard
+             直接是 undefined，原代码会抛 TypeError 被 catch 成"复制失败"——
+             那还算诚实；真正危险的是 Promise reject 那一路。 */
+          copyText(m.text || '');
         };
         acts.appendChild(bCopy);
       }
@@ -1759,7 +1818,10 @@
             if (rr && rr.ok !== false) {
               m.pending = true;
               save(); renderChat();
-              g.UI.toast('暂时没发出去，已加入待发送队列（' + why + '），联网后自动补发', 'err', 6000);
+              var dropTip = (rr && rr.dropped > 0)
+                ? '注意：队列已满，丢弃了最早 ' + rr.dropped + ' 条待发消息。'
+                : '';
+              g.UI.toast('暂时没发出去，已加入待发送队列（' + why + '），联网后自动补发。' + dropTip, 'err', 6000);
               return;
             }
           }
@@ -1786,7 +1848,21 @@
       } else {
         m.pending = true;
         save(); renderChat();
-        g.UI.toast('已存入待发送队列，联网后自动发出', 'ok');
+        /* ⚠ dropped 必须读出来告诉用户（E-007，考古补回）。
+           enqueue() 在队列超限时会丢掉最旧的一条并把这个数返回，
+           而这里原来只判断 res.ok，**dropped 一次都没读**。
+           于是：攒满之后每发一条新的，就有一条最旧的被悄悄丢掉；
+           界面上那些旧消息仍挂着「待发送」角标，
+           **但它们已经不在队列里，永远不会发出去**。
+
+           这和"没存住就不标待发送"是同一类骗法，只是触发条件不同：
+           一个是存不下，一个是被挤掉 —— 结果都是用户以为会发出去。 */
+        if (res && res.dropped > 0) {
+          g.UI.toast('已存入队列，但队列已满，丢弃了最早 ' + res.dropped +
+            ' 条待发消息（它们不会发出去了）', 'err', 6000);
+        } else {
+          g.UI.toast('已存入待发送队列，联网后自动发出', 'ok');
+        }
       }
     }
   }
@@ -1873,6 +1949,69 @@
     if (/^image\//.test(t)) return 'image';
     if (/^video\//.test(t)) return 'video';
     return 'file';
+  }
+
+  /* 统一复制入口（E-090）：正确处理 Promise reject，绝不谎报成功。
+     失败时若给了 fallback 文案，就把原文一并显示出来让用户能手动抄。 */
+  function copyText(txt, failMsg) {
+    var fallback = function () {
+      var ta = document.createElement('textarea');
+      ta.value = txt; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      var okDone = false;
+      try { okDone = document.execCommand('copy'); } catch (e) { okDone = false; }
+      ta.remove();
+      if (okDone) { g.UI.toast('已复制', 'ok'); return; }
+      g.UI.toast(failMsg || '复制失败，请手动复制', 'err', 6000);
+    };
+    if (!navigator.clipboard || !navigator.clipboard.writeText) { fallback(); return; }
+    navigator.clipboard.writeText(txt).then(function () {
+      g.UI.toast('已复制', 'ok');
+    }).catch(function () { fallback(); });
+  }
+
+  /* 强制立即改密码（E-098）。
+     关不掉、不能跳过：点了"确定"而没填，就再弹一次。
+     这是重置站点后的唯一一道保险 —— 初始密码是随机生成的，
+     站长必须立刻换成自己知道的，否则他自己也登不回去。 */
+  function forceSetPassword(currentPwd, extraTip) {
+    var showOnce = function () {
+      g.UI.modal({
+        title: '立即设置站长密码',
+        okText: '设置', cancelText: null,
+        body: (function () {
+          var d = elc('div', '');
+          d.innerHTML =
+            '<div class="form-tip">当前初始密码：<code>' + g.UI.esc(currentPwd) + '</code></div>' +
+            '<div class="field-hint">这是随机生成的临时密码，请立即改为你自己的密码并记牢。' +
+            (extraTip ? '<br>' + g.UI.esc(extraTip) : '') + '</div>' +
+            '<div class="form-row"><label>新密码</label><input id="np1" type="password" autocomplete="new-password"></div>' +
+            '<div class="form-row"><label>再输一次</label><input id="np2" type="password" autocomplete="new-password"></div>';
+          return d;
+        })(),
+        onOk: function (body) {
+          var a = (body.querySelector('#np1') || {}).value || '';
+          var b = (body.querySelector('#np2') || {}).value || '';
+          if (a.length < 4) { g.UI.toast('密码至少 4 位', 'err'); return false; }
+          if (a !== b) { g.UI.toast('两次输入不一致', 'err'); return false; }
+          var sl = g.SHA256.randomId(12);
+          me.pwdHash = hashPwd(a, sl); me.pwdSalt = sl; touch(me);
+          save(); renderAll();
+          g.UI.toast('密码已设置，请记牢', 'ok');
+          return true;
+        }
+      });
+      /* 用户可能用 Esc / × / 点遮罩关掉 —— 那就再弹一次，
+         不给"待会儿再改"的机会。密码没设成就不能算重置完成。 */
+      var watch = setInterval(function () {
+        if (!document.querySelector('.modal')) {
+          clearInterval(watch);
+          /* 用哈希是否还是初始密码来判断有没有真的改过 */
+          if (me && me.pwdHash === hashPwd(currentPwd, me.pwdSalt)) showOnce();
+        }
+      }, 300);
+    };
+    showOnce();
   }
 
   /* 该消息对「我」是否可见：被隐藏或已被撤回/移除都算不可见 */
@@ -2185,15 +2324,42 @@
       try { rec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream); }
       catch (e) { rec = new MediaRecorder(stream); }
       recStream(stream);
-      rec.ondataavailable = function (e) { if (e.data && e.data.size) recChunks.push(e.data); };
+      rec.ondataavailable = function (e) {
+        if (!e.data || !e.data.size) return;
+        recChunks.push(e.data);
+        /* ⚠ 每来一片就攒进待落盘缓冲（S-116，成品审查新增）。
+           原来整段录音只在内存里攒着，**只有点停止才组装写入**。
+           录到 55 秒崩溃 → 55 秒全没，中途一次都没落盘过。
+
+           录音是创作内容，比打字更不可恢复：
+           打字的草稿还能凭记忆重写，说出去的话再说一遍就不是那回事了。
+           所以这里边录边写。用 timeslice 让 MediaRecorder 每 5 秒吐一片。 */
+        try {
+          var r = new FileReader();
+          r.onload = function () {
+            try { localStorage.setItem('wxlg_rec_draft', String(r.result)); } catch (e2) { markSaveFailed(e2); }
+          };
+          r.readAsDataURL(new Blob(recChunks, { type: mime || 'audio/webm' }));
+        } catch (e3) { }
+      };
       rec.onstop = function () { finishRecord(stream); };
-      rec.start();
+      /* 每 5 秒吐一片，配合上面的落盘 */
+      try { rec.start(5000); } catch (e4) { rec.start(); }
       recStart = now();
       var tip = $('recTip'), sec = $('recSec');
       if (tip) tip.classList.remove('hidden');
       recTimer = setInterval(function () {
         var el = (now() - recStart) / 1000;
         if (sec) sec.textContent = Math.floor(el);
+        /* ⚠ 接近上限要预警（E-018 同族）：
+           界面从头到尾没写"最长 60 秒"，到点直接自动发送。
+           用户正说到一半突然就发出去了，发的还是他不打算发的长度。 */
+        var left = Math.ceil((VOICE_MAX_MS - (now() - recStart)) / 1000);
+        if (sec) {
+          sec.textContent = Math.floor(el);
+          if (left <= 10) { sec.textContent += ' / 剩 ' + left + 's'; sec.classList.add('warn'); }
+          else sec.classList.remove('warn');
+        }
         if (now() - recStart >= VOICE_MAX_MS) stopRecord(true);
       }, 200);
       var bv = $('btnVoice');
@@ -2220,6 +2386,10 @@
   var REC_MIN_MS = 800;
 
   function finishRecord(stream) {
+    /* 录音已正常收尾，中途攒的草稿就作废了（S-116）。
+       不清理的话，它会一直占着 localStorage 的一块配额，
+       而这块空间本来就紧张（localStorage 总共才几 MB）。 */
+    try { localStorage.removeItem('wxlg_rec_draft'); } catch (e) { }
     if (stream) { try { stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) { } }
     var tip = $('recTip');
     if (tip) tip.classList.add('hidden');
@@ -2256,6 +2426,9 @@
   }
 
   function cancelRecord() {
+    /* 主动取消：草稿作废（S-116） */
+    try { localStorage.removeItem('wxlg_rec_draft'); } catch (e) { }
+
     if (!rec) return;
     recChunks = [];
     if (recTimer) { clearInterval(recTimer); recTimer = null; }
@@ -2473,7 +2646,28 @@
 
   /* 导入完整备份：先还原媒体，再覆盖状态。
      顺序不能反 —— 先写状态的话，界面会先渲染出一堆找不到的媒体。 */
+  /* 备份结构校验（S-108，考古补回）。
+     原来 restoreFullBackup 直接 `S = obj.state` —— **不检查这份数据长什么样**。
+     坏 JSON（截断的文件、别的软件导出的、手改坏的）会被原样写进 S，
+     然后整个应用以一个残缺状态跑起来：
+     没有 users 就没人能登录，没有 messages 就一片空白，
+     而用户看到的是"恢复成功"—— 直到他发现什么都打不开。
+
+     校验要在**写入之前**做，写完再校验就已经污染了。 */
+  function backupLooksValid(state) {
+    if (!state || typeof state !== 'object') return false;
+    if (!Array.isArray(state.users)) return false;
+    if (!state.messages || typeof state.messages !== 'object') return false;
+    if (!Array.isArray(state.rooms)) return false;
+    return true;
+  }
+
   function restoreFullBackup(obj) {
+    /* 先校验再动手。不合法就明确拒绝，绝不用坏数据覆盖当前状态。 */
+    if (!backupLooksValid(obj && obj.state)) {
+      g.UI.toast('这份备份的结构不对（缺少用户、房间或消息数据），已取消恢复，当前数据未改动', 'err', 8000);
+      return Promise.resolve(false);
+    }
     var media = obj && obj.media || {};
     var ids = Object.keys(media);
     var i = 0;
@@ -2593,8 +2787,9 @@
       '<button class="btn ghost" id="icCopy">复制口令</button>';
     var cb = box.querySelector('#icCopy');
     if (cb) cb.onclick = function () {
-      try { navigator.clipboard.writeText(code); g.UI.toast('已复制', 'ok'); }
-      catch (e) { g.UI.toast('复制失败，请手动记下：' + code); }
+      /* 同上（E-090）。口令复制失败尤其要给出原文 ——
+         口令是给用户手动转述用的，复制失败必须让他能直接看到。 */
+      copyText(code, '复制失败，请手动记下：' + code);
     };
   }
 
@@ -4964,15 +5159,27 @@
         sd.querySelector('#stReset').onclick = function () {
           g.UI.confirm('将清空全部用户、房间与消息（媒体仍在 IndexedDB）。确定？', function () {
             S = fresh(); ensurePublic();
+            /* ⚠ 初始密码不能写死成 'admin'（E-098，考古补回）。
+               原来密码固定为 admin，还用 toast 当众明文显示出来 ——
+               **写死在代码里的密码等于没有密码**，任何人看了源码就能以站长身份登录。
+               而明文提示又让旁观者（截图、录屏、旁人一眼）直接拿到。
+
+               改成随机生成，并且**强制立即修改**：不设新密码就一直弹，
+               不给"待会儿再改"的机会 —— 那个"待会儿"通常是永远。 */
             var s = g.SHA256.randomId(12);
+            var initPwd = g.SHA256.randomId(10);
             me = {
-              id: uid('u'), nick: '站长', note: '站长', status: 'active', pwdHash: hashPwd('admin', s), pwdSalt: s,
+              id: uid('u'), nick: '站长', note: '站长', status: 'active', pwdHash: hashPwd(initPwd, s), pwdSalt: s,
               role: 'owner', perms: [], banned: false, mutedUntil: 0, bio: '', createdAt: now(), updatedAt: now(), lastSeen: now()
             };
             S.users.push(me);
             setMeId(me.id);
-            save(); mo.close(); g.UI.toast('已重置，站长密码为 admin，请立即修改', 'ok');
+            save(); mo.close();
             renderAll();
+            /* 在线模式下重置并未清服务端（见下），提示要说清范围，别让站长以为清干净了 */
+            var onlineLeft = (g.Online && g.Online.isOnline())
+              ? '注意：在线模式下的服务端数据并未清除，重新联网后会同步回来。' : '';
+            forceSetPassword(initPwd, onlineLeft);
           });
         };
         var saveBtn = elc('button', 'btn primary block', '保存站点设置');
@@ -5054,10 +5261,16 @@
       }
     });
     $('btnImg').onclick = function () { $('fileImg').click(); };
-    $('fileImg').onchange = function (e) {
-      var f = e.target.files[0]; if (f) sendMediaFile(f, 'image');
-      e.target.value = '';
-    };
+    /* ⚠ 这里原来绑了一次 change（E-093，考古补回）：
+       取 files[0] 发一张，然后把 value 清空。
+       而下面「多图连发」那段又 addEventListener 绑了一次。
+       **onchange= 先注册、先执行**：它发完第一张就把 value 置空，
+       等第二个处理器跑起来时 files 已经是空的 → 直接 return。
+       于是选 3 张图永远只发出第 1 张，且不提示、不报错。
+
+       更隐蔽的是：单张能发成功，所以用户只会以为"多图不支持"，
+       不会想到是 bug。修法：删掉这个抢占的单图处理器，
+       统一交给下面支持多张的那一个（它内部已处理单张的情况）。 */
     $('btnVideo').onclick = function () { $('fileVideo').click(); };
     $('fileVideo').onchange = function (e) {
       var f = e.target.files[0]; if (f) sendMediaFile(f, 'video');
@@ -5110,6 +5323,19 @@
         if (document.hidden) save(true);
       });
     }
+    /* ⚠ 全局关闭钩子（S-115，成品审查新增）。
+       原来只有上面那两个，且**挂在 if (ta) 里面** —— 输入框不存在就不注册。
+       更要紧的是缺 beforeunload：
+       - 桌面端关标签页/关窗口时，pagehide 在部分浏览器不触发；
+       - 而草稿刚敲完那 800ms 防抖还没到点，正好落在这个窗口里。
+       beforeunload 里做同步保存是唯一能覆盖"直接关窗口"这一路的办法。
+
+       注意：断电、强杀、进程崩溃**任何钩子都拦不住**（页面来不及跑代码），
+       那些场景的丢失窗口取决于落盘频率（心跳 15 秒 + 输入防抖 800ms），
+       不是靠加钩子能解决的 —— 这点要说清楚，不能假装钩子能兜住。 */
+    window.addEventListener('beforeunload', function () {
+      try { save(true); } catch (e) { }
+    });
     /* 语音：点一下开始，再点一下发送；或按住说话 */
     var bv = $('btnVoice');
     if (bv) {
