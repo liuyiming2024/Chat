@@ -53,6 +53,7 @@
       'nav.backHome': '返回首页',
       /* 静态骨架里用到但词典没有的，补上 —— 否则会露出英文 key */
       'logout': '退出',
+      'nav.searchTip': '搜索聊天内容',
       'notice.title': '群公告',
       'notice.empty': '暂无公告',
       'composer.hint': 'Enter 发送 · Shift+Enter 换行 · 支持 Markdown、公式、拖入图片视频',
@@ -169,6 +170,7 @@
       'nav.docs': 'Manual',
       'nav.backHome': 'Back to home',
       'logout': 'Sign out',
+      'nav.searchTip': 'Search messages',
       'notice.title': 'Room notice',
       'notice.empty': 'No notice yet',
       'composer.hint': 'Enter to send · Shift+Enter for newline · Markdown, math, drag & drop supported',
