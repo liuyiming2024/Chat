@@ -307,7 +307,24 @@
       for (i = 0; i < a.length; i++) map[a[i].id] = a[i];
       for (i = 0; i < b.length; i++) {
         var x = b[i], o = map[x.id];
-        if (!o) { map[x.id] = x; changed = true; }
+        if (!o) {
+          map[x.id] = x; changed = true;
+          /* ⚠ 必须在这里调 noteIncoming（E-101，考古找回）。
+             它定义了、函数体也修好了（renderRooms → renderSidebar），
+             但**全仓零处调用** —— 未读不累加、@我不累加、桌面通知不发、
+             标题不闪烁，四件事全死，而界面看上去一切正常。
+
+             这是"修了一半"的典型：有人改了函数内部的 bug，
+             却没检查有没有人调它。 */
+          noteIncoming(x);
+        }
+        /* S-081（考古找回）：原来只处理"新增"和"删除"，没有"内容变了"这一支。
+           后果：A 编辑消息后，B 无论走增量还是全量拉取，看到的永远是旧内容 ——
+           因为 map[x.id] 已经存在，直接跳过不更新。
+           编辑是唯一一个"改了却不生效"的操作，比不提供更容易让人困惑。 */
+        else if (x.text !== o.text || x.editedAt !== o.editedAt) {
+          map[x.id] = x; changed = true;
+        }
         else if (x.deleted && !o.deleted) { map[x.id] = x; }
       }
       S.messages[rid] = Object.keys(map).map(function (k) { return map[k]; })

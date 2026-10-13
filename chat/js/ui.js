@@ -80,7 +80,22 @@
     if (okBtn) okBtn.onclick = function () {
       if (!opts.onOk || opts.onOk(body) !== false) close();
     };
-    return { close: close, body: body };
+    /* ⚠ setTitle 必须返回（E-103，考古找回）。
+       调用方 checkUpdateUI 里写了 mo.setTitle(...)，而这里原本只返回
+       { close, body } —— 「检查更新」弹窗一旦查出有更新就抛 TypeError，
+       界面永远停在「正在检查…」，用户以为没更新。
+       这种"调用方写了、提供方没有"的断链不崩溃、只静默失效。
+
+       标题是 innerHTML 生成的 .modal-head span，没有直接引用，
+       所以这里要查一次 —— 别想当然以为有个现成的 titleEl 变量。
+
+       考古时发现这条条目被整批覆盖丢失过，问题也就一直没修 ——
+       条目丢了，就等于这个问题从未被提出过。 */
+    function setTitle(t) {
+      var el = box.querySelector('.modal-head span');
+      if (el) el.textContent = t;
+    }
+    return { close: close, body: body, setTitle: setTitle };
   }
 
   function confirm(text, onOk) {
