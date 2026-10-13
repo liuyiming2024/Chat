@@ -51,6 +51,12 @@
       'nav.forum': '贴吧',
       'nav.docs': '使用手册',
       'nav.backHome': '返回首页',
+      /* 静态骨架里用到但词典没有的，补上 —— 否则会露出英文 key */
+      'logout': '退出',
+      'notice.title': '群公告',
+      'notice.empty': '暂无公告',
+      'composer.hint': 'Enter 发送 · Shift+Enter 换行 · 支持 Markdown、公式、拖入图片视频',
+      'admin.panel': '管理面板',
 
       /* ---- 门禁 / 登录 ---- */
       'gate.title': '进入',
@@ -162,6 +168,11 @@
       'nav.forum': 'Forum',
       'nav.docs': 'Manual',
       'nav.backHome': 'Back to home',
+      'logout': 'Sign out',
+      'notice.title': 'Room notice',
+      'notice.empty': 'No notice yet',
+      'composer.hint': 'Enter to send · Shift+Enter for newline · Markdown, math, drag & drop supported',
+      'admin.panel': 'Admin panel',
 
       /* ---- Gate / Login ---- */
       'gate.title': 'Enter',
@@ -286,6 +297,13 @@
 
   /* 把页面上所有带 data-i18n 的元素填一遍。
      幂等 —— 切换语言时反复调用即可，不会叠加。 */
+  /* ⚠ 词典有 90 个 key，但 index.html 里 data-i18n 曾经是 **0 处**（S-062 残留）。
+     apply() 遍历 [data-i18n]，一个都找不到 → 切了语言静态界面纹丝不动。
+     接上了线却没用上，等于没接。
+
+     另外原来只支持 data-i18n（正文）和 data-i18n-attr（单个属性），
+     而界面上还有大量 title / placeholder / aria-label 是无障碍与提示的关键
+     —— 不翻译的话，切到英文后鼠标悬停仍弹出中文。 */
   function apply(root) {
     var scope = root || document;
     var nodes = scope.querySelectorAll('[data-i18n]');
@@ -296,6 +314,17 @@
       if (attr) el.setAttribute(attr, val);
       else el.textContent = val;
     });
+    /* 属性类翻译：title / placeholder / aria-label */
+    Array.prototype.forEach.call(
+      scope.querySelectorAll('[data-i18n-title],[data-i18n-ph],[data-i18n-aria]'),
+      function (el) {
+        var k1 = el.getAttribute('data-i18n-title');
+        var k2 = el.getAttribute('data-i18n-ph');
+        var k3 = el.getAttribute('data-i18n-aria');
+        if (k1) el.setAttribute('title', t(k1));
+        if (k2) el.setAttribute('placeholder', t(k2));
+        if (k3) el.setAttribute('aria-label', t(k3));
+      });
     try { document.documentElement.lang = cur; } catch (e) { }
   }
 

@@ -346,9 +346,29 @@
     return { ok: true, qid: item.qid, dropped: dropped, reason: null };
   }
 
+  /* ⚠ 原来不返回、也不检查保存结果（S-043 的残留）。
+     发送成功后调 dequeue 把它从队列里去掉 ——
+     但如果 localStorage 写不进去（配额满），**它其实没被去掉**，
+     而调用方已经 sent++、界面提示"已补发 N 条"。
+     下次联网再 flush，同一条消息会**再发一遍** —— 对方收到两条一模一样的。
+
+     所以：① 返回是否真删掉了；② 删不掉时给这条打标记，
+     下次 flush 跳过它，只尝试再清理一次。
+     不打标记的话它会每次联网都重发，无限刷屏。 */
   function dequeue(qid) {
     var list = outbox().filter(function (x) { return x.qid !== qid; });
-    outboxSave(list);
+    return outboxSave(list);
+  }
+
+  /* 发送成功但没能出队：标记它，避免下次重复发送 */
+  function markStuck(qid) {
+    var list = outbox();
+    var hit = false;
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].qid === qid) { list[i]._sentNoDeq = true; hit = true; }
+    }
+    if (hit) outboxSave(list);
+    return hit;
   }
 
   /* 补发成功后通知界面：把本地临时 id 换成服务端 id。
@@ -378,7 +398,7 @@
   function flushOutbox() {
     var empty = { sent: 0, failed: 0, err: null };
     if (!online) return Promise.resolve(empty);
-    var list = outbox();
+    var list = outbox().filter(function (x) { return !x._sentNoDeq; });
     if (!list.length) return Promise.resolve(empty);
 
     var sent = 0, failed = 0, lastErr = null;
@@ -404,11 +424,21 @@
           p_media: it.media || null, p_name: it.name || '',
           p_size: it.size || 0, p_reply: it.replyTo || null
         }).then(function (res) {
-          dequeue(it.qid);
+          var removed = dequeue(it.qid);
           if (outboxSentHandler && it.localId && res && res.id) {
             try { outboxSentHandler(it.localId, res.id, it); } catch (e) { }
           }
-          sent++;
+          if (removed) {
+            sent++;
+          } else {
+            /* 发出去了，但没从队列里删掉 —— 必须打标记，
+               否则下次 flush 会再发一次，对方看到两条一样的。
+               同时不能算进 sent（那样界面会说"已补发"而实际有隐患），
+               也不能算 failed（消息其实发出去了）。单独记一笔。 */
+            markStuck(it.qid);
+            failed++;
+            lastErr = '已发出，但队列清理失败（存储已满）—— 请清理空间，否则可能重复发送';
+          }
         });
         }).catch(function (e) {
           failed++;
