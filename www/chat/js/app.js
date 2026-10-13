@@ -348,6 +348,8 @@
       onState: function (inS) {
         if (mergeState(inS)) renderAllSoon();
       },
+      /* E-061：接住别人的"正在输入"广播 */
+      onTyping: function (d) { onTypingBroadcast(d); },
       onPatch: function () {
         /* 别的标签改了数据：重读快照并合并 */
         try {
@@ -1084,10 +1086,18 @@
     var now2 = Date.now();
     if (now2 - typingAt < 1500) return;
     typingAt = now2;
-    try {
-      var bc2 = g.__syncBc;
-      if (bc2) bc2.postMessage({ t: 'typing', from: me.id, room: cur, nick: me.nick, at: now2 });
-    } catch (e) { }
+    /* ⚠ 走 Sync 模块提供的通道，不再取 g.__syncBc（E-061）。
+       那个变量零处赋值，原来这段代码从未真正发出过一条广播。 */
+    if (g.Sync && g.Sync.sendTyping) g.Sync.sendTyping({ nick: me && me.nick, room: cur });
+  }
+
+  /* 收到别人"正在输入"的广播 → 显示出来（E-061）。
+     原来 showTyping 定义了但零处调用，广播到了也没人显示。 */
+  function onTypingBroadcast(d) {
+    if (!d || !me) return;
+    if (d.from && d.from === me.id) return;        /* 不看自己的回声 */
+    if (d.room && cur && d.room !== cur) return;   /* 只显示当前房间 */
+    showTyping(d.nick || '有人');
   }
   function showTyping(nick) {
     var bar = $('typingBar');
@@ -1301,8 +1311,13 @@
     document.body.classList.add('mode-' + m);
     var btn = $('btnMode');
     if (btn) {
+      /* ⚠ 文字和 title 必须一致地表达"当前状态 + 点击后的动作"（E-022）。
+         按钮文字写的是**当前**模式（极简/专业），
+         而 title 是『当前：X（点此切到 Y）』——两者必须同步，
+         否则用户看文字是「专业」、看提示是「当前极简」，只会以为功能坏了。 */
       btn.textContent = m === 'simple' ? '极简' : '专业';
       btn.title = m === 'simple' ? '当前：极简模式（点此切到专业）' : '当前：专业模式（点此切到极简）';
+      btn.setAttribute('aria-label', btn.title);
     }
     renderChat();
     if (!silent) g.UI.toast(m === 'simple' ? '已切到极简模式' : '已切到专业模式', 'ok');
@@ -1877,13 +1892,24 @@
   var _earlierTotal = 0;      /* 存模块级：handler 闭包里用旧值会判错 */
   function loadEarlier(total) {
     if (MSG_PAGE >= total) return;
+    /* ⚠ 翻页前先记下"当前顶部那条消息离视口顶端的距离"（E-012，考古补回）。
+       原来注释写的是「翻页后要保持阅读位置，否则视口被顶下去，用户会跳一下，
+       翻几页就彻底迷失了」——**紧接着的下一行就是 sc.scrollTop = 0，
+       正是注释警告的那个做法**。注释和实现对着干。
+
+       正确做法（同一文件里滚动自动加载用的就是它）：
+       先记 scrollHeight，渲染后再按增量补偿 scrollTop。 */
+    var sc0 = $('msgScroll');
+    var before = sc0 ? sc0.scrollHeight : 0;
+    var topBefore = sc0 ? sc0.scrollTop : 0;
     MSG_PAGE += 300;
     renderChat();
-    /* 关键：翻页后要保持阅读位置。
-       否则新内容插到顶部，视口被顶下去，用户会"跳"一下，
-       翻几页就彻底迷失了。 */
     var sc = $('msgScroll');
-    if (sc) sc.scrollTop = 0;
+    if (sc) {
+      var after = sc.scrollHeight;
+      /* 新增内容都插在顶部，所以顶部偏移量就是两次高度之差 */
+      sc.scrollTop = topBefore + (after - before);
+    }
   }
 
   var _scrollHandler = null;
@@ -3787,24 +3813,62 @@
     }
     if (g.ACL.can(me, 'user.ban', r)) {
       btn(u.banned ? '解封账号' : '封禁账号', 'danger', function () {
-        u.banned = !u.banned; touch(u);
-        sysMsg(r.id, '「' + u.nick + '」' + (u.banned ? '已被封禁' : '已被解封'));
-        log(u.banned ? 'ban' : 'unban', u.nick); save();
+        /* ⚠ 封禁必须走服务端（E-075，考古补回）。
+           原来只改本地 u.banned 就 save() —— 在线模式下，
+           下一次拉取会被服务端的 status 反向清掉，封禁等于没做。
+           而用户看到的是「已封禁」，此人照样能登录发言。
+           **封禁是安全动作，只写本地等于没封。**
+           服务端拒了就把本地改回去，不留一个"看着封了其实没封"的状态。 */
+        var next = !u.banned;
+        var prev = u.banned;
+        u.banned = next; touch(u);
+        sysMsg(r.id, '「' + u.nick + '」' + (next ? '已被封禁' : '已被解封'));
+        log(next ? 'ban' : 'unban', u.nick); save();
+        if (g.Online && g.Online.isOnline() && g.Online.userReview) {
+          g.Online.userReview(u.id, next ? 'banned' : 'active').catch(function (e) {
+            u.banned = prev; touch(u); save(true); renderAll();
+            g.UI.toast('封禁同步失败，已还原：' + ((e && e.message) || '网络错误'), 'err');
+          });
+        }
       });
     }
     if (g.ACL.can(me, 'user.grant', r)) {
       btn(u.role === 'admin' ? '撤销管理员' : '设为管理员', '', function () {
-        if (u.role === 'admin') { u.role = 'member'; log('revoke-admin', u.nick); }
-        else { u.role = 'admin'; log('grant-admin', u.nick); }
-        touch(u); sysMsg(r.id, '「' + u.nick + '」' + (u.role === 'admin' ? '已成为管理员' : '已被撤销管理员'));
+        /* ⚠ 必须同步服务端（E-078，考古补回）。
+           roomSettings 里那个入口走 g.Online.setAdmin() 是同步的，
+           而用户卡片里这个只改本地 —— **同一个操作两个入口，一个生效一个不生效**。
+           用户从不同地方点，结果不一样，且都不报错。 */
+        var want = u.role === 'admin' ? 'member' : 'admin';
+        var prevRole = u.role;
+        u.role = want;
+        log(want === 'admin' ? 'grant-admin' : 'revoke-admin', u.nick);
+        touch(u); sysMsg(r.id, '「' + u.nick + '」' + (want === 'admin' ? '已成为管理员' : '已被撤销管理员'));
         save();
+        if (g.Online && g.Online.isOnline() && g.Online.setRole) {
+          g.Online.setRole(u.id, want).catch(function (e) {
+            u.role = prevRole; touch(u); save(true); renderAll();
+            g.UI.toast('管理员设置同步失败，已还原：' + ((e && e.message) || '网络错误'), 'err');
+          });
+        }
       });
     }
     if (me.role === 'owner' && u.id !== me.id) {
       btn('转让站长', 'danger', function () {
         g.UI.confirm('把站长转让给「' + u.nick + '」？你将变为管理员。', function () {
+          /* ⚠ 转让站长必须同步服务端（E-077，考古补回）。
+             原来只改本地，换设备后站长又变回自己 ——
+             **两个人同时以为自己是站长**，且各自的界面都显示自己是。
+             服务端 user_role_set 里已经处理了"原站长降为管理员"这一步，
+             所以只需调一次。 */
+          var prevMe = me.role, prevU = u.role;
           me.role = 'admin'; touch(me); u.role = 'owner'; touch(u);
           sysMsg('public', '站长已转让给「' + u.nick + '」'); log('transfer', u.nick); save(); renderAll();
+          if (g.Online && g.Online.isOnline() && g.Online.setRole) {
+            g.Online.setRole(u.id, 'owner').catch(function (e) {
+              me.role = prevMe; u.role = prevU; touch(me); touch(u); save(true); renderAll();
+              g.UI.toast('转让同步失败，已还原：' + ((e && e.message) || '网络错误'), 'err');
+            });
+          }
         });
       });
     }

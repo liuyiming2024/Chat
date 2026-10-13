@@ -18,6 +18,7 @@
 
   var CHANNEL = 'wxlg_sync_v1';
   var bc = null;
+  var onTypingCb = null;
   var stateKey = null;      /* 状态快照的 localStorage key，由 init 传入 */
   var onStateCb = null;      // 收到他人/他标签的 state 时回调
   var onPatchCb = null;      // 收到单条消息时回调（轻量提示）
@@ -31,6 +32,16 @@
   function init(handlers) {
     onStateCb = handlers && handlers.onState;
     onPatchCb = handlers && handlers.onPatch;
+    /* ⚠ typing 回调必须在这里接（E-061，考古补回）。
+       app.js 的 markTyping 取的是 g.__syncBc，而这个变量**全仓只有那一处读取、
+       零处赋值** —— bc 是本模块私有变量，init() 的返回值 app.js 也没接收。
+       于是"正在输入"广播发出去的是 undefined，postMessage 根本没执行，
+       被 try/catch 静默吞掉。
+
+       同时 showTyping() 定义了但**零处调用** —— 就算广播到了也没人显示。
+       两处任一断掉，这个功能就从未运行过一次。
+       现在统一由本模块提供发送与接收。 */
+    onTypingCb = handlers && handlers.onTyping;
     /* 传了就只监听这一个 key；没传才退回宽松的前缀匹配（兼容旧调用） */
     stateKey = (handlers && handlers.stateKey) || null;
 
@@ -42,6 +53,7 @@
           if (!d || d.from === selfId) return;      // 忽略自己发出的回声
           else if (d.t === 'state' && onStateCb) onStateCb(d.state);
           else if (d.t === 'patch' && onPatchCb) onPatchCb(d);
+          else if (d.t === 'typing' && onTypingCb) onTypingCb(d);
         };
       } catch (e) { bc = null; }
     }
@@ -104,11 +116,20 @@
     return cap;
   }
 
+  /* 广播"正在输入"。轻量、不落盘、不做可靠性保证 ——
+     丢一两条无所谓，它只是个即时状态提示。 */
+  function sendTyping(who) {
+    if (!bc) return false;
+    try { bc.postMessage({ t: 'typing', from: selfId, nick: who && who.nick, room: who && who.room }); return true; }
+    catch (e) { return false; }
+  }
+
   g.Sync = {
     init: init,
     commit: commit,
     ping: ping,
     close: close,
-    capability: capability
+    capability: capability,
+    sendTyping: sendTyping
   };
 })(window);

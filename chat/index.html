@@ -165,7 +165,13 @@
         <div class="ch-sub" id="roomSub">公屏大厅</div>
       </div>
       <div class="ch-actions">
-        <button class="icon-btn mode-btn" id="btnMode" data-i18n="settings.themePro" title="切换极简 / 专业模式" aria-label="切换极简 / 专业模式">专业</button>
+        <!-- ⚠ 不能给这个按钮加 data-i18n（E-022，考古补回）。
+     它的文字是**当前状态**（极简/专业），由 setMode() 动态设置，
+     而 i18n 会把它固定成词典里的「专业」——
+     于是切到极简后按钮文字仍是「专业」，和 title 里
+     「当前：极简模式」自相矛盾。用户看文字以为没切成功。
+     动态状态不该交给静态词典管，故去掉 data-i18n。 -->
+        <button class="icon-btn mode-btn" id="btnMode" title="切换极简 / 专业模式" aria-label="切换极简 / 专业模式">专业</button>
         <!-- ⚠ 深色模式快捷按钮（E-062，考古补回）。
              ariaMap 里写了 btnTheme: '切换深色模式'，但页面上从来没有这个元素 ——
              那行 aria 是残留。主题选项只在管理面板「站点」tab 里，
