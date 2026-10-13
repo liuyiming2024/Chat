@@ -100,8 +100,23 @@
       if (!r.token) throw new Error('登录失败');
       g.SB.setSession(r.token, r.uid);
       online = true;
-      return r;
+      /* ⚠ 登录后必须拉一次服务端权威权限（E-104，考古补回）。
+         syncAcl / ACL.syncFromServer 两个函数都写好了、都导出了，
+         **但全仓零处调用** —— 服务端权限从来没同步回前端。
+         后果：服务端改了某人的权限（撤掉管理权、加了拒绝项），
+         前端仍按本地缓存的角色渲染按钮，用户点下去才被服务端拒绝，
+         甚至出现"按钮在、点了报没权限"的割裂。
+
+         失败不阻断登录（syncAcl 内部已 catch 退回本地判定）——
+         权限同步失败比登不上好，但要在控制台留一句。 */
+      return syncAcl().catch(function () { return null; }).then(function () { return r; });
     });
+  }
+
+  /* 权限同步对外封装（E-104）：供登录后与手动刷新时调用 */
+  function syncAcl() {
+    if (!g.SB || !g.SB.syncAcl) return Promise.resolve(null);
+    return g.SB.syncAcl();
   }
 
   /* ⚠ 第三个参数是"申请说明"（E-058）。
@@ -639,7 +654,7 @@
     bridgeTicket: bridgeTicket,
     bridgeRedeem: bridgeRedeem,
     init: init, probe: probe, isOnline: isOnline, isReachable: isReachable,
-    setup: setup, gate: gate, login: login, register: register,
+    setup: setup, gate: gate, login: login, register: register, syncAcl: syncAcl,
     pull: pull, pullDelta: pullDelta, startPoll: startPoll, stopPoll: stopPoll,
     createRoom: createRoom, updateRoom: updateRoom, joinRoom: joinRoom,
     userReview: userReview, userDelete: userDelete, msgMedia: msgMedia,
