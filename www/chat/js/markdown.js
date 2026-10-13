@@ -11,11 +11,18 @@
 
   /* @提及：把 @昵称 渲染成高亮标签。渲染前已完成 HTML 转义，
      这里只处理纯文本层，不会产生注入。 */
-  function atHighlight(html) {
-    return html.replace(/(^|[\s(（\[，,。.；;：:！!？?])@([^\s@<]{1,16})/g, function (m0, pre, name) {
-      return pre + '<span class="at-mention" data-at="' + esc(name) + '">@' + esc(name) + '</span>';
-    });
-  }
+  /* ⚠ 这个函数是死代码：全项目零处调用（@ 高亮实际走 atWalk，
+     它在 DOM 层面遍历文本节点，不会破坏已有标签）。
+     留着的害处不是占几行，而是**误导**：
+     后来人改 @ 逻辑时会先改这里，改完发现界面毫无变化，
+     以为自己改错了，来回折腾；真正的实现在下面 300 行处，
+     不看完全文根本注意不到。
+
+     另一个隐患：它是"在 HTML 字符串上做正则替换"，
+     一旦有人调用它，就会把 <a href="..."> 这类标签内部的 @ 也替掉，
+     产出畸形 HTML。**留一个错了才被调用的函数比删掉更危险。** */
+  /* eslint-disable-next-line no-unused-vars */
+  var _atHighlightRemoved = 'at 高亮请用 atWalk()，不要在此处做字符串替换';
 
   /* 极简代码高亮：仅对关键字/字符串/注释/数字着色，不引入任何第三方库 */
   var KEYWORDS = ('auto break case char const continue default do double else enum extern float for goto if inline int long '
