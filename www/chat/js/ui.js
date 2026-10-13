@@ -24,7 +24,24 @@
     if (!el) {
       el = document.createElement('div');
       el.id = 'toast';
-      document.body.appendChild(el);
+      /* ⚠ 必须挂进 .toast-wrap（E-096，考古找回）。
+         CSS 里 .toast-wrap 写了完整定位（fixed / top 18px / 居中 / z-index 1200 /
+         pointer-events:none），而 .toast 本身**只有颜色、没有任何定位**。
+         原来直接 appendChild 到 body —— 提示条是 body 最后一个普通 div，
+         掉在页面最底部，用户做完全部操作都看不到反馈在哪。
+
+         更讽刺的是 CSS 注释专门写了「提示层不该拦截点击，吞掉点击表现为
+         点了没反应」，定位写好了却没人用，这条注释也就白写了。
+
+         顺带：包一层容器后 pointer-events:none 才真的生效，
+         提示条不再吞掉下方内容的点击。 */
+      var tw = document.querySelector('.toast-wrap');
+      if (!tw) {
+        tw = document.createElement('div');
+        tw.className = 'toast-wrap';
+        document.body.appendChild(tw);
+      }
+      tw.appendChild(el);
     }
     el.className = 'toast show' + (type ? ' toast-' + type : '');
     el.textContent = msg;

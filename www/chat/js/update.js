@@ -206,16 +206,27 @@
           return fetchRange(url, r[0], r[1]).then(function (buf) {
             loaded += buf.length;
             tick();
-            return { start: r[0], buf: buf };
+            return { start: r[0], end: r[1], buf: buf };
           });
         })).then(function (chunks) {
           chunks.sort(function (a, b) { return a.start - b.start; });
+          /* S-097（考古补回）：分片完整性校验，见下方两处 throw */
           /* ⚠ 原来不校验拼出来的总长度。
              任何一片少给几个字节（代理截断、连接中断后被当成完整响应），
              后面就全是 0 —— 文件大小看起来完全正确，
              装上去却是坏的，而且**没有任何报错**。
              这是最难排查的一类：下载成功、进度 100%、安装失败。
              差一个字节都要立刻报错，让用户重下一次。 */
+          /* 每片也要校验：总长对不代表每片都对（两片互相错位可以凑出正确总长）。
+             短分片会让后续所有数据的偏移整体前移，拼出来的文件能过总长检查，
+             但内容是错乱的 —— 装上去才发现问题就晚了。 */
+          chunks.forEach(function (c, idx) {
+            var want = c.end - c.start + 1;
+            if (c.buf.byteLength !== want) {
+              throw new Error('分片不完整：第 ' + (idx + 1) + '/' + chunks.length +
+                ' 段应得 ' + want + ' 字节，实得 ' + c.buf.byteLength + ' 字节');
+            }
+          });
           var got = 0;
           chunks.forEach(function (c) { got += c.buf.byteLength; });
           if (got !== size) {

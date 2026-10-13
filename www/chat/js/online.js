@@ -534,6 +534,21 @@
     return g.SB.rpc('msg_edit', { p_id: id, p_body: body }).then(function () { return true; });
   }
 
+  /* ⚠ 撤回必须调服务端（S-082，考古找回）。
+     服务端的 msg_delete 早就写好了（含自己的 5 分钟时限、
+     别人的 msg.remove 权限点、审计日志），**但前端从未调用过它** ——
+     doRemove 只改本地 m.deleted 然后 save()。
+
+     后果：界面弹「已撤回」，其他人那里消息原样在。
+     **撤回是带时效承诺的操作：用户以为 5 分钟内撤回了，
+     实际上对方永远看得到，而且自己下次拉取还会被服务端覆盖回来。**
+
+     这是"服务端备好了、前端没接"，跟 changePwd、data-mid 同一族。 */
+  function deleteMsg(id) {
+    if (!isOnline()) return Promise.resolve(false);
+    return g.SB.rpc('msg_delete', { p_id: id }).then(function () { return true; });
+  }
+
   /* ---------------- 房间 ----------------
    * 建群/改群名/加人/踢人/设管理员：一律走带鉴权的 RPC。
    * 不能整包写回（state_put 在服务端不存在，且会绕过全部权限校验）。
@@ -635,7 +650,7 @@
     setMute: setMute, setPerms: setPerms, setRole: setRole,
     prepareMedia: prepareMedia, commitMedia: commitMedia, mediaUrl: mediaUrl,
     uploadMedia: uploadMedia,
-    sendMsg: sendMsg, editMsg: editMsg, convert: convert,
+    sendMsg: sendMsg, editMsg: editMsg, deleteMsg: deleteMsg, convert: convert,
     joinRoom: joinRoom, createRoom: createRoom, updateRoom: updateRoom,
     enqueue: enqueue, flushOutbox: flushOutbox, outbox: outbox, dequeue: dequeue,
     outboxOnSent: outboxOnSent, outboxSetMediaResolver: outboxSetMediaResolver,

@@ -1600,7 +1600,7 @@
       img.src = src || 'data:image/svg+xml;utf8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="120" height="90"><rect width="120" height="90" fill="#eee"/></svg>');
       img.onclick = function () { g.UI.lightbox(img.src, 'image', m.name); };
       wrap.appendChild(img);
-    } else {
+    } else if (m.type === 'video') {
       var v = elc('video', 'thumb');
       v.preload = 'metadata';
       v.src = src;
@@ -1612,6 +1612,12 @@
       play.onclick = function () { g.UI.lightbox(v.src, 'video', m.name); };
       wrap.appendChild(play);
     }
+    /* ⚠ 这里原来是 `} else {`，无条件兜底（E-092，考古找回）。
+       后果：voice 和 file 消息都会先走 else 创建出一个空的 <video>，
+       然后才追加各自的 voiceNode / 下载按钮 ——
+       发一条语音，界面上出现一个空的视频框 + 语音条；
+       发一个文件，出现一个空的视频框 + 下载按钮。
+       改成 else if 后，非 image 且非 video 的类型不再凭空造 video 元素。 */
     if (m.type === 'voice') { wrap.appendChild(voiceNode(m)); }
     var cap = elc('div', 'media-cap', (m.name || '媒体') + (m.size ? ' · ' + g.Media.fmtSize(m.size) : ''));
     if (m.type === 'file') {
@@ -1773,12 +1779,35 @@
       if ((serverNowSafe() - (m.ts || 0)) >= RECALL_MS) { g.UI.toast('超过 5 分钟，不能撤回了', 'err'); return; }
       m.deleted = true; m.removedBy = null;
       log('recall', '撤回自己的消息', r.id);
-      save(); g.UI.toast('已撤回', 'ok');
+      save();
+      /* 同步服务端（S-082）。失败必须改口 ——
+         「已撤回」是对别人的承诺，服务端没撤成就说了等于骗人。 */
+      if (g.Online && g.Online.deleteMsg) {
+        g.Online.deleteMsg(m.id).then(function (done) {
+          if (done) { g.UI.toast('已撤回', 'ok'); return; }
+          g.UI.toast('本机已撤回，但服务端没能同步，其他人仍看得到', 'err');
+        }).catch(function (e) {
+          g.UI.toast('撤回失败：' + g.UI.esc((e && e.message) || '未知原因'), 'err');
+        });
+      } else {
+        g.UI.toast('已撤回', 'ok');
+      }
     } else if (mode === 'remove') {
       if (m.from === me.id) { g.UI.toast('自己的消息请点「撤回」', 'err'); return; }
       m.deleted = true; m.removedBy = me.id;
       log('remove', '移除「' + nick(findUser(m.from)) + '」的消息', r.id);
-      save(); g.UI.toast('已移除该消息', 'ok');
+      save();
+      /* 同上：管理员移除对别人同样生效，必须同步服务端 */
+      if (g.Online && g.Online.deleteMsg) {
+        g.Online.deleteMsg(m.id).then(function (done) {
+          if (done) { g.UI.toast('已移除该消息', 'ok'); return; }
+          g.UI.toast('本机已移除，但服务端没能同步', 'err');
+        }).catch(function (e) {
+          g.UI.toast('移除失败：' + g.UI.esc((e && e.message) || '未知原因'), 'err');
+        });
+      } else {
+        g.UI.toast('已移除该消息', 'ok');
+      }
     } else if (mode === 'hide') {
       /* 删除：只把当前账号加入隐藏名单，消息对别人仍然可见 */
       m.hiddenFor = m.hiddenFor || [];
@@ -1789,9 +1818,21 @@
     } else {
       /* delete：原有的删除，全站生效——所有人都不再看到内容 */
       m.deleted = true;
-      log('delete', 'delete 消息（来自「' + nick(findUser(m.from)) + '」）', r.id);
+      log('delete', '删除消息（来自「' + nick(findUser(m.from)) + '」）', r.id);
       save();
-      g.UI.toast('已 delete', 'ok');
+      /* ⚠ 原来这里写的是英文调试串「已 delete」（S-091，考古找回）。
+         同一组操作里旁边写的是「已撤回」「已删除（仅你这里不再显示）」，
+         唯独这条混进一个没翻译的英文原词，用户会以为出了什么错。 */
+      if (g.Online && g.Online.deleteMsg) {
+        g.Online.deleteMsg(m.id).then(function (done) {
+          if (done) { g.UI.toast('已删除', 'ok'); return; }
+          g.UI.toast('本机已删除，但服务端没能同步', 'err');
+        }).catch(function (e) {
+          g.UI.toast('删除失败：' + g.UI.esc((e && e.message) || '未知原因'), 'err');
+        });
+      } else {
+        g.UI.toast('已删除', 'ok');
+      }
     }
   }
 
@@ -2386,13 +2427,27 @@
     var media = obj && obj.media || {};
     var ids = Object.keys(media);
     var i = 0;
+    var mediaFailed = [];   /* S-096：存不下的媒体 id，末尾要如实报出来 */
     var step = function () {
       if (i >= ids.length) {
         S = obj.state; save(true);
+        /* 末尾如实提示：全成功才说「恢复成功」，缺了就说缺了几个 */
+        if (mediaFailed.length) {
+          g.UI.toast('状态已恢复，但有 ' + mediaFailed.length + ' 个媒体没能存下（共 ' +
+            ids.length + ' 个），这些图片视频会显示不出来', 'err', 6000);
+        }
         return Promise.resolve(true);
       }
       var id = ids[i++];
-      return g.Media.put(id, media[id]).catch(function () { }).then(step);
+      /* ⚠ 存不下必须计数并如实告知（S-096，考古找回）。
+         原来这里是个空 catch —— 单个媒体存失败被吞掉，循环继续，
+         末尾照样提示「恢复成功」。用户以为全恢复了，
+         实际缺了若干图片视频，而且不知道缺了几个、是哪些。
+
+         **备份恢复的最后一句提示必须是真的**，否则它就是个假的完成信号。 */
+      return g.Media.put(id, media[id]).catch(function () {
+        mediaFailed.push(id);
+      }).then(step);
     };
     return step();
   }

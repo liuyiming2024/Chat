@@ -78,6 +78,7 @@ set search_path = public, extensions, pg_temp as $$
 $$;
 
 -- 发新帖（必须登录）
+-- ⚠ S-106（考古补回）：写操作一律 auth_require()，S-107：作者名取自账号不取自客户端
 create or replace function forum_post(p_title text, p_body text, p_author text)
 returns uuid language plpgsql volatile security definer
 set search_path = public, extensions, pg_temp as $$
@@ -89,10 +90,17 @@ begin
   if length(coalesce(p_body, '')) > 20000 then raise exception '正文过长（上限 20000 字）'; end if;
 
   -- 显示名优先用账号昵称，避免冒名
+  /* ⚠ 显示名强制取账号昵称，不再信任客户端传来的 p_author（S-107，考古找回）。
+     原来写的是 coalesce(传入的 p_author, 账号昵称) ——
+     **传入值优先**，于是任何人都能顶着别人的名字发帖，
+     配合"作者名是公开信息"这一点，伪造毫无成本。
+
+     修法：直接用账号昵称，把 p_author 参数彻底忽略。
+     参数留着是为了兼容旧调用方，不再参与取值。 */
   select u.nick into nick from users u where u.id = uid;
+  if nick is null or length(trim(nick)) = 0 then nick := '匿名'; end if;
   insert into forum_posts (title, body, author, author_id)
-  values (trim(p_title), coalesce(p_body, ''),
-          coalesce(nullif(trim(coalesce(p_author, '')), ''), nick, '匿名'), uid)
+  values (trim(p_title), coalesce(p_body, ''), nick, uid)
   returning id into newid;
   return newid;
 end;
@@ -111,10 +119,11 @@ begin
   if length(trim(coalesce(p_body, ''))) = 0 then raise exception '回复内容不能为空'; end if;
   if length(coalesce(p_body, '')) > 10000 then raise exception '回复过长（上限 10000 字）'; end if;
 
+  /* 同上：回复的作者名同样强制取账号昵称，不信任 p_author */
   select u.nick into nick from users u where u.id = uid;
+  if nick is null or length(trim(nick)) = 0 then nick := '匿名'; end if;
   insert into forum_replies (post_id, body, author, author_id)
-  values (p_post, trim(p_body),
-          coalesce(nullif(trim(coalesce(p_author, '')), ''), nick, '匿名'), uid)
+  values (p_post, trim(p_body), nick, uid)
   returning id into newid;
   return newid;
 end;
