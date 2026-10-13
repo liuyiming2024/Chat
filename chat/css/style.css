@@ -1615,3 +1615,17 @@ body.dark .msg-edited { color: #6f7889; }
   padding: 0 4px; cursor: help;
 }
 body.dark .msg-pending { color: #d8b34a; }
+
+/* 「未发出」：与「待发送」区分开。
+   待发送是"排队中，迟早会发"；未发出是"根本没排上队，不会自动发"。
+   两者混用一个样式，用户就分不清哪条需要自己动手。
+   用红色 + 可点击，明确表示"这条要你处理"。 */
+.msg-failed {
+  display: inline-block; margin-left: 6px;
+  font-size: 11px; color: #c0392b;
+  border: 1px solid currentColor; border-radius: 3px;
+  padding: 0 4px; cursor: pointer;
+}
+.msg-failed:hover { background: #c0392b; color: #fff; }
+body.dark .msg-failed { color: #e8735f; }
+body.dark .msg-failed:hover { background: #e8735f; color: #1a1d21; }

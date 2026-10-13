@@ -616,7 +616,23 @@
              这两个是两套凭据，混在一起就会变成"记住了却还是要输"的困惑。 */
           '<label class="remember-row"><input type="checkbox" id="lRemember"' + (rememberOn() ? ' checked' : '') +
           '> 记住账号（30 天内不用再输账号密码）</label>' +
-          '<button class="btn primary block" id="lOk">登录</button>';
+          '<button class="btn primary block" id="lOk">登录</button>' +
+          /* ⚠⚠ 这个容器原来不存在：renderBridge() 里写着
+             var box = pane.querySelector('#bridgeBox'); if (!box) return;
+             而全项目**没有任何地方创建过 bridgeBox**。
+
+             后果：装了桌面版且已登录的用户，打开网页版时
+             看不到那个"检测到这台电脑上已登录 XXX，直接以该身份进入"的按钮 ——
+             只能手动输账号密码。bridge.js 的探测、票据兑换、
+             服务端的 bridge_ticket_redeem 全都是好的，
+             就是最后这个容器没人建。
+
+             和 btnSearchMsg 是同一类：功能做完没接上入口，
+             `if (!box) return` 让它静默失效，不报错也不崩溃。 */
+          /* 类名必须是 bridge-box：CSS 里的 .bridge-box 提供上间距，
+             .bridge-box.hidden 负责隐藏。只写 hidden 虽然也能藏住
+             （全局 .hidden 带 !important），但排版会贴着上面的按钮。 */
+          '<div id="bridgeBox" class="bridge-box hidden"></div>';
         var ok = function () {
           /* 在线模式：登录走服务端。本地根本没有 pwdHash（服务端从不返回）。
              这段必须放在本地校验之前 —— 服务端用户的 pwdHash 是空的，
@@ -996,7 +1012,19 @@
     if (m.room !== cur) {
       unread[m.room] = (unread[m.room] || 0) + 1;
       if (isAtMe(m)) atMe[m.room] = (atMe[m.room] || 0) + 1;
-      renderRooms();
+      /* ⚠⚠ renderRooms() **全项目没有定义**（正确的名字是 renderSidebar）。
+         每收到一条别人发来的、不在当前房间的消息，这里就抛 ReferenceError。
+
+         后果链：
+           ① 房间列表不重绘 —— 未读红点要等到别处偶然触发 renderSidebar 才出现，
+              用户以为没新消息；
+           ② 抛出后 noteIncoming 后续逻辑中断；
+           ③ 错误继续往调用方冒泡，可能打断整条消息处理流程。
+
+         这是"写了调用、忘了定义"，和 data-mid（写了读、忘了写）、
+         btnSearchMsg（写了引用、忘了建入口）是同一家族 ——
+         都是**不崩溃、只是功能悄悄消失或半途中断**。 */
+      renderSidebar();
     } else if (isAtMe(m)) {
       g.UI.toast('有人 @ 了你', 'ok');
     }
@@ -1440,6 +1468,40 @@
         pd.title = '联网后自动发出';
         bubble.appendChild(pd);
       }
+      /* ⚠ m.failed 被设置了（存入队列失败时），但**渲染层从来没用过它**。
+         后果：那条消息看起来和正常发出去的一模一样 ——
+         没有"待发送"、没有失败标记。
+         当时弹过一句 toast，2 秒就没了；
+         之后用户翻回这段聊天，只看到一条普通消息，
+         以为对方收到了，实际上它永远不会发出去。
+
+         **静默丢失比丢消息本身更糟**：丢了还有机会重发，
+         以为发出去了则连补救的机会都没有。
+         所以这里必须给出持久可见的标识，并且能点一下重试。 */
+      if (m.failed && !m.pending) {
+        var fd = elc('span', 'msg-failed', '未发出');
+        fd.title = '点击重试';
+        fd.style.cursor = 'pointer';
+        fd.onclick = function () {
+          delete m.failed;
+          m.pending = true;
+          if (g.Online && g.Online.enqueue) {
+            var rr = g.Online.enqueue({
+              room: m.room, type: m.type, body: m.text || '', localId: m.id,
+              mediaId: m.mediaId || null, name: m.name || '', size: m.size || 0,
+              replyTo: m.replyTo || null
+            });
+            if (!rr || rr.ok === false) {
+              m.pending = false; m.failed = true;
+              g.UI.toast('重试失败：' + ((rr && rr.reason === 'quota') ? '存储已满' : '队列写入失败'), 'err');
+            } else {
+              g.UI.toast('已重新加入待发送队列', 'ok');
+            }
+          }
+          save(); renderChat();
+        };
+        bubble.appendChild(fd);
+      }
       /* 已编辑角标：不标的话，别人看到的内容和记忆里不一样却无从察觉，
          还以为是自己的问题。 */
       if (m.editedAt) {
@@ -1624,7 +1686,34 @@
     if (g.Online && g.Online.isOnline && g.Online.isOnline()) {
       g.Online.sendMsg(cur, 'text', text, null, '', 0, m.replyTo || null)
         .catch(function (e) {
-          g.UI.toast('发送失败：' + (e && e.message ? e.message : '网络错误'), 'err');
+          /* ⚠ 原来只弹一句 toast 就完了。
+             而这条消息**已经 pushMsg 显示到聊天里了** ——
+             toast 几秒后消失，消息却原样留在那儿，
+             看上去和发出去的一模一样。
+
+             用户以为对方收到了，其实没有；
+             而且它没进队列，永远不会补发。
+             **静默丢失**：丢了还以为成功了，连重发的机会都没有。
+
+             正确做法：在线发送失败 = 此刻实际处于离线，
+             那就走和离线一样的路径 —— 入队等补发。
+             入队也失败才标 failed（红色「未发出」，可点击重试）。 */
+          var why = (e && e.message) ? e.message : '网络错误';
+          if (g.Online && g.Online.enqueue) {
+            var rr = g.Online.enqueue({
+              room: cur, type: 'text', body: text, media: null,
+              name: '', size: 0, replyTo: m.replyTo || null, localId: m.id
+            });
+            if (rr && rr.ok !== false) {
+              m.pending = true;
+              save(); renderChat();
+              g.UI.toast('暂时没发出去，已加入待发送队列（' + why + '），联网后自动补发', 'err', 6000);
+              return;
+            }
+          }
+          m.failed = true;
+          save(); renderChat();
+          g.UI.toast('发送失败且未能入队：' + why + '。这条消息标记为「未发出」，可点击重试。', 'err', 8000);
         });
     } else if (g.Online && g.Online.enqueue) {
       /* localId 必须带上：补发成功时要用它把本地临时 id 换成服务端 id，
@@ -1803,7 +1892,21 @@
          用户看到一条标着"已编辑"但内容没变的消息，非常费解。 */
       m.editedAt || 0,
       (m.hiddenFor && m.hiddenFor.indexOf(me && me.id) >= 0) ? 1 : 0,
-      (r.pinned && r.pinned.indexOf(m.id) >= 0) ? 1 : 0
+      (r.pinned && r.pinned.indexOf(m.id) >= 0) ? 1 : 0,
+      /* ⚠ pending / failed 必须进指纹。
+         这两个直接决定消息旁边是否显示「待发送」角标。
+         原来不在指纹里，于是：
+           消息入队 → 渲染出「待发送」→ 节点进缓存；
+           联网补发成功 → pending 置 false → 指纹**没变** →
+           cachedMsgNode 命中旧缓存，直接复用那个还挂着「待发送」的节点。
+
+         结果：消息明明已经发出去了，界面上一直挂着「待发送」。
+         用户以为没发出去，很可能再发一遍 —— 对方收到两条一样的。
+
+         这类 bug 的特点是不报错：逻辑全对、状态也改了，
+         只是渲染层复用了过期节点。 */
+      m.pending ? 1 : 0,
+      m.failed ? 1 : 0
     ].join('\u0001');
   }
 
@@ -3217,7 +3320,7 @@
         if (!g.Notifier) { g.UI.toast('通知模块未加载', 'err'); return; }
         g.Notifier.setRoomMuted(r.id, !g.Notifier.roomMuted(r.id));
         g.UI.toast(g.Notifier.roomMuted(r.id) ? '已开启免打扰（仍会收到消息，只是不提醒）' : '已关闭免打扰', 'ok');
-        renderRooms(); renderDndTip();
+        renderSidebar(); renderDndTip();
       }]);
     if (g.ACL.can(me, 'room.manage', r)) {
       /* 「生成邀请口令」入口：默认给成员，但被单独禁掉的看不到。
@@ -3807,7 +3910,7 @@
         row.innerHTML = '<span>' + g.UI.esc(r ? roomTitleOf(r) : rid) + '</span>';
         var b = elc('button', 'btn ghost sm', '取消静音');
         b.type = 'button';
-        b.onclick = function () { N.setRoomMuted(rid, false); notifySettings(); renderRooms(); };
+        b.onclick = function () { N.setRoomMuted(rid, false); notifySettings(); renderSidebar(); };
         row.appendChild(b);
         d.appendChild(row);
       });

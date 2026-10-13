@@ -166,6 +166,19 @@
       </div>
       <div class="ch-actions">
         <button class="icon-btn mode-btn" id="btnMode" data-i18n="settings.themePro" title="切换极简 / 专业模式" aria-label="切换极简 / 专业模式">专业</button>
+        <!-- ⚠ 这个按钮原来不存在：app.js 里写着
+             var sbtn = $('btnSearchMsg'); if (sbtn) sbtn.onclick = ...
+             而全项目没有任何地方创建过 btnSearchMsg 这个 id。
+             if (sbtn) 的保护让它**静默失效** —— 不报错、不崩溃，
+             只是这个功能永远打不开。
+
+             消息搜索本身是完整实现好的（防抖、截断说明、跳转定位都有），
+             但用户根本点不到它。功能做完了没接上入口，等于没做。 -->
+        <!-- 只标 title / aria-label，不打 data-i18n：
+             apply() 对 data-i18n 是 el.textContent = 译文，
+             会把按钮里的 svg 图标整个冲掉，只剩文字。
+             纯图标按钮一律走属性翻译。 -->
+        <button class="icon-btn" id="btnSearchMsg" data-i18n-title="nav.searchTip" data-i18n-aria="nav.searchTip" title="搜索聊天内容" aria-label="搜索聊天内容"><svg class="ic" aria-hidden="true"><use href="#i-search"/></svg></button>
         <button class="icon-btn" id="btnRoomSet" title="会话设置" aria-label="会话设置"><svg class="ic" aria-hidden="true"><use href="#i-settings"/></svg></button>
         <button class="icon-btn" id="btnMembers" title="成员面板" aria-label="成员面板"><svg class="ic" aria-hidden="true"><use href="#i-members"/></svg></button>
       </div>
