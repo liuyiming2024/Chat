@@ -1312,11 +1312,21 @@
   function renderMsg(m, r) {
     if (m.type === 'system') {
       var s = elc('div', 'sys-bubble', m.text);
+      s.setAttribute('data-mid', m.id);
       return s;
     }
     var u = findUser(m.from);
     var mine = m.from === me.id;
     var row = elc('div', 'msg-row' + (mine ? ' me' : ''));
+    /* ⚠⚠ data-mid 被两处查询（置顶消息点击定位、搜索结果跳转），
+       但**从来没有地方设置过它** —— 全项目零处赋值。
+       于是那两个 querySelector 永远返回 null，
+       点击后静默什么也不做。
+
+       这是最典型的一类"写了读、忘了写"：读的那两处都加了 if (nd) 保护，
+       所以不报错、不崩溃，只是功能完全不存在。
+       用户点了置顶消息没反应，只会以为这个按钮是装饰。 */
+    row.setAttribute('data-mid', m.id);
     row.appendChild(g.UI.avatar(u, 'md'));
     var body = elc('div', 'msg-body');
     var head = elc('div', 'msg-head');
@@ -2434,12 +2444,34 @@
         it.innerHTML = '<div class="search-meta">' + g.UI.esc(u ? u.nick : '未知') +
           ' · ' + g.UI.esc(rn ? rn.name : h.rid) + ' · ' + g.UI.fmtFull(h.m.ts) + '</div>' +
           '<div class="search-body">' + g.UI.esc(h.txt.slice(0, 120)) + '</div>';
+        /* ⚠ 原来只等 200ms 找一次节点，找不到就**什么都不做**（S-078）。
+           渲染只画最近 MSG_PAGE(300) 条，搜到的常常是更早的消息 ——
+           节点根本不在 DOM 里。
+           表现：点搜索结果，房间切换了，但没跳到那条消息，
+           界面毫无提示，用户以为"点错了"或"搜索坏了"。
+
+           改成：找不到就继续往上翻页再找，最多翻到全部载入；
+           真的找不到（比如消息已被删除）也要说一句，不能无声。 */
         it.onclick = function () {
           openRoom(h.rid);
-          setTimeout(function () {
+          var tries = 0;
+          (function locate() {
             var nd = document.querySelector('[data-mid="' + h.m.id + '"]');
-            if (nd) { nd.scrollIntoView({ block: 'center' }); nd.classList.add('flash'); setTimeout(function () { nd.classList.remove('flash'); }, 1200); }
-          }, 200);
+            if (nd) {
+              nd.scrollIntoView({ block: 'center' });
+              nd.classList.add('flash');
+              setTimeout(function () { nd.classList.remove('flash'); }, 1200);
+              return;
+            }
+            var total = ((S.messages && S.messages[h.rid]) || []).length;
+            if (tries++ < 20 && MSG_PAGE < total) {
+              MSG_PAGE += 300;
+              renderChat();
+              setTimeout(locate, 30);
+              return;
+            }
+            g.UI.toast('已切到该会话，但没能定位到这条消息（可能已被撤回或删除）', 'err', 4000);
+          })();
         };
         box.appendChild(it);
       });
@@ -2821,11 +2853,22 @@
         return;
       }
       case 'sys': {
-        if (me.role !== 'owner' && me.role !== 'admin') { g.UI.toast('仅管理员可用', 'err'); return; }
+        /* ⚠ 原来判的是 role（owner/admin），而权限表里明明有 sys.notice 这一项，
+           管理员面板也能逐项勾选它。
+           结果：**站长把某个管理员的「发布全站公告」关掉，
+           他照样能发** —— 界面上显示已收回，实际没生效。
+           这和 acl.js 开头写的原则直接冲突：
+           "管理员只是称号，能做什么完全由逐项勾选决定"。
+           收回了却还有效，比一开始就不给这个开关更糟，
+           因为站长以为已经收回去了，不会再盯。 */
+        if (!g.ACL.can(me, 'sys.notice')) { g.UI.toast('没有发布全站公告的权限', 'err'); return; }
         S.rooms.forEach(function (x) { sysMsg(x.id, '【系统公告】' + rest); });
         log('sys', rest); save(); return;
       }
-      case 'env': envModal(); return;
+      case 'env':
+        /* 同理：权限表里有 sys.env，但原来谁都能跑。 */
+        if (!g.ACL.can(me, 'sys.env')) { g.UI.toast('没有查看运行环境的权限', 'err'); return; }
+        envModal(); return;
       default:
         g.UI.toast('未知命令 /' + cmd + '，输入 /help 查看帮助', 'err');
     }
@@ -4388,7 +4431,12 @@
           fr.readAsText(f);
         };
         sd.querySelector('#stImport').onclick = function () { sd.querySelector('#stFile').click(); };
-        sd.querySelector('#stEnv').onclick = function () { envModal(); };
+        /* 这个面板会显示部署形态、用户数、房间数、消息总数、快照体积。
+           权限表里既然有 sys.env，就该真的按它来 —— 收回后仍能看到等于没收回。 */
+        sd.querySelector('#stEnv').onclick = function () {
+          if (!g.ACL.can(me, 'sys.env')) { g.UI.toast('没有查看运行环境的权限', 'err'); return; }
+          envModal();
+        };
         sd.querySelector('#stExportChat').onclick = function () { exportDialog(); };
         sd.querySelector('#stClean').onclick = function () { mediaCleanDialog(); };
         sd.querySelector('#stUnhide').onclick = function () {
