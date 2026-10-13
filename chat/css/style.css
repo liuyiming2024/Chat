@@ -355,6 +355,13 @@ input, textarea, select { font-family: inherit; font-size: 14px; }
   .msg-acts { opacity: 1; }
 }
 .msg-row.me .msg-acts { justify-content: flex-end; }
+.msg-act.disabled, .msg-act:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+  /* 禁用的按钮也要能被 hover 出 title —— 否则用户点了没反应，
+     连解释都看不到。不设 pointer-events:none 就是为了这个。 */
+}
+
 .msg-act {
   border: 0;
   background: transparent;

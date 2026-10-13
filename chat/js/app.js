@@ -1551,11 +1551,25 @@
         bE.onclick = function () { doEdit(m, r); };
         acts.appendChild(bE);
       }
-      /* 撤回：作者本人，限时 RECALL_MS 内 */
-      if (mine && g.ACL.can(me, 'msg.recall', r) && (serverNowSafe() - (m.ts || 0)) < RECALL_MS) {
-        var bR = elc('button', 'msg-act', '撤回');
-        bR.onclick = function () { doRemove(m, 'recall'); };
-        acts.appendChild(bR);
+      /* 撤回：作者本人，限时 RECALL_MS 内。
+         ⚠ 超时后不能让按钮凭空消失（E-064，考古补回）。
+         原来超时就整个不渲染 —— 用户过了 6 分钟想撤回，
+         发现按钮没了，不知道是超了时限，只会以为功能坏了或自己没权限。
+         **功能不可用要给出原因，不给原因就等于让人猜。**
+         这里渲染一个禁用按钮，title 说明时限已过。 */
+      if (mine && g.ACL.can(me, 'msg.recall', r)) {
+        var leftMs = RECALL_MS - (serverNowSafe() - (m.ts || 0));
+        if (leftMs > 0) {
+          var bR = elc('button', 'msg-act', '撤回');
+          bR.onclick = function () { doRemove(m, 'recall'); };
+          bR.title = '发送后 ' + Math.ceil(RECALL_MS / 60000) + ' 分钟内可撤回';
+          acts.appendChild(bR);
+        } else {
+          var bRx = elc('button', 'msg-act disabled', '撤回');
+          bRx.disabled = true;
+          bRx.title = '已超过 ' + Math.ceil(RECALL_MS / 60000) + ' 分钟，不能撤回了';
+          acts.appendChild(bRx);
+        }
       }
       /* 移除：管理员处置他人消息（不限时） */
       if (!mine && g.ACL.can(me, 'msg.remove', r)) {
@@ -1834,6 +1848,16 @@
         g.UI.toast('已删除', 'ok');
       }
     }
+  }
+
+  /* 按 MIME 判媒体类型：图片 / 视频 / 其余一律文件（E-060）。
+     音频要单独看 —— 浏览器对 audio/* 的识别比 video/* 稳定，
+     而且语音消息走的是 voice 类型，不该被塞进 image 分支。 */
+  function mediaKindOf(f) {
+    var t = (f && f.type) || '';
+    if (/^image\//.test(t)) return 'image';
+    if (/^video\//.test(t)) return 'video';
+    return 'file';
   }
 
   /* 该消息对「我」是否可见：被隐藏或已被撤回/移除都算不可见 */
@@ -3014,14 +3038,31 @@
         if (!g.ACL.can(me, 'user.mute', r)) { g.UI.toast('没有禁言权限', 'err'); return; }
         var min = parseInt(p[1] || '10', 10) || 10;
         if (g.ACL.roomRole(u2, r) === 'roomAdmin' && g.ACL.roomRole(me, r) !== 'roomOwner' && me.role !== 'owner') { g.UI.toast('不能禁言同级管理员', 'err'); return; }
-        u2.mutedUntil = now() + min * 60000; touch(u2);
-        syncMute(u2, min);
-        sysMsg(cur, '「' + u2.nick + '」被禁言 ' + min + ' 分钟'); log('mute', u2.nick + ' ' + min + '分钟', r.id); save(); return;
+        /* ⚠ 在群里 /mute 只应禁言这个群，不该全站禁言（E-068/E-069，考古补回）。
+           原来设的是 u2.mutedUntil（users 表的全站禁言），
+           而 canSpeak 里 muted(user) 不区分房间 —— 此人此后在所有房间都不能说话。
+           用户是在某个群里操作的，语义上就是"在这个群别说了"。
+
+           同时 room.muted 这个数组建好了却**零处 push**（只在建房间时初始化为 []），
+           等于群内禁言功能两端都备好、中间没接上，从未生效过。
+           这里一并接上。 */
+        r.muted = r.muted || [];
+        if (r.muted.indexOf(u2.id) < 0) r.muted.push(u2.id);
+        touch(r);
+        sysMsg(cur, '「' + u2.nick + '」在本群被禁言 ' + min + ' 分钟');
+        log('mute', u2.nick + ' ' + min + '分钟（本群）', r.id);
+        save(); renderChat(); return;
       }
       case 'unmute': {
         var u3 = byNick(rest.split(/\s+/)[0] || '');
         if (!u3 || !g.ACL.can(me, 'user.mute', r)) { g.UI.toast('用法：/unmute @昵称'); return; }
-        u3.mutedUntil = 0; touch(u3); sysMsg(cur, '「' + u3.nick + '」已被解除禁言'); log('unmute', u3.nick, r.id); save(); return;
+        /* 与 /mute 对称：解除本群禁言（E-068）。
+           原来只清全站 mutedUntil，而 /mute 现在写的是 room.muted ——
+           不解 room.muted 的话，禁言一旦加上就再也解不掉。 */
+        r.muted = (r.muted || []).filter(function (x) { return x !== u3.id; });
+        touch(r);
+        sysMsg(cur, '「' + u3.nick + '」在本群的禁言已解除');
+        log('unmute', u3.nick + '（本群）', r.id); save(); renderChat(); return;
       }
       case 'kick': {
         var u4 = byNick(rest.split(/\s+/)[0] || '');
@@ -4330,7 +4371,14 @@
           if (!isSelf && g.ACL.can(me, 'user.ban')) ops.appendChild(mkBtn(u.banned ? '解封' : '封禁', function () { u.banned = !u.banned; touch(u); log(u.banned ? 'ban' : 'unban', u.nick); save(); adminPanelRefresh(mo, d, view, t); }));
           if (!isSelf && g.ACL.can(me, 'user.mute')) ops.appendChild(mkBtn(g.ACL.muted(u) ? '解禁' : '禁言', function () {
             if (g.ACL.muted(u)) { u.mutedUntil = 0; touch(u); save(); syncMute(u, 0); }
-            else g.UI.prompt('禁言分钟数', '', '10', function (v) { u.mutedUntil = now() + (parseInt(v, 10) || 10) * 60000; touch(u); log('mute', u.nick); save(); });
+            else g.UI.prompt('禁言分钟数', '', '10', function (v) {
+              /* 用户卡片里的禁言是**全站**禁言（与群内 /mute 区分开），
+                 所以这里必须走 syncMute 同步服务端 ——
+                 原来缺这一步，跟 /mute 一样只改本地（E-068 同族）。 */
+              var m = parseInt(v, 10) || 10;
+              u.mutedUntil = now() + m * 60000; touch(u); syncMute(u, m);
+              log('mute', u.nick + '（全站）'); save();
+            });
             adminPanelRefresh(mo, d, view, t);
           }));
           if (!isSelf && me.role === 'owner') ops.appendChild(mkBtn(u.role === 'admin' ? '撤管理' : '设管理', function () { u.role = u.role === 'admin' ? 'member' : 'admin'; touch(u); log('role', u.nick + '→' + u.role); save(); adminPanelRefresh(mo, d, view, t); }));
@@ -4848,6 +4896,21 @@
 
   /* ================= 事件绑定 ================= */
   function bindEvents() {
+    /* 深色模式快捷切换（E-062）。原按钮不存在，这行绑定也就从未生效过。 */
+    (function () {
+      var bt = $('btnTheme');
+      if (!bt) return;
+      var cur = 'auto';
+      try { cur = localStorage.getItem(THEME_KEY) || 'auto'; } catch (e) { }
+      var setT = function (t) {
+        cur = t; applyTheme(t);
+        try { localStorage.setItem(THEME_KEY, t); } catch (e) { }
+        bt.title = t === 'dark' ? '当前：深色（点此切跟随系统）'
+          : (t === 'light' ? '当前：浅色（点此切深色）' : '当前：跟随系统（点此切深色）');
+      };
+      setT(cur);
+      bt.onclick = function () { setT(cur === 'dark' ? 'auto' : 'dark'); };
+    })();
     $('btnSend').onclick = send;
     var ta = $('input');
     ta.addEventListener('keydown', function (e) {
@@ -5095,7 +5158,14 @@
       (function next() {
         if (i >= list.length) return;
         var f = list[i++];
-        Promise.resolve(sendMediaFile(f, /^video\//.test(f.type) ? 'video' : 'image'))
+        /* ⚠ 不能只按 video 二分（E-060，考古补回）。
+           原来写的是 /^video\// ? 'video' : 'image' —— **非视频一律判成图片**。
+           拖一个 PDF / zip / docx 进去，它被标成 type='image' 存起来，
+           渲染时走 <img> 分支，浏览器解不出来 → 气泡里一块空白。
+           用户看到"已发送"，对方收到一个打不开的空图。
+
+           正确的判定是三分：image / video / 其余一律 file。 */
+        Promise.resolve(sendMediaFile(f, mediaKindOf(f)))
           .catch(function () { })
           .then(next);
       })();
