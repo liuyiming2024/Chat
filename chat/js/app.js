@@ -2907,7 +2907,10 @@
    * 别人在房间列表输入口令即可入群，无需逐个邀请。
    */
   function genCode() {
-    var cs = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+    /* 与服务端保持一致：小写（INV-CASE）。
+       原来前端大写、服务端也大写，改小写后两边必须一起改，
+       否则同一条口令在两台设备上长得不一样。 */
+    var cs = 'abcdefghjkmnpqrstuvwxyz23456789';
     var r = '';
     for (var i = 0; i < 6; i++) r += cs.charAt(Math.floor(Math.random() * cs.length));
     return r;
@@ -2948,7 +2951,27 @@
       '<label class="field-label">可用次数</label><select class="field" id="icUse">' +
       '<option value="1">1 次</option><option value="5" selected>5 次</option>' +
       '<option value="0">不限次数</option></select>' +
-      '<div id="icOut" class="invite-out"></div>';
+      /* ⚠ 自定义口令（INV-CUSTOM）。
+         随机码 A7K2M9 这种**口头传达极其费劲**：要一个字母一个字母念，
+         对方还要反复确认"是 B 还是 D"。而邀请大量发生在当面或电话里。
+         所以给有权限的人一个选项：自己指定一个好说好记的词。
+
+         只对有权限的人显示 —— 普通成员看不到这个框，
+         而不是让他填了再被服务端拒绝（那样只会让人困惑）。 */
+      (canCustomCode(r)
+        ? '<label class="field-label">自定义口令（可选）</label>' +
+          '<input class="field" id="icCustom" placeholder="留空则自动生成，如：welcome" maxlength="24">' +
+          '<div class="field-hint" id="icCustomHint">字母和数字，3~24 位。' +
+          '不要用 0/1/i/l/o —— 口头传达最容易听错。好记的优先，别追求复杂。</div>'
+        : '') +
+      '<div id="icOut" class="invite-out"></div>' +
+      /* ⚠ 必须能看见已生成的口令（E-089，考古补回）。
+         原来生成完就只剩一个输入框，没有任何地方列出"我发过什么"。
+         生成一个「长期有效 · 不限次数」的口令后，**再也收不回来**。
+         看不见的东西，自然也就没法作废 —— inviteRevoke 零处调用正是因为这个。 */
+      '<div class="sec-title" style="margin-top:12px"><span>已生成的口令</span>' +
+      '<button class="mini-btn" id="icRefresh">刷新</button></div>' +
+      '<div id="icList" class="invite-list"><div class="empty-tip">加载中…</div></div>';
     g.UI.modal({
       title: '生成邀请口令 · ' + r.name, body: d, okText: '生成', onOk: function (body) {
         var h = parseInt(body.querySelector('#icHour').value, 10);
@@ -2958,7 +2981,9 @@
            这里改成异步，所以先占位提示，拿到再显示。 */
         if (g.Online && g.Online.isOnline && g.Online.isOnline()) {
           out0.textContent = '正在生成…';
-          g.Online.inviteCreate(r.id, h, u).then(function (res) {
+          var cbox = body.querySelector('#icCustom');
+          var custom = cbox ? String(cbox.value || '').trim() : '';
+          g.Online.inviteCreate(r.id, h, u, custom).then(function (res) {
             var code = res && res.code;
             if (!code) throw new Error('服务端未返回口令');
             log('invite', '为「' + r.name + '」生成邀请口令（服务端）');
@@ -2981,8 +3006,97 @@
         var out = body.querySelector('#icOut');
         showCode(out, code, h, u);
         log('invite', '为「' + r.name + '」生成邀请口令（本机）');
+        renderInviteList(body.querySelector('#icList'), r);
         return false;   /* 保持弹窗打开，便于看到口令 */
+      },
+      onOpen: function (body) {
+        var lf = body.querySelector('#icRefresh');
+        if (lf) lf.onclick = function () { renderInviteList(body.querySelector('#icList'), r); };
+        renderInviteList(body.querySelector('#icList'), r);
+        /* 实时提示（本次新增）：不是硬拒绝，而是提前告诉你哪个字会听错。
+           硬拒绝只会让人烦；他要真想用 0，那是他的选择 ——
+           但至少要知道自己在承担什么。 */
+        var cb = body.querySelector('#icCustom');
+        var hint = body.querySelector('#icCustomHint');
+        if (cb && hint) cb.addEventListener('input', function () {
+          var v = String(cb.value || '').trim().toLowerCase();
+          if (!v) { hint.className = 'field-hint'; hint.textContent = '字母和数字，3~24 位。不要用 0/1/i/l/o —— 口头传达最容易听错。好记的优先，别追求复杂。'; return; }
+          var bad = (v.match(/[01ilo]/g) || []);
+          if (bad.length) {
+            hint.className = 'field-hint warn';
+            hint.textContent = '含有容易听错的「' + bad.join(' ') + '」，对方可能记错。建议换掉。';
+          } else if (v.length < 3) {
+            hint.className = 'field-hint'; hint.textContent = '至少 3 位。';
+          } else if (!/^[a-z0-9]+$/.test(v)) {
+            hint.className = 'field-hint warn';
+            hint.textContent = '只能包含字母和数字，不能有空格、符号或汉字。';
+          } else {
+            hint.className = 'field-hint ok';
+            hint.textContent = '可用。对方输入时不区分大小写。';
+          }
+        });
       }
+    });
+  }
+
+  /* 谁能设置自定义口令（INV-CUSTOM）。
+     v_is_staff 的服务端口径是：房主 / 房间管理员 / 站长 / 全站管理员。
+     这里必须与服务端**完全一致**，否则会出现"界面上有框、提交被拒"。
+
+     范围按你说的先放这三类；"大群群主"那条要等你想清楚群规模怎么算
+     （按人数？按活跃度？），先不猜。 */
+  function canCustomCode(r) {
+    if (!me) return false;
+    if (me.role === 'owner' || me.role === 'admin') return true;
+    if (!r) return false;
+    if (r.owner === me.id) return true;
+    return (r.admins || []).indexOf(me.id) >= 0;
+  }
+
+  /* 已生成口令列表（E-089）。
+     重点是"长期·不限次数"那类要醒目标出来 —— 它是最该被收回、
+     也最容易彻底忘掉的。已作废的也列出来，标上作废时间。 */
+  function renderInviteList(el, r) {
+    if (!el) return;
+    if (!g.Online || !g.Online.isOnline || !g.Online.isOnline() || !g.Online.inviteList) {
+      el.innerHTML = '<div class="empty-tip">离线模式下口令只存在本机，暂无列表</div>';
+      return;
+    }
+    el.innerHTML = '<div class="empty-tip">加载中…</div>';
+    g.Online.inviteList().then(function (rows) {
+      var arr = rows || [];
+      if (!arr.length) { el.innerHTML = '<div class="empty-tip">还没有生成过口令</div>'; return; }
+      el.innerHTML = '';
+      arr.forEach(function (it) {
+        var row = elc('div', 'invite-row' + (it.revoked_at ? ' revoked' : ''));
+        var longLive = !it.expire_at && (!it.max_use || it.max_use === 0);
+        var stat = it.revoked_at ? '已作废'
+          : (it.max_use && it.max_use > 0 ? ('已用 ' + it.used + ' / ' + it.max_use + ' 次') : ('已用 ' + it.used + ' 次'));
+        row.innerHTML =
+          '<div class="ir-top"><code>' + g.UI.esc(it.code) + '</code>' +
+          '<span class="tag' + (it.revoked_at ? '' : (longLive ? ' orange' : ' gray')) + '">' + g.UI.esc(stat) + '</span>' +
+          (longLive && !it.revoked_at ? '<span class="tag red">长期·不限次数</span>' : '') + '</div>' +
+          '<div class="ir-sub">' + g.UI.esc(it.room_name || it.room_id) +
+          ' · ' + (it.expire_at ? ('到期 ' + g.UI.fmtTime(new Date(it.expire_at).getTime())) : '长期有效') +
+          (it.revoked_at ? ' · 作废于 ' + g.UI.fmtTime(new Date(it.revoked_at).getTime()) : '') + '</div>';
+        if (!it.revoked_at) {
+          var b = elc('button', 'mini-btn danger', '作废');
+          b.onclick = function () {
+            g.UI.confirm('作废口令 ' + it.code + '？作废后对方将无法再用它加入。', function () {
+              g.Online.inviteRevoke(it.code).then(function () {
+                g.UI.toast('已作废', 'ok');
+                renderInviteList(el, r);
+              }).catch(function (e) {
+                g.UI.toast('作废失败：' + ((e && e.message) || '网络错误'), 'err');
+              });
+            });
+          };
+          row.appendChild(b);
+        }
+        el.appendChild(row);
+      });
+    }).catch(function (e) {
+      el.innerHTML = '<div class="empty-tip">加载失败：' + g.UI.esc((e && e.message) || '网络错误') + '</div>';
     });
   }
 
@@ -2990,11 +3104,15 @@
   function joinByCode() {
     var d = elc('div', '');
     d.innerHTML =
-      '<label class="field-label">邀请口令</label><input class="field" id="jcCode" placeholder="6 位口令" maxlength="6">' +
+      /* maxlength 从 6 放宽到 24：自定义口令最长 24 位。
+         不改的话，自定义口令在这个框里会被**截断**，怎么输都不对，
+         而用户只会以为口令错了，想不到是输入框把它截短了。 */
+      '<label class="field-label">邀请口令</label><input class="field" id="jcCode" placeholder="口令，如 welcome" maxlength="24">' +
       '<div id="jcMsg" class="field-hint"></div>';
     g.UI.modal({
       title: '用口令加入房间', body: d, okText: '加入', onOk: function (body) {
-        var c = (body.querySelector('#jcCode').value || '').trim().toUpperCase();
+        /* 不再 toUpperCase：自定义口令是小写，大小写兼容交给服务端。 */
+        var c = (body.querySelector('#jcCode').value || '').trim();
         if (!c) { g.UI.toast('请输入口令'); return false; }
         var tip = body.querySelector('#jcMsg');
 
@@ -5423,6 +5541,10 @@
       g.UI.confirm('退出登录？', function () {
         /* 门禁一并作废：退出后再进来要重新输保护密码。
            账号可以记住，保护密码不记 —— 这是两套东西，别混在一起。 */
+        /* ⚠ 必须通知服务端作废会话（E-079，考古补回）。
+           原来只清本地，服务端那条 token 继续有效 14 天 ——
+           用户以为退出了，其实没有。 */
+        try { if (g.SB && g.SB.logout) g.SB.logout(); } catch (e) { }
         clrMe();
         clrGate();
         try { if (g.ElectronBridge) g.ElectronBridge.bridgeClear(); } catch (e) { }

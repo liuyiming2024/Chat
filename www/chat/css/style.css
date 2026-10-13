@@ -247,6 +247,22 @@ input, textarea, select { font-family: inherit; font-size: 14px; }
 body.dark .len-hint { color: #6b7280; }
 body.dark .len-hint.over { color: #e8735f; }
 
+.field-hint.warn { color: #c0392b; font-weight: 600; }
+.field-hint.ok { color: #2a7; }
+body.dark .field-hint.warn { color: #e8735f; }
+body.dark .field-hint.ok { color: #6ad39a; }
+
+.invite-list { max-height: 220px; overflow-y: auto; }
+.invite-row {
+  padding: 8px 10px; border: 1px solid var(--line, #e3e6ea); border-radius: 8px;
+  margin-bottom: 6px;
+}
+.invite-row.revoked { opacity: .55; }
+.ir-top { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.ir-top code { font-size: 15px; font-weight: 700; letter-spacing: 1px; }
+.ir-sub { font-size: 11px; color: #8a8f98; margin-top: 3px; }
+body.dark .ir-sub { color: #6b7280; }
+
 .policy-links { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; }
 .policy-links a { color: #3b7ff2; text-decoration: none; }
 .policy-links a:hover { text-decoration: underline; }
