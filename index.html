@@ -173,7 +173,12 @@
     <a class="card" href="https://github.com/liuyiming2024/Chat/releases/latest/download/chat-linux.AppImage" target="_blank" rel="noopener" style="color:inherit">
       <span class="card-icon"><svg class="ic" aria-hidden="true"><use href="#i-monitor"/></svg></span>
       <h3>Linux <span class="card-link">下载 →</span></h3>
-      <p>AppImage 免安装，下载后加执行权限直接跑；也提供 deb 包。</p>
+      <!-- ⚠ 原来写「也提供 deb 包」（E-003，考古补回）。
+     README、docs/client.html、api/platforms.json 三处都写明 Linux 只有 AppImage
+     （deb 需 fpm/dpkg，在 runner 上易失败，已不做）。
+     3 处正确对 1 处错，而错的那处恰是所有访客都看得见的落地页。
+     访客照它去找 deb，找不到，只会以为是我们没放。 -->
+        <p>AppImage 免安装，下载后加执行权限直接跑（Linux 目前仅提供这一种格式）。</p>
       <span class="card-link">下载 AppImage →</span>
     </a>
 
