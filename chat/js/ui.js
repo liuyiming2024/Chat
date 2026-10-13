@@ -93,7 +93,17 @@
     };
     box.querySelector('.modal-x').onclick = close;
     wrap.addEventListener('click', function (e) { if (e.target === wrap) close(); });
-    if (cancelBtn) cancelBtn.onclick = close;
+    /* ⚠ onCancel 必须真的被调用（E-073，考古补回）。
+       全仓只有 exportDialog 一处传了 onCancel（导出纯文本），
+       而这里原本写的是 cancelBtn.onclick = close —— **onCancel 一次都没执行过**。
+       用户点「导出文本」按钮，窗口关了，什么都没发生，也不报错。
+
+       只挂在"取消按钮"上，不挂到 Esc / × / 点遮罩：
+       后三者是"直接关掉"的语义，不该触发"导出"这类业务副作用。 */
+    if (cancelBtn) cancelBtn.onclick = function () {
+      if (opts.onCancel) { try { opts.onCancel(body); } catch (e) { } }
+      close();
+    };
     if (okBtn) okBtn.onclick = function () {
       if (!opts.onOk || opts.onOk(body) !== false) close();
     };
