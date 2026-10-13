@@ -3033,9 +3033,27 @@
         return;
       }
       case 'mute': {
-        var p = rest.split(/\s+/), u2 = byNick(p[0] || '');
-        if (!u2) { g.UI.toast('用法：/mute @昵称 分钟'); return; }
-        if (!g.ACL.can(me, 'user.mute', r)) { g.UI.toast('没有禁言权限', 'err'); return; }
+        var p = rest.split(/\s+/).filter(Boolean), u2 = byNick(p[0] || '');
+        /* ⚠ 作用域参数：默认本群，显式写 all / 全站 才全站禁言。
+           不加这个参数的话，站长想全站禁言就只能去用户卡片里点 ——
+           而在聊天框里敲命令是最顺手的路径，不该把这条路堵死。 */
+        var scopeAll = false, argI = 1;
+        for (var pi = 1; pi < p.length; pi++) {
+          var a = String(p[pi]).toLowerCase();
+          if (a === 'all' || a === '全站' || a === 'global') { scopeAll = true; p.splice(pi, 1); break; }
+        }
+        if (!u2) { g.UI.toast('用法：/mute @昵称 [分钟] [all=全站]，默认禁言本群'); return; }
+        /* ⚠ 全站禁言必须走**全站级**权限，不能带房间判（本次考古发现）。
+           带房间时 can() 会走到「群主/群管理员在自己房间的固有权力」那条，
+           而 ROOM_INHERENT 里含 user.mute ——
+           于是**群主在自己群里就拥有了全站禁言的权力**，这是权限提升。
+
+           不带 room 参数，那条房间固有权力就不会命中。
+           群内禁言仍走带房间的判定（群主管本群，天经地义）。（S-112） */
+        if (scopeAll && !g.ACL.can(me, 'user.mute')) {
+          g.UI.toast('全站禁言需要管理员及以上权限，群主只能禁言本群', 'err'); return;
+        }
+        if (!scopeAll && !g.ACL.can(me, 'user.mute', r)) { g.UI.toast('没有禁言权限', 'err'); return; }
         var min = parseInt(p[1] || '10', 10) || 10;
         if (g.ACL.roomRole(u2, r) === 'roomAdmin' && g.ACL.roomRole(me, r) !== 'roomOwner' && me.role !== 'owner') { g.UI.toast('不能禁言同级管理员', 'err'); return; }
         /* ⚠ 在群里 /mute 只应禁言这个群，不该全站禁言（E-068/E-069，考古补回）。
@@ -3046,6 +3064,13 @@
            同时 room.muted 这个数组建好了却**零处 push**（只在建房间时初始化为 []），
            等于群内禁言功能两端都备好、中间没接上，从未生效过。
            这里一并接上。 */
+        if (scopeAll) {
+          /* 全站禁言：写 users.mutedUntil 并同步服务端 */
+          u2.mutedUntil = now() + min * 60000; touch(u2); syncMute(u2, min);
+          sysMsg(cur, '「' + u2.nick + '」被全站禁言 ' + min + ' 分钟');
+          log('mute', u2.nick + ' ' + min + '分钟（全站）', r.id);
+          save(); renderChat(); return;
+        }
         r.muted = r.muted || [];
         if (r.muted.indexOf(u2.id) < 0) r.muted.push(u2.id);
         touch(r);
@@ -3054,11 +3079,28 @@
         save(); renderChat(); return;
       }
       case 'unmute': {
-        var u3 = byNick(rest.split(/\s+/)[0] || '');
-        if (!u3 || !g.ACL.can(me, 'user.mute', r)) { g.UI.toast('用法：/unmute @昵称'); return; }
-        /* 与 /mute 对称：解除本群禁言（E-068）。
-           原来只清全站 mutedUntil，而 /mute 现在写的是 room.muted ——
-           不解 room.muted 的话，禁言一旦加上就再也解不掉。 */
+        var p3 = rest.split(/\s+/).filter(Boolean);
+        var u3 = byNick(p3[0] || '');
+        /* 与 /mute 对称：all 表示解除全站禁言，默认解除本群 */
+        var unAll = false;
+        for (var pj = 1; pj < p3.length; pj++) {
+          var a3 = String(p3[pj]).toLowerCase();
+          if (a3 === 'all' || a3 === '全站' || a3 === 'global') { unAll = true; break; }
+        }
+        if (!u3) { g.UI.toast('用法：/unmute @昵称 [all=全站]'); return; }
+        /* 同上：解除**全站**禁言同样要全站级权限（S-112）。
+           否则群主在自己群里 /unmute @某人 all，就能解掉站长设的全站禁言。
+           群内解除只需房间级权限。 */
+        if (unAll && !g.ACL.can(me, 'user.mute')) {
+          g.UI.toast('解除全站禁言需要管理员及以上权限', 'err'); return;
+        }
+        if (!unAll && !g.ACL.can(me, 'user.mute', r)) { g.UI.toast('没有禁言权限', 'err'); return; }
+        if (unAll) {
+          u3.mutedUntil = 0; touch(u3); syncMute(u3, 0);
+          sysMsg(cur, '「' + u3.nick + '」的全站禁言已解除');
+          log('unmute', u3.nick + '（全站）', r.id); save(); renderChat(); return;
+        }
+        /* r.muted 不解的话，禁言一旦加上就再也解不掉（E-068）。 */
         r.muted = (r.muted || []).filter(function (x) { return x !== u3.id; });
         touch(r);
         sysMsg(cur, '「' + u3.nick + '」在本群的禁言已解除');
@@ -3185,8 +3227,10 @@
       ['/create 群名', '自建群聊'],
       ['/join 群名', '加入公开群'],
       ['/notice 内容', '设置本群公告（管理员）'],
-      ['/mute @昵称 分钟', '禁言（管理员）'],
-      ['/unmute @昵称', '解除禁言'],
+      ['/mute @昵称 [分钟]', '在本群禁言（默认 10 分钟）'],
+      ['/mute @昵称 分钟 all', '全站禁言（加 all 才生效）'],
+      ['/unmute @昵称', '解除本群禁言'],
+      ['/unmute @昵称 all', '解除全站禁言'],
       ['/kick @昵称', '移出本群'],
       ['/ban @昵称', '封禁账号'],
       ['/unban @昵称', '解封账号'],
@@ -3778,10 +3822,19 @@
      失败必须回滚本地 —— 否则界面显示已禁言、服务端没有。 */
   function syncMute(u, minutes) {
     if (!g.Online || !g.Online.isOnline()) return;
+    /* ⚠ 失败必须回滚成"操作前的值"，不能凭空算一个（本次考古发现）。
+       原来写的是 minutes > 0 ? 0 : now() + 600000 ——
+       **解除禁言（minutes=0）失败时，回滚成 now()+600000，即再禁 10 分钟。**
+       若原本禁言到明天，一次失败的解除操作会把它改成 10 分钟后到期 ——
+       **想解禁却失败，结果比成功还早解禁。** 这是禁言能被绕过的实际路径。
+
+       正确做法：调之前先把原值存下来，失败就还原成原值。
+       回滚绝不能"算"出一个新值，只能还原旧值。（S-111） */
+    var prev = u.mutedUntil;
     g.Online.setMute(u.id, minutes).catch(function (e) {
-      u.mutedUntil = minutes > 0 ? 0 : now() + 600000;
+      u.mutedUntil = prev;
       save(true); renderAll();
-      g.UI.toast('禁言同步失败：' + ((e && e.message) || '网络错误'), 'err');
+      g.UI.toast('禁言同步失败，已还原为原状态：' + ((e && e.message) || '网络错误'), 'err');
     });
   }
 
