@@ -192,12 +192,20 @@
   function effective(user, perm, room) { return can(user, perm, room); }
 
   /* ---------------- 禁言 ---------------- */
+  /* ⚠ 原来拿 Date.now() 比 mutedUntil（E-049 的漏网之鱼）。
+     mutedUntil 是服务端算的时间戳，本机钟快 5 分钟就会**提前解禁**，
+     慢 5 分钟则**多禁 5 分钟** —— 后者更糟：用户看着"禁言已到期"
+     却还是发不出去，只能干等，而且不知道要等多久。
+     在线判定的 last_seen 早就改成 serverNow() 了，这里漏了。 */
+  function serverNow() {
+    return (g.Online && g.Online.serverNow) ? g.Online.serverNow() : Date.now();
+  }
   function muted(user) {
-    return !!(user && user.mutedUntil && user.mutedUntil > Date.now());
+    return !!(user && user.mutedUntil && user.mutedUntil > serverNow());
   }
   function muteLeft(user) {
     if (!muted(user)) return 0;
-    return Math.ceil((user.mutedUntil - Date.now()) / 1000);
+    return Math.ceil((user.mutedUntil - serverNow()) / 1000);
   }
 
   /* 把剩余禁言秒数说成人能读的话。

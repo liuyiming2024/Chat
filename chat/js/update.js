@@ -210,6 +210,17 @@
           });
         })).then(function (chunks) {
           chunks.sort(function (a, b) { return a.start - b.start; });
+          /* ⚠ 原来不校验拼出来的总长度。
+             任何一片少给几个字节（代理截断、连接中断后被当成完整响应），
+             后面就全是 0 —— 文件大小看起来完全正确，
+             装上去却是坏的，而且**没有任何报错**。
+             这是最难排查的一类：下载成功、进度 100%、安装失败。
+             差一个字节都要立刻报错，让用户重下一次。 */
+          var got = 0;
+          chunks.forEach(function (c) { got += c.buf.byteLength; });
+          if (got !== size) {
+            throw new Error('下载不完整：应得 ' + size + ' 字节，实得 ' + got + ' 字节');
+          }
           var out = new Uint8Array(size);
           var off = 0;
           chunks.forEach(function (c) {
@@ -238,6 +249,11 @@
     return fetch(url, { headers: { Range: 'bytes=' + start + '-' + end } })
       .then(function (r) {
         if (r.status !== 206 && r.status !== 200) throw new Error('HTTP ' + r.status);
+        /* ⚠ 200 表示服务端**忽略了 Range**，返回的是整个文件而不是这一段。
+           原来照样收下，于是这一片被写成整份内容，后面几片再往后追加 ——
+           拼出来的是一个超大且错乱的文件。
+           分块下载必须只接受 206；拿不到就要走整段拉的降级路径。 */
+        if (r.status !== 206) throw new Error('服务端不支持分段');
         return r.arrayBuffer();
       })
       .catch(function (e) {

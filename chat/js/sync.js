@@ -18,6 +18,7 @@
 
   var CHANNEL = 'wxlg_sync_v1';
   var bc = null;
+  var stateKey = null;      /* 状态快照的 localStorage key，由 init 传入 */
   var onStateCb = null;      // 收到他人/他标签的 state 时回调
   var onPatchCb = null;      // 收到单条消息时回调（轻量提示）
   var selfId = (g.SHA256 && g.SHA256.randomId) ? g.SHA256.randomId(8) : String(Math.random()).slice(2);
@@ -30,6 +31,8 @@
   function init(handlers) {
     onStateCb = handlers && handlers.onState;
     onPatchCb = handlers && handlers.onPatch;
+    /* 传了就只监听这一个 key；没传才退回宽松的前缀匹配（兼容旧调用） */
+    stateKey = (handlers && handlers.stateKey) || null;
 
     if (supported()) {
       try {
@@ -43,10 +46,25 @@
       } catch (e) { bc = null; }
     }
 
-    /* 兜底：部分浏览器/隐私模式下 BroadcastChannel 不可用，用 storage 事件 */
+    /* 兜底：部分浏览器/隐私模式下 BroadcastChannel 不可用，用 storage 事件。
+       ⚠ 原来判定是 `key.indexOf('wxlg_') === 0` —— 意思是**所有** wxlg_
+       开头的 key 变动都被当成"状态变了"，然后 JSON.parse 塞给 onStateCb。
+       而这个前缀下还有：通知设置、离线队列、登录失败计数、
+       以及 IndexedDB 不可用时的媒体降级数据（wxlg_m_xxx，值是 dataURL）。
+
+       后果：在另一个标签里改一下通知设置，这边就会把
+       { enabled:true, preview:true… } 当成整份 state 去 merge。
+       现在 mergeState 有 `!inS.users` 的兜底所以没炸，
+       但那是**下游碰巧挡住了上游的错误** ——
+       哪天有人给通知设置加个 users 字段，或者换个 merge 实现，就真串了。
+       而且每次改通知、每次入队都要 JSON.parse 一遍整份状态，白费力气。
+
+       正确做法：只认状态那一个 key。由调用方告知是哪个 key。 */
     g.addEventListener('storage', function (e) {
-      if (!e.key || e.key.indexOf('wxlg_') !== 0) return;
-      if (!e.newValue || !onStateCb) return;
+      if (!e.key || !onStateCb) return;
+      if (stateKey ? (e.key !== stateKey)
+                   : (e.key.indexOf('wxlg_') !== 0)) return;
+      if (!e.newValue) return;
       try { onStateCb(JSON.parse(e.newValue)); } catch (err) { }
     });
     return bc;
