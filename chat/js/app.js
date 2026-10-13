@@ -911,6 +911,30 @@
       if (g.Notifier) g.Notifier.onFocus();
     });
     g.Net.loadAccel().then(function (ok) { if (ok) g.UI.toast('已启用 C++/WASM 哈希加速', 'ok'); });
+    /* 上次没写完就离开了（S-120）。
+       启动时检查一次：有就明确告知并让他决定要不要恢复，
+       **不能静默恢复** —— 静默恢复和静默丢失一样糟，
+       用户不知道发生过什么，下次还是会以为什么都没丢。 */
+    (function restoreLeaveDraft() {
+      var raw = null;
+      try { raw = localStorage.getItem('wxlg_leave_draft'); } catch (e) { return; }
+      if (!raw) return;
+      var d = null;
+      try { d = JSON.parse(raw); } catch (e2) { return; }
+      if (!d || !d.text) return;
+      var rn = d.room && findRoom(d.room) ? findRoom(d.room).name : (d.room || '未知会话');
+      g.UI.confirm('上次离开时有一段没来得及保存的内容（在「' + g.UI.esc(rn) +
+        '」，' + d.text.length + ' 字）。要恢复吗？', function () {
+        var ta = $('input');
+        if (ta && cur === d.room) { ta.value = d.text; autoGrow(ta); }
+        else { drafts[d.room] = d.text; }
+        save(true); renderChat();
+        g.UI.toast('已恢复，请确认内容是否完整', 'ok', 6000);
+        try { localStorage.removeItem('wxlg_leave_draft'); } catch (e3) { }
+      }, function () {
+        try { localStorage.removeItem('wxlg_leave_draft'); } catch (e4) { }
+      });
+    })();
     startHeartbeat();
     /* ⚠ 上次录音没走完就崩了 / 被关掉了（S-116，成品审查新增）。
        边录边存的草稿还在，但界面上什么都没有 ——
@@ -1284,7 +1308,39 @@
     if (w) {
       w.classList.remove('hidden');
       w.title = '本地存储写入失败（' + ((reason && reason.name) || '未知原因')
-        + '）：改动只存在内存里，关闭页面会丢失。建议导出备份后清理。';
+        + '）：改动只存在内存里，关闭页面会丢失。点这里立刻导出备份。';
+      /* ⚠ 常驻标记必须给出可执行的出路（S-121，借鉴 Code 报告）。
+         原来只有一个红标签，用户看到了也不知道该干嘛 ——
+         被告知"正在丢数据"却没有任何补救动作，只会更焦虑。
+         Code 的做法是「常驻 + 弹一次 + 给出备份出口」，
+         三样缺一不可：只弹窗看不见（他在看别处），
+         每次都弹是骚扰，而没有出口则等于把问题扔回给用户自己扛。 */
+      if (!w._bound) {
+        w._bound = true;
+        w.style.cursor = 'pointer';
+        w.onclick = function () {
+          g.UI.confirm('存储写入失败，改动只存在内存里，关闭页面会全部丢失。\n\n'
+            + '现在导出一份完整备份吗？（含媒体本体）', function () {
+            /* 必须用 buildFullBackup，不能用 JSON.stringify(S) ——
+               那个不含媒体，照它"备份"完再清理，媒体就永久没了。
+               这条在这里尤其要命：正因为存储写不进去才来导出，
+               如果导出的又是一份不含媒体的假备份，等于什么都没救回来。 */
+            g.UI.toast('正在打包，请稍候…', 'ok');
+            buildFullBackup(function () { }).then(function (pack) {
+              var n = Object.keys(pack.media || {}).length;
+              var blob = new Blob([JSON.stringify(pack)], { type: 'application/json' });
+              var a = document.createElement('a');
+              a.href = URL.createObjectURL(blob);
+              setTimeout(function () { try { URL.revokeObjectURL(a.href); } catch (e0) { } }, 60000);
+              a.download = 'chat-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+              a.click();
+              g.UI.toast('已导出（含 ' + n + ' 个媒体）。注意：内存里未保存的改动不在备份中', 'ok', 8000);
+            }).catch(function (e) {
+              g.UI.toast('导出失败：' + ((e && e.message) || '未知错误'), 'err', 8000);
+            });
+          });
+        };
+      }
     }
     document.body.classList.add('save-failing');
   }
@@ -2031,6 +2087,41 @@
       }, 300);
     };
     showOnce();
+  }
+
+  /* 离开页面时的同步兜底（S-120，借鉴 Code 报告的同一判据）。
+
+     为什么必须"同步"：卸载时处理器一返回浏览器就开始卸载，
+     **任何异步写入（Promise / IndexedDB 事务）都来不及提交**。
+     Code 那条链路 `beforeunload → flushAll() → ed.save() → idb.put()`
+     返回 Promise，正是死在这里 —— 代码里写着 beforeunload，
+     读代码的人会以为做了，于是不会再去查。**"有钩子但不管用"比"没有钩子"更隐蔽。**
+
+     Chat 在这里比 Code 有利：主状态走 localStorage，是**同步**的，
+     卸载时确实能写完。但**媒体在 IndexedDB，卸载时救不回来** ——
+     所以这里只同步写最关键的草稿，并明确告知媒体不在这个兜底范围内，
+     不假装能兜住。 */
+  function syncFlushOnLeave() {
+    var wrote = false;
+    try { wrote = save(true); } catch (e) { wrote = false; }
+    /* ⚠ 只有主状态没写成时才留兜底（S-120）。
+       save() 成功的话，草稿本就已经随 S 一起落盘了，
+       再留一份是多余 —— 而且下次启动会弹一个"有未保存内容"，
+       其实是**早就存好了**的，白白吓用户一跳。
+
+       只有 save 真的失败（配额满、序列化异常）才单独写这份小的：
+       save() 要序列化整个 S，状态大时最容易失败；
+       而草稿是用户最不能丢的那几个字，单独写一份小的成功率更高。 */
+    if (wrote) {
+      try { localStorage.removeItem('wxlg_leave_draft'); } catch (e0) { }
+      return;
+    }
+    try {
+      var ta = $('input');
+      if (ta && ta.value) {
+        localStorage.setItem('wxlg_leave_draft', JSON.stringify({ room: cur, text: ta.value, at: Date.now() }));
+      }
+    } catch (e2) { markSaveFailed(e2); }
   }
 
   /* 字数提示（S-101）：超过 90% 才出现，超过上限变红。 */
@@ -5367,25 +5458,30 @@
         if (draftTimer) clearTimeout(draftTimer);
         draftTimer = setTimeout(function () { save(true); }, 800);
       });
-      /* 切后台/关页面前补一次，防抖那 800ms 的窗口就补上了 */
-      window.addEventListener('pagehide', function () { save(true); });
-      document.addEventListener('visibilitychange', function () {
-        if (document.hidden) save(true);
-      });
     }
-    /* ⚠ 全局关闭钩子（S-115，成品审查新增）。
-       原来只有上面那两个，且**挂在 if (ta) 里面** —— 输入框不存在就不注册。
-       更要紧的是缺 beforeunload：
-       - 桌面端关标签页/关窗口时，pagehide 在部分浏览器不触发；
-       - 而草稿刚敲完那 800ms 防抖还没到点，正好落在这个窗口里。
-       beforeunload 里做同步保存是唯一能覆盖"直接关窗口"这一路的办法。
+    /* ⚠ 三个关闭钩子必须全部挂在全局（S-115 / S-120）。
 
-       注意：断电、强杀、进程崩溃**任何钩子都拦不住**（页面来不及跑代码），
+       **我上一轮犯的错**：只把 beforeunload 挂到了全局，
+       而 pagehide / visibilitychange 还留在上面的 `if (ta)` 里面 ——
+       输入框不存在时它们压根不注册。
+
+       这条正中 iOS：**iOS Safari 基本不触发 beforeunload**，
+       pagehide 是那里唯一可靠的钩子。而它恰好是被条件包住的那个。
+       手机上切个 App 回来，从上次 debounce 到切走之间的内容全没了。
+
+       三个钩子各有各的覆盖场景，缺一个就有一条路漏：
+         beforeunload      —— 桌面关标签页/关窗口
+         pagehide          —— iOS 唯一可靠的那个（切 App、前进后退缓存）
+         visibilitychange  —— 切后台最常见，且是唯一能"提前"跑的
+
+       注意：断电 / 强杀 / 进程崩溃**任何钩子都拦不住**（页面来不及跑代码），
        那些场景的丢失窗口取决于落盘频率（心跳 15 秒 + 输入防抖 800ms），
        不是靠加钩子能解决的 —— 这点要说清楚，不能假装钩子能兜住。 */
-    window.addEventListener('beforeunload', function () {
-      try { save(true); } catch (e) { }
+    window.addEventListener('pagehide', function () { syncFlushOnLeave(); });
+    document.addEventListener('visibilitychange', function () {
+      if (document.hidden) syncFlushOnLeave();
     });
+    window.addEventListener('beforeunload', function () { syncFlushOnLeave(); });
     /* 语音：点一下开始，再点一下发送；或按住说话 */
     var bv = $('btnVoice');
     if (bv) {
