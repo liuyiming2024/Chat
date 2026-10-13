@@ -167,6 +167,28 @@
     if (d.toDateString() === y.toDateString()) return '昨天 ' + hm;
     return (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + hm;
   }
+  /* 日期分隔线专用。
+     ⚠ 原来分隔线直接调 fmtTime(m.ts)，而 fmtTime 遇到"今天"只返回 "14:30"。
+       分隔线的职责是告诉你"下面这些是**哪一天**的"，
+       显示一个时刻完全答非所问 —— 用户看到一条写着 14:30 的横线，
+       只会以为那是条时间戳，不知道它是在分天。
+       而更早的日期又显示成"10月13日 14:30"，同一个元素两种含义，更乱。
+
+       分隔线只说日期：今天 / 昨天 / 具体日期 / 跨年带年份。 */
+  function fmtDay(ts) {
+    var d = new Date(ts);
+    if (isNaN(d.getTime())) return '时间未知';
+    var now = new Date();
+    var sameDay = function (a, b) { return a.toDateString() === b.toDateString(); };
+    if (sameDay(d, now)) return '今天';
+    var y = new Date(now.getTime() - 86400000);
+    if (sameDay(d, y)) return '昨天';
+    if (d.getFullYear() === now.getFullYear()) {
+      return (d.getMonth() + 1) + '月' + d.getDate() + '日';
+    }
+    return d.getFullYear() + '年' + (d.getMonth() + 1) + '月' + d.getDate() + '日';
+  }
+
   function fmtFull(ts) {
     var d = new Date(ts);
     if (isNaN(d.getTime())) return '时间未知';
@@ -258,6 +280,6 @@
     svgIcon: svgIcon,
     esc: esc, toast: toast, modal: modal, confirm: confirm, prompt: prompt,
     lightbox: lightbox, closeLightbox: closeLightbox,
-    fmtTime: fmtTime, fmtFull: fmtFull, avatar: avatar, setAvatarCache: setAvatarCache
+    fmtTime: fmtTime, fmtFull: fmtFull, fmtDay: fmtDay, avatar: avatar, setAvatarCache: setAvatarCache
   };
 })(window);

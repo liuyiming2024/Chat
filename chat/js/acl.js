@@ -283,7 +283,7 @@
     PERMS: PERMS, GROUPS: GROUPS, ROLE_PERMS: ROLE_PERMS,
     can: canEffective, canLocal: can,
     canSpeak: canSpeak, roomRole: roomRole,
-    muted: muted, muteLeft: muteLeft,
+    muted: muted, muteLeftText: muteLeftText, muteLeft: muteLeft,
     label: label, all: all, groups: groups, roleName: roleName,
     stateOf: stateOf, setState: setState, effective: effective,
     customCount: customCount,

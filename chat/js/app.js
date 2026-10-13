@@ -272,11 +272,19 @@
     S.atMe = atMe;
     S.drafts = drafts;
     /* 唯一写入路径：先落快照，再由统一同步层广播（不区分部署形态） */
-    try { localStorage.setItem(KEY, JSON.stringify(S)); }
-    catch (e) { g.UI.toast('本地存储写入失败，请清理旧图片/视频', 'err'); }
+    /* 返回是否真的写成了，让调用方能如实告知（导入等场景要用）。
+       原来无返回值，调用方只能无条件提示成功。 */
+    var wrote = true;
+    try {
+      localStorage.setItem(KEY, JSON.stringify(S));
+    } catch (e) {
+      wrote = false;
+      g.UI.toast('本地存储写入失败，请清理旧图片/视频', 'err');
+    }
     if (pushTimer) clearTimeout(pushTimer);
     pushTimer = setTimeout(function () { g.Sync.commit(S); }, 60);
     if (!silent) renderAll();
+    return wrote;
   }
 
   function mergeArr(a, b) {
@@ -619,6 +627,17 @@
             if (!ln || !lp) { g.UI.toast('请填写昵称与密码'); return; }
             g.Online.login(ln, lp).then(function (r) {
               var rem = !!(card.querySelector('#lRemember') && card.querySelector('#lRemember').checked);
+              /* ⚠ 登录成功了，但**没有清零本地失败计数**。
+                 后果很隐蔽：用户在断网降级时输错过几次（计数累积），
+                 后来联网、在线登录成功 —— 计数仍在。
+                 下次再断网降级，计数已接近上限，
+                 **密码明明是对的却提示"尝试次数过多"**。
+
+                 用户会以为是密码错了、或账号被封，
+                 怎么也想不到是"上次输错的记录没清掉"。
+                 而且这段只在降级路径上出现，正常联网怎么试都正常，
+                 所以极难复现、极难定位。 */
+              clearLocalLoginFail();
               setMeId(r.uid, rem);
               publishBridge(card.querySelector('#lNick').value.trim());
               return g.Online.pull().then(function (inS) {
@@ -646,7 +665,11 @@
                而服务端 8 次就锁 —— 降级路径反而比正常路径松。 */
             var lf = localLoginFail();
             if (lf >= LOCAL_LOGIN_MAX) {
-              g.UI.toast('尝试次数过多，请稍后再试', 'err');
+              /* ⚠ 原来只说"请稍后再试"，不说多久。
+                 窗口是 15 分钟，用户不知道 ——
+                 他可能一分钟后再试、再被拒，反复几次后认定账号坏了。
+                 **限流必须说清解除条件**，否则它就不是限流而是封号。 */
+              g.UI.toast('尝试次数过多，请 15 分钟后再试（这是本机限制，防暴力破解）', 'err', 6000);
               return;
             }
             g.UI.toast('昵称或密码错误', 'err');
@@ -676,9 +699,34 @@
         p.innerHTML =
           '<label class="field-label">昵称（登录用）</label><input class="field" id="rNick" placeholder="字母/数字/中文均可">' +
           (function () {
-            var old = S.users.filter(function (x) { return x.status === 'rejected'; })[0];
-            return old ? '<div class="form-tip warn">你上次提交的申请未通过：' +
-              g.UI.esc(old.rejectReason || '站长未说明理由') + '。可修改说明后重新提交。</div>' : '';
+            /* ⚠⚠ 原来取的是 S.users 里**第一个** status='rejected' 的用户，
+               完全不看是不是本人。
+
+               在线模式下 S.users 是服务端下发的**全体用户**列表，
+               所以这里显示的是**随便哪个被拒的人**的拒绝理由 ——
+               而且明确写着"你上次提交的申请未通过"。
+
+               两个后果叠加：
+                 ① 隐私：A 打开注册页，看到 B 的申请被拒及站长写的理由。
+                    那段理由常常包含真实姓名、班级这类信息。
+                 ② 误导：A 根本没提交过申请，却被告知"你上次未通过"，
+                    他会以为自己记错了，或者以为账号出了问题。
+
+               正确做法：只认本机自己提交过的那一次。
+               用 localStorage 记下本机提交时的昵称，只有对得上才显示。 */
+            var mine = null;
+            try {
+              var rawJ = localStorage.getItem(MY_APPLY_KEY);
+              var rec = rawJ ? JSON.parse(rawJ) : null;
+              if (rec && rec.nick) {
+                mine = S.users.filter(function (x) {
+                  return x.nick === rec.nick && x.status === 'rejected';
+                })[0];
+              }
+            } catch (e) { mine = null; }
+            return mine ? '<div class="form-tip warn">你上次提交的申请（' + g.UI.esc(mine.nick)
+              + '）未通过：' + g.UI.esc(mine.rejectReason || '站长未说明理由')
+              + '。可修改说明后重新提交。</div>' : '';
           })() +
           '<label class="field-label">申请说明（写给站长看，站长据此决定是否通过）</label>' +
           '<textarea class="field" id="rNote" rows="3" placeholder="例如：我是高二3班的李明，想进来和同学讨论算法题"></textarea>' +
@@ -696,6 +744,7 @@
           /* 在线模式：注册交给服务端，密码只在服务端 bcrypt */
           if (g.Online && g.Online.isOnline()) {
             g.Online.register(n, a, note).then(function () {
+              try { localStorage.setItem(MY_APPLY_KEY, JSON.stringify({ nick: n, at: Date.now() })); } catch (e2) { }
               g.UI.toast('申请已提交，请等待站长通过', 'ok');
               pane('login');
             }).catch(function (e) {
@@ -717,7 +766,22 @@
           };
           S.users.push(u);
           log('reg', '提交申请 ' + n + '：' + note.slice(0, 50));
-          save(true);
+          /* ⚠ 原来无条件提示"申请已提交"。
+             save() 写不进去时（存储满、隐私模式），
+             新账号只在内存里 —— 刷新就没了，
+             而用户看到的是"申请已提交，请等待站长通过"。
+
+             他会一直等站长通过，可站长那边根本看不到这条申请
+             （本地模式下压根没服务端），
+             或者在线模式下这条申请从未上传。
+             **等一个永远不会来的结果**，是最糟的一种失败反馈。 */
+          var okSave = save(true);
+          try { localStorage.setItem(MY_APPLY_KEY, JSON.stringify({ nick: n, at: Date.now() })); } catch (e2) { }
+          if (okSave === false) {
+            g.UI.toast('申请没能保存（存储已满）。请先清理空间再提交，否则刷新后会丢失。', 'err', 8000);
+            S.users.pop();   /* 撤回内存里的半截状态，避免界面与存储不一致 */
+            return;
+          }
           if (needReview) {
             g.UI.toast('申请已提交，请等待站长通过', 'ok');
             pane('login');
@@ -877,6 +941,8 @@
      而用户在断网/换设备时走的正是本地路径。
      降级路径不该比正常路径松，否则限流形同虚设：
      攻击者只要让目标断网就能绕过。 */
+  /* 本机提交过的注册申请昵称。用于只向本人回显拒绝理由（见注册面板）。 */
+  var MY_APPLY_KEY = 'wxlg_myapply';
   var LOCAL_LOGIN_MAX = 8;
   var LOCAL_LOGIN_KEY = 'wxlg_loginfail';
   var memLoginFail = 0;   /* localStorage 不可用时的兜底计数（见下） */
@@ -1258,7 +1324,8 @@
       var day = d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate();
       if (day !== lastDay) {
         lastDay = day;
-        box.appendChild(elc('div', 'time-sep', g.UI.fmtTime(m.ts)));
+        /* 用 fmtDay 而不是 fmtTime：分隔线要说的是"哪一天"，不是"几点" */
+        box.appendChild(elc('div', 'time-sep', g.UI.fmtDay(m.ts)));
       }
       box.appendChild(cachedMsgNode(m, r));
     });
@@ -1801,8 +1868,28 @@
         g.UI.esc(txt.length > 60 ? txt.slice(0, 60) + '…' : txt);
       row.appendChild(lab);
       row.onclick = function () {
-        var nd = document.querySelector('[data-mid="' + m.id + '"]');
-        if (nd) { nd.scrollIntoView({ block: 'center' }); nd.classList.add('flash'); setTimeout(function () { nd.classList.remove('flash'); }, 1200); }
+        /* ⚠ 和搜索跳转同一个毛病：只查一次，找不到就什么都不做。
+           置顶消息常常是很久以前的，不在已渲染的最近 300 条里 ——
+           点了没反应，用户只会以为这行文字不可点。
+           找不到就继续翻页找；真找不到（被撤回/删除）要说一句。 */
+        var tries = 0;
+        (function locate() {
+          var nd = document.querySelector('[data-mid="' + m.id + '"]');
+          if (nd) {
+            nd.scrollIntoView({ block: 'center' });
+            nd.classList.add('flash');
+            setTimeout(function () { nd.classList.remove('flash'); }, 1200);
+            return;
+          }
+          var total = ((S.messages && S.messages[r.id]) || []).length;
+          if (tries++ < 20 && MSG_PAGE < total) {
+            MSG_PAGE += 300;
+            renderChat();
+            setTimeout(locate, 30);
+            return;
+          }
+          g.UI.toast('没能定位到这条消息（可能已被撤回或删除）', 'err', 4000);
+        })();
       };
       if (g.ACL.can(me, 'msg.pin', r)) {
         var x = elc('button', 'pinned-x');
@@ -3337,12 +3424,31 @@
     d.innerHTML =
       '<div class="uc-head"><div id="ucAv"></div><div>' +
       '<div class="uc-nick">' + g.UI.esc(u.nick) + '</div>' +
-      '<div class="uc-real">申请说明：' + g.UI.esc(u.note || '未填写') + '</div>' +
+      /* ⚠ 申请说明是**写给站长看的私密信息**。
+         注册面板自己写着"写给站长看，站长据此决定是否通过"，
+         示例还是"我是高二3班的李明" —— 真实姓名、班级就写在里面。
+         而这里对**任何成员点开任何人**都原样显示。
+
+         申请人是按那个说明来写真实信息的，
+         他默认只有站长能看到；结果全站成员都能看到。
+         这属于"功能做对了，但放错了可见范围" ——
+         比没有这个功能更糟，因为它诱导用户交出信息。
+
+         只给有审核权限的人看。 */
+      (g.ACL.can(me, 'audit.review')
+        ? '<div class="uc-real">申请说明：' + g.UI.esc(u.note || '未填写') + '</div>'
+        : '') +
       '<div class="uc-role">' + g.ACL.roleName(u) + ' · 本群：' + rr + '</div></div></div>' +
       '<div class="uc-bio">' + g.UI.esc(u.bio || '这个人很懒，什么都没写。') + '</div>' +
       '<div class="uc-meta">注册：' + g.UI.fmtFull(u.createdAt) + ' · 最后活跃：' + g.UI.fmtFull(u.lastSeen || u.createdAt) + '</div>' +
       '<div class="uc-state">' + (u.banned ? '<span class="tag red">已封禁</span> ' : '') +
-      (g.ACL.muted(u) ? '<span class="tag orange">禁言中（剩 ' + g.ACL.muteLeft(u) + ' 秒）</span>' : '') + '</div>' +
+      /* ⚠ 这里还在直接显示秒数（E-042 的漏网之鱼）。
+         acl.js 里早就改成"还剩约 X 分钟/小时"了，
+         但那是 canSpeak 的提示，用户卡是另一个渲染路径 ——
+         同一个 bug 修了一半。
+         禁言 60 分钟这里就显示"剩 3600 秒"，
+         用户（和管理员）得自己换算成小时。 */
+      (g.ACL.muted(u) ? '<span class="tag orange">禁言中（' + g.ACL.muteLeftText(u) + '）</span>' : '') + '</div>' +
       '<div id="ucActs" class="uc-acts"></div>';
     var mo = g.UI.modal({ title: '用户资料', body: d, okText: null, cancelText: '关闭' });
     d.querySelector('#ucAv').appendChild(g.UI.avatar(u, 'lg'));
@@ -4398,14 +4504,44 @@
           });
         };
         sd.querySelector('#stExport').onclick = function () {
-          var blob = new Blob([JSON.stringify(S, null, 2)], { type: 'application/json' });
+          /* ⚠ 两个问题叠加（E-043 的最后一处残留）：
+
+             ① 导出后无条件提示"已导出备份"，但**没做任何成功判定**。
+                JSON.stringify 在状态里有循环引用、或含 undefined/BigInt 时会抛，
+                Blob/下载在某些浏览器会被策略拦掉 ——
+                这些情况下用户看到的是"已导出备份"，而文件根本没下来。
+
+             ② 更关键的：这份 JSON **不含媒体本体**（只有 mediaId，
+                图片视频在 IndexedDB 里）。按钮叫"导出 JSON"，
+                旁边另有一个"完整备份（含媒体）"。
+                只提示"已导出备份"会让人以为这就是完整备份 ——
+                于是照着"先备份再清理"操作，清理完媒体永久没了。
+
+             所以：① 真判成败；② 提示里必须说清"不含图片视频"。 */
+          var raw;
+          try { raw = JSON.stringify(S, null, 2); }
+          catch (err) {
+            g.UI.toast('导出失败：状态数据无法序列化（' + (err && err.message ? err.message : '未知原因') + '）', 'err', 6000);
+            return;
+          }
+          var blob;
+          try { blob = new Blob([raw], { type: 'application/json' }); }
+          catch (err2) {
+            g.UI.toast('导出失败：无法生成文件', 'err', 6000);
+            return;
+          }
           var a = document.createElement('a');
           a.href = URL.createObjectURL(blob);
           setTimeout(function () { try { URL.revokeObjectURL(a.href); } catch (e) { } }, 60000);
           a.download = 'chat-state-' + new Date().toISOString().slice(0, 10) + '.json';
-          a.click();
+          try {
+            a.click();
+          } catch (err3) {
+            g.UI.toast('导出失败：浏览器阻止了下载', 'err', 6000);
+            return;
+          }
           markBackup();
-          g.UI.toast('已导出备份', 'ok');
+          g.UI.toast('已导出（不含图片视频；要连媒体一起备份请用「完整备份」）', 'ok', 6000);
         };
         sd.querySelector('#stFile').onchange = function (e) {
           var f = e.target.files[0]; if (!f) return;
@@ -4421,10 +4557,33 @@
                     + Object.keys(o.media || {}).length + ' 个媒体）', 'ok');
                   mo.close();
                   try { location.reload(); } catch (e) { }
+                }).catch(function (err2) {
+                  /* ⚠ 原来没有 catch —— 还原媒体的过程失败（IndexedDB 配额满、
+                     某个文件损坏）时 Promise 直接 reject，**没有任何提示**。
+                     用户看着"正在导入"的界面一直停在那儿，
+                     既不知道成功也不知道失败，只能刷新，
+                     而刷新后是半套数据（状态进去了、媒体没进去）——
+                     这比导入失败更难收拾，因为他以为已经导完了。 */
+                  g.UI.toast('导入失败：' + (err2 && err2.message ? err2.message : '未知原因')
+                    + '。数据可能只还原了一部分，请勿清理旧数据。', 'err', 10000);
                 });
                 return;
               }
-              if (mergeState(o)) { save(); g.UI.toast('已导入并合并', 'ok'); mo.close(); }
+              /* ⚠ 两个问题：
+                 ① mergeState 返回 true 只说明"这份数据里有 users 字段"，
+                    不代表全部内容都进来了 —— 但只要它返回真就提示"已导入并合并"。
+                 ② save() 写不进去（配额满）时照样提示成功：
+                    内存里合并好了，刷新就全没了，而用户以为存住了。
+                    save() 现在返回是否写成，必须看它的结果。 */
+              if (mergeState(o)) {
+                var wrote = save(true);
+                if (wrote === false) {
+                  g.UI.toast('已合并但没能存下来（存储已满），刷新后会丢失。请先清理空间再重试。', 'err', 10000);
+                } else {
+                  g.UI.toast('已导入并合并（与现有数据合并，不是替换）', 'ok');
+                  mo.close();
+                }
+              }
               else g.UI.toast('文件格式不正确', 'err');
             } catch (er) { g.UI.toast('解析失败', 'err'); }
           };
