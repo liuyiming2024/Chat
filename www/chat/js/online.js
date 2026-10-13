@@ -296,8 +296,15 @@
   var OUTBOX_TTL_MS = 7 * 24 * 3600 * 1000;      /* 7 天以上就没什么意义了 */
 
   function outbox() {
-    try { return JSON.parse(localStorage.getItem(OUTBOX_KEY) || '[]'); }
-    catch (e) { return []; }
+    try {
+      var v = JSON.parse(localStorage.getItem(OUTBOX_KEY) || '[]');
+      /* ⚠ 原来只 try 了 JSON.parse 的语法错误，没校验结果类型。
+         localStorage 里存的是 `null`、`{}`、`"abc"` 时 parse 不抛错，
+         返回的不是数组 —— 后面 list.push / list.filter 直接 TypeError，
+         表现为"一发消息就崩"，而崩在队列里，用户根本不知道为什么。
+         这个 key 是用户可改的（开发者工具里手改、别的脚本写脏）。 */
+      return Array.isArray(v) ? v : [];
+    } catch (e) { return []; }
   }
 
   function outboxBytes(list) {

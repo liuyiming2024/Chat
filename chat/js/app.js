@@ -317,6 +317,9 @@
     /* 唯一的同步入口：无论 file:// 直开、server.py 还是 GitHub Pages，
        都通过 Sync 层收敛——收到任何一份 state 都用同一套 merge 合并。 */
     g.Sync.init({
+      /* 明确告知状态 key：storage 兜底通道只认这一个，
+         不要把通知设置、离线队列等别的 wxlg_ key 当成状态来合并 */
+      stateKey: KEY,
       onState: function (inS) {
         if (mergeState(inS)) renderAllSoon();
       },
@@ -876,6 +879,7 @@
      攻击者只要让目标断网就能绕过。 */
   var LOCAL_LOGIN_MAX = 8;
   var LOCAL_LOGIN_KEY = 'wxlg_loginfail';
+  var memLoginFail = 0;   /* localStorage 不可用时的兜底计数（见下） */
   function localLoginFail() {
     try {
       var raw = JSON.parse(localStorage.getItem(LOCAL_LOGIN_KEY) || '{}');
@@ -885,7 +889,16 @@
       raw.at = now2;
       localStorage.setItem(LOCAL_LOGIN_KEY, JSON.stringify(raw));
       return raw.n;
-    } catch (e) { return 0; }
+    } catch (e) {
+      /* ⚠ 原来 catch 里 return 0 —— 意思是"没有失败记录，不限制"。
+         问题：localStorage 写不进去时（隐私模式、配额满）
+         每次都走这条分支，**限流被完全绕过**，想试多少次试多少次。
+         **安全控制失败时必须"闭"而不是"开"**：
+         记不住就当已经失败很多次，直接锁住。
+         宁可误伤一个用隐私模式的用户，也不能让限流形同虚设。 */
+      memLoginFail++;
+      return memLoginFail;
+    }
   }
   function clearLocalLoginFail() {
     try { localStorage.removeItem(LOCAL_LOGIN_KEY); } catch (e) { }
@@ -2308,7 +2321,7 @@
         S.invites = S.invites || [];
         S.invites.push({
           code: code, room: r.id, by: me.id,
-          expireAt: h > 0 ? Date.now() + h * 3600000 : 0,
+          expireAt: h > 0 ? serverNowSafe() + h * 3600000 : 0,
           maxUse: u, used: 0, createdAt: Date.now()
         });
         save();
@@ -2356,7 +2369,8 @@
 
         var inv = (S.invites || []).filter(function (x) { return x.code === c; })[0];
         if (!inv) { tip.textContent = '口令不存在或已失效'; return false; }
-        if (inv.expireAt && inv.expireAt < Date.now()) { tip.textContent = '口令已过期'; return false; }
+        /* 同上：expireAt 是服务端时间戳，用本机钟比会提前/延后失效 */
+        if (inv.expireAt && inv.expireAt < serverNowSafe()) { tip.textContent = '口令已过期'; return false; }
         if (inv.maxUse > 0 && inv.used >= inv.maxUse) { tip.textContent = '口令使用次数已用完'; return false; }
         var r = findRoom(inv.room);
         if (!r) { tip.textContent = '目标房间已被解散'; return false; }
@@ -4512,10 +4526,26 @@
     /* 草稿：输入即记录 */
     var ta = $('input');
     if (ta) {
+      /* ⚠ 注释写着"输入即记录"，其实只记进了内存里的 drafts 对象，
+         没有触发落盘 —— drafts 是靠 save() 顺带写进去的。
+         结果：打了一半关掉页面，草稿就没了。
+         用户感知是"我明明写了，怎么没了"，而且不会怀疑是自己没保存，
+         因为草稿本来就该自动留着。
+
+         加 800ms 防抖落盘：打字过程中不会每一下都写（那样也卡），
+         停手不到一秒就存住。 */
+      var draftTimer = null;
       ta.addEventListener('input', function () {
         drafts[cur] = ta.value;
         autoGrow(ta);
         typingAt = now();
+        if (draftTimer) clearTimeout(draftTimer);
+        draftTimer = setTimeout(function () { save(true); }, 800);
+      });
+      /* 切后台/关页面前补一次，防抖那 800ms 的窗口就补上了 */
+      window.addEventListener('pagehide', function () { save(true); });
+      document.addEventListener('visibilitychange', function () {
+        if (document.hidden) save(true);
       });
     }
     /* 语音：点一下开始，再点一下发送；或按住说话 */
@@ -4553,6 +4583,27 @@
         fs.forEach(function (f, i) { setTimeout(function () { sendMediaFile(f, 'image'); }, i * 350); });
       });
     });
+    /* ⚠ 粘贴图片：截图后 Ctrl+V 是最自然的发图方式，原来完全没接。
+       用户粘了一张图，光标后面什么都没出现，他只会以为"粘贴坏了"，
+       不会想到是这个功能不存在 —— 因为别的聊天软件都有。
+       只处理图片：粘文字仍走浏览器默认行为，不能被抢走。 */
+    ta.addEventListener('paste', function (e) {
+      var items = e.clipboardData && e.clipboardData.items;
+      if (!items) return;
+      var imgs = [];
+      for (var i = 0; i < items.length; i++) {
+        var it = items[i];
+        if (it.kind === 'file' && /^image\//.test(it.type || '')) {
+          var f = it.getAsFile();
+          if (f) imgs.push(f);
+        }
+      }
+      if (!imgs.length) return;
+      e.preventDefault();   /* 有图才拦，粘文字照常 */
+      imgs.forEach(function (f, i2) {
+        setTimeout(function () { sendMediaFile(f, 'image'); }, i2 * 350);
+      });
+    });
     /* Markdown 工具条：插入语法 */
     Array.prototype.forEach.call(document.querySelectorAll('.md-btn[data-ins]'), function (b) {
       b.onclick = function () {
@@ -4583,7 +4634,16 @@
     };
     $('btnRoomSet').onclick = function () { roomMenu(findRoom(cur)); };
     $('btnEditNotice').onclick = function () { editNotice(findRoom(cur)); };
-    $('searchInput').addEventListener('input', function (e) { roomFilter = e.target.value; renderSidebar(); });
+    /* ⚠ 原来每敲一个字就 renderSidebar() 重建整个房间列表（S-076 只修了搜索弹窗，
+       侧栏这个框漏了）。房间多的时候打字明显卡。
+       而且它和弹窗里那个搜索是同一个功能的两处入口，
+       只修一处会让人以为"防抖做了"，其实另一半还在卡。 */
+    var sideSearchTimer = null;
+    $('searchInput').addEventListener('input', function (e) {
+      roomFilter = e.target.value;
+      if (sideSearchTimer) clearTimeout(sideSearchTimer);
+      sideSearchTimer = setTimeout(renderSidebar, 180);
+    });
     /* 抽屉：原来只有 ☰ 能开合。手机上侧栏是覆盖式的，
        打开后没有遮罩、没有关闭按钮、点外面也没反应 —— 出不来。
        补三个出口：点遮罩、点侧栏外任意处、按 ESC。 */
@@ -4641,9 +4701,22 @@
     box.addEventListener('dragover', function (e) { e.preventDefault(); });
     box.addEventListener('drop', function (e) {
       e.preventDefault();
-      var f = e.dataTransfer.files[0];
-      if (!f) return;
-      sendMediaFile(f, /^video\//.test(f.type) ? 'video' : 'image');
+      var fs = e.dataTransfer && e.dataTransfer.files;
+      if (!fs || !fs.length) return;
+      /* ⚠ 原来只取 files[0]，多出来的**静默丢弃**。
+         用户一次拖三张图进来，只发出去一张，界面上没有任何提示 ——
+         他会以为三张都发了，等对方问"另外两张呢"才发现。
+         改成逐个发，并在多文件时给一句提示。 */
+      var list = Array.prototype.slice.call(fs);
+      if (list.length > 1) g.UI.toast('正在发送 ' + list.length + ' 个文件…', 'ok');
+      var i = 0;
+      (function next() {
+        if (i >= list.length) return;
+        var f = list[i++];
+        Promise.resolve(sendMediaFile(f, /^video\//.test(f.type) ? 'video' : 'image'))
+          .catch(function () { })
+          .then(next);
+      })();
     });
   }
 
