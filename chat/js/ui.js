@@ -125,8 +125,20 @@
     return { close: close, body: body, setTitle: setTitle };
   }
 
-  function confirm(text, onOk) {
-    return modal({ title: '确认', body: '<div class="pad">' + esc(text) + '</div>', okText: '确定', onOk: onOk });
+  /* ⚠ 第三个参数 onCancel 必须透传（S-117，考古补回）。
+     原来 confirm 只接受 (text, onOk)，**丢弃了所有后续参数**，
+     而 modal 本身是支持 onCancel 的（且它的 onCancel 曾一度从未被调用，见 E-073）。
+     调用方写了第二个回调却永远不会执行，也不报错。 */
+  function confirm(text, onOk, onCancel, opts) {
+    opts = opts || {};
+    return modal({
+      title: opts.title || '确认',
+      body: '<div class="pad">' + esc(text) + '</div>',
+      okText: opts.okText || '确定',
+      cancelText: opts.cancelText === undefined ? '取消' : opts.cancelText,
+      onOk: onOk,
+      onCancel: onCancel
+    });
   }
 
   function prompt(title, label, dflt, onOk, opts) {
