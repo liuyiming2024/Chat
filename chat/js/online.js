@@ -498,8 +498,10 @@
   /* custom 为自定义口令（INV-CUSTOM，可空）。服务端会校验权限与合法性，
      前端只是把输入传过去 —— 校验必须以服务端为准。 */
   function inviteCreate(room, hours, maxUse, custom) {
-    var args = { p_room: room, p_hours: hours || 0, p_max_use: maxUse || 0 };
-    if (custom) args.p_code = String(custom);
+    /* p_code **总是要传**（本次踩坑）：
+       服务端已 drop 掉 3 参数签名，只留 4 参数版。
+       如果这里 custom 为空就不传，调用会退化成 3 参数 → 找不到函数。 */
+    var args = { p_room: room, p_hours: hours || 0, p_max_use: maxUse || 0, p_code: custom ? String(custom) : '' };
     return g.SB.rpc('invite_create', args);
   }
   function inviteRedeem(code) {
