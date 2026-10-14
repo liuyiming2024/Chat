@@ -1008,8 +1008,24 @@
     return true;
   }
 
+  /**
+   * 系统消息。
+   *
+   * ⚠ 全仓系统消息**都不进服务端**（E-081），包括
+   *   「X 通过了审核」「X 被禁言」「站长已转让给 X」「消息已被管理员清空」……
+   *   这些恰恰是**最该让所有人看到**的内容 —— 一个只在本机出现的
+   *   "站长已转让" 提示，会让其他所有人完全不知道站长换人了。
+   *
+   * 接服务端是后续的事；在接之前，这里如实标注，不假装它同步过。
+   * 提示只在**在线模式**下给一次（本地模式本就没有服务端，说了没意义）。
+   */
+  var _sysOfflineTip = false;
   function sysMsg(rid, text) {
     msgs(rid).push({ id: uid('msg'), room: rid, from: 'system', type: 'system', text: text, ts: now() });
+    if (!_sysOfflineTip && g.Online && g.Online.isOnline && g.Online.isOnline()) {
+      _sysOfflineTip = true;
+      g.UI.toast('系统提示只记录在本机，暂不会同步给其他成员', 'err', 6000);
+    }
   }
 
   /* 本地模式下每个房间的消息上限（S-059）。
@@ -2328,6 +2344,13 @@
       g.UI.toast('已置顶', 'ok');
     }
     save(); renderChat();
+    /* ⚠ 置顶只改了本地（E-074-080-081 E-074）：换设备就消失，别人也看不到。
+       在真正接服务端之前，**不能假装同步成功** ——
+       否则用户以为全站都置顶了，实际只有自己这台机器看得见，
+       等他换手机登录发现置顶没了，只会以为出了 bug。 */
+    if (g.Online && g.Online.isOnline && g.Online.isOnline()) {
+      g.UI.toast('置顶只改了本机，其他设备暂不会同步', 'err', 5000);
+    }
   }
 
   /* 置顶栏：显示在本会话顶部 */
@@ -2737,7 +2760,47 @@
     Object.keys(S.messages).forEach(function (rid) {
       (S.messages[rid] || []).forEach(function (m) { if (m.mediaId && !m.deleted) mediaCount++; });
     });
-    return { stateKB: Math.round(used / 1024), mediaCount: mediaCount, quotaKB: 5120 };
+    /* ⚠ 配额原来硬编码 5120 KB（E-087-QUOTA），且从不实测。
+       各家浏览器上限并不一致（Chrome/Firefox 约 5MB，Safari 更紧，
+       无痕模式可能只有几十 KB）。写死 5120 的后果：
+         · 上限实际更小的浏览器里，用户会在**毫无预警**的情况下写满
+           —— 而提示要等到"用了 80%"才弹，那时早已写不进去了；
+         · 上限更大的浏览器里，白白浪费可用空间。
+       实测一次即可（写入配额探测开销很小），测不到再退回 5120。 */
+    return { stateKB: Math.round(used / 1024), mediaCount: mediaCount, quotaKB: probeQuotaKB() };
+  }
+
+  /**
+   * 实测 localStorage 剩余额度。
+   *
+   * 做法：不断写入递增大小的探测串，直到写失败为止，失败前的量即为上限。
+   * 探测串用完立刻删除，不留垃圾。
+   * ⚠ 探测本身也可能失败（无痕模式直接禁用），失败就返回保守的 5120，
+   *   不能返回 0 或 Infinity —— 那会让"用了百分之多少"的判断失去意义。
+   */
+  var _quotaCache = null;
+  function probeQuotaKB() {
+    if (_quotaCache) return _quotaCache;
+    var PROBE = 'chat_quota_probe_';
+    /* ⚠ 步长取 1MB、最多 10 步，而不是 256KB × 80 步。
+       探测是**同步**写入，步进太细会连写几十次把界面卡住 ——
+       为了一个显示用的数字卡住主线程不值得。
+       精度 1MB 对"用了百分之多少"这个用途已经够了。 */
+    var step = 1024 * 1024, max = 10;
+    var ok = 0, i;
+    try {
+      var chunk = new Array(step + 1).join('x');
+      for (i = 1; i <= max; i++) {
+        localStorage.setItem(PROBE + i, chunk);
+        ok = i * step;
+      }
+    } catch (e) { /* 写满即停，ok 保持上一次成功的值 */ }
+    try {
+      for (var j = 1; j <= max; j++) localStorage.removeItem(PROBE + j);
+    } catch (e) { }
+    /* 一次都没写进去 = 存储基本不可用，返回 0 让上层如实告警 */
+    _quotaCache = Math.round(ok / 1024) || 0;
+    return _quotaCache;
   }
 
   function checkStorageQuota() {
@@ -3677,6 +3740,12 @@
         if (!g.ACL.can(me, 'msg.remove', r)) { g.UI.toast('没有清空权限', 'err'); return; }
         g.UI.confirm('清空当前会话的全部消息？', function () {
           S.messages[r.id] = []; sysMsg(r.id, '消息已被管理员清空'); log('clear', '', r.id); save();
+          /* ⚠ 清空只清本地（E-080）：其他人的历史一条没少。
+             管理员看到"消息已清空"会以为全站都清了 ——
+             这是最需要说清的一类：他做的是一个**以为生效、实际只对自己生效**的操作。 */
+          if (g.Online && g.Online.isOnline && g.Online.isOnline()) {
+            g.UI.toast('只清空了本机，其他成员的历史未受影响', 'err', 6000);
+          }
         });
         return;
       }
@@ -5900,7 +5969,15 @@
       '😭', '😡', '🥳', '😱', '🤯', '🫡', '👍', '👏', '🙏', '💪', '🎉', '❤️',
       '🔥', '✨', '🌙', '☀️', '🍀', '🐟', '🚀', '💡', '📚', '💻', '🎵', '⭐'].forEach(function (s) {
         var b = elc('button', 'emoji', s);
-        b.onclick = function () { $('input').value += s; p.remove(); $('input').focus(); };
+        /* ⚠ 原来是 value += s，永远追加到末尾（E-094）。
+           用户把光标放在句子中间点表情，表情却跑到最后 ——
+           他必须再手动剪一段挪回去，等于这个功能没用。
+           改成插入到光标处，并保持光标在插入内容之后。 */
+        /* ⚠ 已有 insertAtCursor(text) 是**单参数**（E-094-EMOJI，@ 提及那处也在用）。
+           这里差点写成两参数版本：那样 text 会拿到 DOM 元素，
+           插入的是 "[object HTMLTextAreaElement]" —— 而且不报错。
+           同名函数重复定义更危险：会让 @ 提及那两处静默失效。 */
+        b.onclick = function () { insertAtCursor(s); p.remove(); $('input').focus(); };
         p.appendChild(b);
       });
     var wrap = $('input').parentNode;

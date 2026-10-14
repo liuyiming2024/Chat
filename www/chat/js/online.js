@@ -136,7 +136,14 @@
   function tUser(u) {
     return {
       id: u.id, nick: u.nick, note: u.realName || '', role: u.role,
-      status: u.status === 'banned' ? 'rejected' : (u.status || 'active'),
+      /* ⚠ 原来把 'banned' 映射成 'rejected'（E-076-BANNED）。
+         这两个是**完全不同的两件事**：
+           banned  = 曾经通过、后来被封禁的正式用户
+           rejected = 注册申请被站长打回、从未进过站的人
+         混成一个之后，管理面板里一个被封禁的老用户会被当成"申请未通过"的人，
+         出现在待审核列表里，还能被"重新通过" —— 等于一条绕开封禁的路。
+         所以这里如实保留 banned，前端另有 u.banned 布尔可用。 */
+      status: u.status || 'active',
       perms: u.perms || [], banned: u.status === 'banned',
       mutedUntil: u.mutedUntil || 0, bio: u.bio || '',
       createdAt: u.createdAt || 0, updatedAt: u.lastSeen || u.createdAt || 0,
