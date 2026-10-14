@@ -180,6 +180,17 @@ create table if not exists logs (
      出事之后查日志，查到的却是不完整的日志。** */
   rev        bigint
 );
+
+/* ⚠ 补列（SCHEMA-ALTER）：create table 用的是 if not exists，
+   **已存在的表会被整段跳过** —— 于是表定义里后加的列永远加不上。
+   线上实测就是这个状态：messages 没有 edited_at、logs 没有 rev，
+   而后面的 create index ... on logs(rev) 直接报 column does not exist，
+   psql 开了 ON_ERROR_STOP=1，整份迁移就停在那一行，后面全没建。
+
+   所以凡是"后来往已有表里加的列"，都必须在这里显式 alter 补一次。 */
+alter table messages add column if not exists edited_at timestamptz;
+alter table logs      add column if not exists rev bigint;
+
 create index if not exists logs_time_idx on logs (created_at desc);
 create index if not exists logs_rev_idx on logs (rev);
 
@@ -547,7 +558,17 @@ begin
   -- 写法说明：PostgreSQL 的普通字符串字面量**不做** \uXXXX 转义，
   -- POSIX 正则也不支持 \p{Han}。所以这里直接写汉字范围的字面量，
   -- 零宽/控制字符用 chr() 显式比对（最稳，不依赖正则方言）。
-  if p_nick !~ '^[一-龥a-zA-Z0-9_\-. ·‧]{1,24}$' then
+  -- ⚠ 连字符必须放在字符类**末尾**（PG-REGEX，本次踩坑）。
+  --   原来写成 '_\-. '，而 PostgreSQL 的 POSIX 正则在方括号内
+  --   **不把反斜杠当转义符** —— 于是 '\-.' 被解析成
+  --   从 '\'(0x5C) 到 '.'(0x2E) 的范围，起点大于终点，
+  --   整条语句直接报 "invalid regular expression: invalid range end"。
+  --   因为 psql 开了 ON_ERROR_STOP=1，这一个错误让**整份 schema.sql 停在这里**，
+  --   后面所有函数（含本次的自定义口令）一个都没建起来。
+  --
+  --   这类错误的教训：改 PG 正则必须能本地验证，否则只能靠实跑发现，
+  --   而实跑的代价是整份迁移挂掉。
+  if p_nick !~ '^[一-龥a-zA-Z0-9_. ·‧-]{1,24}$' then
     raise exception '昵称只能包含中英文、数字、下划线、连字符和空格';
   end if;
   if p_nick ~ '[[:cntrl:]]' then
@@ -1074,6 +1095,15 @@ create index if not exists invites_room_idx on invites(room_id, created_at desc)
 
 -- 生成邀请码。
 -- 鉴权：登录 + 是本房间成员（或站长/管理员）+ 该成员没被单独禁掉邀请权。
+
+-- ⚠ 必须先删掉旧的 3 参数签名（PG-OVERLOAD，本次踩坑）。
+--   PostgreSQL 的 CREATE OR REPLACE **改不了参数列表**：
+--   加了第 4 个参数后，它不是替换原函数，而是**新建一个重载**。
+--   于是两个版本并存，而 grant 只给了旧签名 ——
+--   结果：不传自定义口令时走老版本（正常），传了就走新版本（permission denied）。
+--   "有时能用有时没权限"这种错最难查，因为它看起来像权限配置飘了。
+drop function if exists invite_create(text, int, int);
+
 create or replace function invite_create(p_room text, p_hours int default 24, p_max_use int default 5,
                                           p_code text default null)
 returns json language plpgsql volatile security definer
@@ -2338,7 +2368,7 @@ create policy media_update on storage.objects
 --   invite_redeem 也要给 anon：邀请码的意义就是"任何人拿到都能用"，
 --   身份校验在函数内部做（必须已登录 + 已过门禁），不是靠 grant 层挡。
 -- ==================================================================
-grant execute on function invite_create(text, int, int) to anon, authenticated;
+grant execute on function invite_create(text, int, int, text) to anon, authenticated;
 grant execute on function invite_redeem(text) to anon, authenticated;
 grant execute on function invite_revoke(text) to anon, authenticated;
 grant execute on function invite_list() to anon, authenticated;
