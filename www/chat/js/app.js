@@ -1654,7 +1654,7 @@
          以为发出去了则连补救的机会都没有。
          所以这里必须给出持久可见的标识，并且能点一下重试。 */
       if (m.failed && !m.pending) {
-        /* E-091-FAILED：失败态必须看得见，否则发送失败的消息和正常消息一模一样。 */
+        /* E-082-FAILED：失败态必须看得见，否则发送失败的消息和正常消息一模一样。 */
         var fd = elc('span', 'msg-failed', '未发出');
         fd.title = '点击重试';
         fd.style.cursor = 'pointer';
@@ -2544,7 +2544,11 @@
         if (now() - recStart >= VOICE_MAX_MS) stopRecord(true);
       }, 200);
       var bv = $('btnVoice');
-      if (bv) { bv.classList.add('recording'); bv.textContent = '⏹'; }
+      /* E-091-ICON：同上，录音中也用 SVG 而不是 emoji。 */
+      if (bv) {
+        bv.classList.add('recording');
+        bv.innerHTML = '<svg class="ic ic-fill" aria-hidden="true"><use href="#i-stop"/></svg>';
+      }
     }).catch(function (e) {
       g.UI.toast('无法访问麦克风：' + (e && e.name ? e.name : '未知原因'), 'err');
     });
@@ -2643,7 +2647,10 @@
       g.Media.get(m.mediaId).then(function (u) {
         if (!u) { g.UI.toast('这条语音没同步到这台设备'); return; }
         if (!audio) audio = new Audio(u);
-        play.textContent = '⏸';
+        /* E-091-ICON：用 SVG 而不是 emoji。
+           textContent 会把 setPlayIcon 写进去的 SVG 整个顶掉，
+           播放中变回 emoji，暂停后再变回 SVG —— 同一个按钮两套样子。 */
+        play.innerHTML = '<svg class="ic ic-fill" aria-hidden="true"><use href="#i-pause"/></svg>';
         bars.classList.add('playing');
         audio.onended = function () { setPlayIcon(play); bars.classList.remove('playing'); };
         audio.play().catch(function () { g.UI.toast('播放失败'); setPlayIcon(play); bars.classList.remove('playing'); });
@@ -5501,6 +5508,20 @@
         };
         sd.querySelector('#stFile').onchange = function (e) {
           var f = e.target.files[0]; if (!f) return;
+          /* ⚠ 导入没有二次确认（E-099-IMPORT）。
+             选错文件就直接 mergeState 或 restoreFullBackup，
+             后者还会 location.reload() —— 用户来不及看清发生了什么，
+             页面已经变成新数据。对照：同面板的「重置站点」有 confirm，
+             **更危险的导入反而没有**，这是明显的不一致。
+
+             确认文案必须说出「会覆盖现有数据」，只说"确定导入吗"没有意义 ——
+             用户以为导入是"追加"。 */
+          if (!window.confirm('即将用「' + f.name + '」覆盖现有的全部聊天数据。\n\n'
+            + '当前设备上的记录会被替换，且此操作无法撤销。\n\n'
+            + '确定要继续吗？（建议先导出一份现有备份）')) {
+            e.target.value = '';
+            return;
+          }
           var fr = new FileReader();
           fr.onload = function () {
             try {
