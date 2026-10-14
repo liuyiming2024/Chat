@@ -41,7 +41,8 @@ const FILES = ['LICENSE', 'README.md'];
    这里检查它确实不在了。 */
 const FORBIDDEN = ['www/electron'];
 
-/* www/index.html 是【特制】的重定向页（一行 meta refresh），
+/* KEEP-WWW：www/ 是网页版与旧客户端的打包目录，必须持续可用。
+   www/index.html 是【特制】的重定向页（一行 meta refresh），
    让 APP 打开直接进聊天室。它不是根 index.html 的副本，
    绝不能被覆盖 —— 所以不在同步列表里，且 --check 时会专门验证。 */
 const ENTRY = 'www/index.html';

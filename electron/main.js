@@ -40,6 +40,12 @@ function createWindow() {
 
   win.loadFile(entry);
 
+  /* ⚠ Web 版（www/）必须继续可用（KEEP-WWW）。
+     原生端是**新增**，不是替换：www/ 仍被 Capacitor 与 Electron 打包，
+     旧的安装包、网页版、桌面版都还在用它。
+     在原生端达到同等完成度之前，删掉 www/ 等于让用户没得用。
+     所以 native/ 与 www/ 会长期并存，两端的 bug 都要修，不能只修一边。 */
+
   /* 页面（比如点击通知后）请求把窗口带到前台 */
   require('electron').ipcMain.on('chat:focus', () => {
     if (win.isMinimized()) win.restore();

@@ -53,5 +53,9 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 
+    // Markdown 渲染。Web 版有 chat/js/markdown.js，原生端需要等价物，
+    // 否则消息里的 **粗体**、`代码` 会原样露出来 —— 那是明显的功能倒退。
+    implementation("io.noties.markwon:core:4.6.2")
+
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
