@@ -181,7 +181,7 @@ create table if not exists logs (
   rev        bigint
 );
 
-/* ⚠ 补列：create table 用的是 if not exists，
+/* ⚠ 补列（SCHEMA-ALTER）：create table 用的是 if not exists，
    **已存在的表会被整段跳过** —— 于是表定义里后加的列永远加不上。
    线上实测就是这个状态：messages 没有 edited_at、logs 没有 rev，
    而后面的 create index ... on logs(rev) 直接报 column does not exist，
@@ -558,7 +558,7 @@ begin
   -- 写法说明：PostgreSQL 的普通字符串字面量**不做** \uXXXX 转义，
   -- POSIX 正则也不支持 \p{Han}。所以这里直接写汉字范围的字面量，
   -- 零宽/控制字符用 chr() 显式比对（最稳，不依赖正则方言）。
-  -- ⚠ 连字符必须放在字符类**末尾**（本次踩坑）。
+  -- ⚠ 连字符必须放在字符类**末尾**（PG-REGEX，本次踩坑）。
   --   原来写成 '_\-. '，而 PostgreSQL 的 POSIX 正则在方括号内
   --   **不把反斜杠当转义符** —— 于是 '\-.' 被解析成
   --   从 '\'(0x5C) 到 '.'(0x2E) 的范围，起点大于终点，
@@ -1096,7 +1096,7 @@ create index if not exists invites_room_idx on invites(room_id, created_at desc)
 -- 生成邀请码。
 -- 鉴权：登录 + 是本房间成员（或站长/管理员）+ 该成员没被单独禁掉邀请权。
 
--- ⚠ 必须先删掉旧的 3 参数签名（本次踩坑）。
+-- ⚠ 必须先删掉旧的 3 参数签名（PG-OVERLOAD，本次踩坑）。
 --   PostgreSQL 的 CREATE OR REPLACE **改不了参数列表**：
 --   加了第 4 个参数后，它不是替换原函数，而是**新建一个重载**。
 --   于是两个版本并存，而 grant 只给了旧签名 ——
