@@ -180,6 +180,17 @@ create table if not exists logs (
      出事之后查日志，查到的却是不完整的日志。** */
   rev        bigint
 );
+
+/* ⚠ 补列：create table 用的是 if not exists，
+   **已存在的表会被整段跳过** —— 于是表定义里后加的列永远加不上。
+   线上实测就是这个状态：messages 没有 edited_at、logs 没有 rev，
+   而后面的 create index ... on logs(rev) 直接报 column does not exist，
+   psql 开了 ON_ERROR_STOP=1，整份迁移就停在那一行，后面全没建。
+
+   所以凡是"后来往已有表里加的列"，都必须在这里显式 alter 补一次。 */
+alter table messages add column if not exists edited_at timestamptz;
+alter table logs      add column if not exists rev bigint;
+
 create index if not exists logs_time_idx on logs (created_at desc);
 create index if not exists logs_rev_idx on logs (rev);
 
