@@ -1,4 +1,8 @@
--- 临时执行脚本占位。
--- 用完必须清空：本文件在公开仓库且会被 Actions 直接执行，
--- 绝不能留下任何凭据或破坏性语句。
--- 用法：把要执行的 SQL 粘到这里，跑「数据库执行」workflow，然后立刻清空。
+-- 临时排查（用完即清）
+\echo '=== invite 函数 ==='
+select p.proname, pg_get_function_identity_arguments(p.oid) as args
+from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+where n.nspname='public' and p.proname like 'invite%' order by p.proname, args;
+\echo '=== user_register 是否含 S-100 校验（看函数体长度变化）==='
+select proname, length(prosrc) as srclen from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+where n.nspname='public' and proname in ('user_register','session_cleanup','invite_list');
