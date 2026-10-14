@@ -1,7 +1,5 @@
--- 临时：验证并落地自定义口令相关的服务端改动（用完即清）
+-- 临时：落地自定义口令服务端改动（用完即清）
 drop function if exists invite_create(text, int, int);
-
-crea
 
 create or replace function invite_create(p_room text, p_hours int default 24, p_max_use int default 5,
                                           p_code text default null)
