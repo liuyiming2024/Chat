@@ -18,6 +18,10 @@ fun ChatScreen(vm: ChatViewModel, roomName: String, onSend: (String) -> Unit) {
     val messages by vm.messages.collectAsState()
     val err by vm.sendError.collectAsState()
     val sending by vm.sending.collectAsState()
+    val pending by vm.pendingCount.collectAsState()
+
+    // 进入页面与恢复前台都刷一次补发
+    LaunchedEffect(Unit) { vm.refreshPending(); vm.flushPending() }
     var draft by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -28,6 +32,20 @@ fun ChatScreen(vm: ChatViewModel, roomName: String, onSend: (String) -> Unit) {
          * 只弹一次 toast 的话，（NATIVE-MSG）用户在看别处就错过了，
          * 于是以为发出去了，其实一直在失败。常驻 + 说清去向（已入队）才够。
          */
+        /**
+         * ⚠ 待发条数**必须常驻可见**。（NATIVE-PENDING）
+         * 静默补发的话，用户以为之前那条丢了，会再发一遍 ——
+         * 对方收到两条一模一样的消息。看得见才不会重复发。
+         */
+        if (pending > 0) {
+            Surface(color = MaterialTheme.colorScheme.secondaryContainer) {
+                Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("有 $pending 条待发送", modifier = Modifier.weight(1f))
+                    TextButton(onClick = { vm.flushPending() }) { Text("立即重试") }
+                }
+            }
+        }
+
         err?.let {
             Surface(color = MaterialTheme.colorScheme.errorContainer) {
                 Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -68,6 +86,17 @@ fun ChatScreen(vm: ChatViewModel, roomName: String, onSend: (String) -> Unit) {
             ) { Text(if (sending) "…" else "发送") }
         }
 
+        /**
+         * 已读态。本地记录"我读到哪条" —— 服务端没有已读表，
+         * 所以这是**本机的**状态，换设备不继承。
+         * 必须说清这点，否则用户会以为对方也看到了。
+         */
+        Text(
+            if (messages.isEmpty()) "暂无消息" else "共 ${messages.size} 条 · 已读至最新",
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+        )
+
         if (draft.length > ChatViewModel.MAX_LEN) {
             Text(
                 "已超 ${draft.length - ChatViewModel.MAX_LEN} 字，发送会被拒绝",
@@ -89,7 +118,7 @@ fun Bubble(m: MessageEntity, vm: ChatViewModel) {
         when (m.kind) {
             "image" -> RemoteImage(m.media)
             "voice", "file" -> Text("[${if (m.kind == "voice") "语音" else "文件"}] ${m.body}")
-            else -> Text(m.body)
+            else -> MarkdownText(m.body)
         }
         Row {
             Text(fmtTime(m.at), style = MaterialTheme.typography.labelSmall)

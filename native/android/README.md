@@ -28,8 +28,14 @@ Android 用 Capacitor（`webDir: "www"`），桌面用 Electron（`loadFile(www/
 
 ## 状态
 
-- [x] 项目骨架、认证、网络层、本地库、同步引擎
-- [ ] 消息流 UI、媒体、通知、设置
+- [x] 项目骨架、认证、网络层（ApiClient）、本地库（Room 五表）
+- [x] SyncEngine：state_peek 比序号 → state_delta 增量；补发队列**成功后才删**；前后台降频
+- [x] 消息流：Compose 列表 + 输入框；撤回超时标「已超时」而非消失
+- [x] 媒体：三步上传协议（prepare → 传字节 → **commit 绝不能省**）；本地缓存落 filesDir + SHA-256 去重
+- [x] 多语言：zh-CN/en，缺 key 不返回 key 本身；中英词典 key 双向校验
+- [x] 设置页、系统通知、Markdown 渲染（Markwon）
+- [x] 补发队列 UI：**待发条数常驻可见**（静默补发会让用户重发一遍）
+- [ ] 真机编译验证（需 JDK 17 + Android SDK）
 
 ## 构建
 

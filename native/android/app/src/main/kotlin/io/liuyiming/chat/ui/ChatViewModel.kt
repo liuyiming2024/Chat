@@ -78,6 +78,40 @@ class ChatViewModel(private val app: ChatApp) : ViewModel() {
         return (Clock.now() - m.at) <= limitMs
     }
 
+    /** 待发队列条数。>0 时界面上要让用户看见 —— 看不见等于没有。 */
+    private val _pendingCount = MutableStateFlow(0)
+    val pendingCount: StateFlow<Int> = _pendingCount
+
+    private val _flushing = MutableStateFlow(false)
+    val flushing: StateFlow<Boolean> = _flushing
+
+    /** 每次进入聊天页、以及网络恢复时都刷一次。 */
+    fun refreshPending() {
+        viewModelScope.launch {
+            _pendingCount.value = app.db.pending().all().size
+        }
+    }
+
+    /**
+     * 补发队列。
+     *
+     * ⚠ 两点：（NATIVE-PENDING）
+     *   1. **成功后才删**（SyncEngine 里已保证）。发出去就删的话，
+     *      网络刚断那一下请求其实没到服务端，本地却清了队列 —— 消息永久丢失。
+     *   2. 补发结果**必须反映到界面**。静默补发的话，用户以为之前那条丢了，
+     *      会再发一遍，对方收到两条一模一样的。
+     */
+    fun flushPending() {
+        viewModelScope.launch {
+            _flushing.value = true
+            runCatching {
+                app.sync.flushPending { item -> app.repo.send(item.room, item.body).isSuccess }
+            }
+            _flushing.value = false
+            refreshPending()
+        }
+    }
+
     fun revoke(m: MessageEntity) {
         viewModelScope.launch {
             if (!canRevoke(m)) { _sendError.value = "已超过撤回时限（6 分钟）"; return@launch }
