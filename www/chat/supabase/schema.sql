@@ -1140,8 +1140,22 @@ begin
     if v_code ~ '[01ilo]' then
       raise exception '自定义口令不能包含 0/1/i/l/o —— 这几个口头传达时最容易听错';
     end if;
-    if exists (select 1 from invites where code = v_code) then
-      raise exception '这个口令已被占用，换一个';
+    /* ⚠ 只统计"仍然有效"的口令（INV-RELEASE）。
+       原来无差别查 `exists (select 1 from invites where code = v_code)` ——
+       于是**一个 1 小时前就过期、或早已作废的口令，仍然永久占着这个名字**。
+       自定义口令恰恰都是好记的词（welcome / hello / zhangsan），
+       这类词是稀缺命名空间：被一个已经没用的口令占住，
+       后来的人就再也不能用，而界面只会说"已被占用"，
+       看不出其实早就没人用了。
+
+       所以撞码只看：未作废、未过期、次数没用完。
+       历史行**不删除**（要留审计），但不再阻挡复用。 */
+    if exists (select 1 from invites
+                where code = v_code
+                  and revoked_at is null
+                  and (expire_at is null or expire_at > now())
+                  and (max_use = 0 or used < max_use)) then
+      raise exception '这个口令当前正被使用，换一个（已过期或已作废的口令会自动释放）';
     end if;
   else
     /* 生成 6 位随机口令，同样避开易混淆字符（0/O、1/I/L） */
@@ -1177,8 +1191,17 @@ begin
 
   /* 兼容历史大写口令：随机码此前生成大写，现在改小写，
      两个写法都要查，否则老口令会突然全部失效。 */
+  /* ⚠ 释放机制生效后，同一个口令可能有多行历史记录（INV-RELEASE）：
+     一条早就过期/作废的，加一条正在用的。
+     `select ... into` 遇到多行会直接抛 "query returned more than one row"，
+     用户看到的是一句谁也看不懂的数据库报错，而不是"口令不对"。
+     所以取**最新**那条，再逐条判原因 —— 精确提示不能丢：
+     "已被作废/已过期/次数用完"这三条对用户是完全不同的事。 */
   select * into v from invites
-   where code in (lower(btrim(coalesce(p_code,''))), upper(btrim(coalesce(p_code,'')))) for update;
+   where code in (lower(btrim(coalesce(p_code,''))), upper(btrim(coalesce(p_code,''))))
+   order by created_at desc
+   limit 1
+   for update;
 
   if not found then raise exception '邀请码不存在'; end if;
   if v.revoked_at is not null then raise exception '邀请码已被作废'; end if;
@@ -1210,7 +1233,9 @@ begin
      而发出去的人不知道、拿到的人只会以为"口令错了"。
      所以两个写法都查一遍。 */
   select * into v from invites
-   where code in (lower(btrim(coalesce(p_code,''))), upper(btrim(coalesce(p_code,''))));
+   where code in (lower(btrim(coalesce(p_code,''))), upper(btrim(coalesce(p_code,''))))
+   order by created_at desc
+   limit 1;
   if not found then raise exception '邀请码不存在'; end if;
   if v.by_user <> uid
      and not exists (select 1 from rooms r where r.id = v.room_id and r.owner_id = uid)
@@ -1767,6 +1792,18 @@ begin
   /* 所有会自然过期/堆积的凭据表都要在这里清，不能只清 sessions。
      bridge_ticket 刚加时就漏了 —— 跟门禁会话堆积是同一类缺陷。 */
   delete from bridge_ticket where expires_at < now() or used_at is not null;
+
+  /* 失效的邀请口令（INV-RELEASE）。
+     撞码检查已经不再被它们阻挡（看的是"仍有效"），
+     但**行本身还留在表里**。留一段时间是必要的 ——
+     "谁在什么时候发过什么口令"是审计信息，不能一过期就抹掉。
+
+     不过也不能无限堆积：口令是会被反复生成的。
+     这里留 30 天，之后清掉。30 天内仍可追溯，之外不再占空间。 */
+  delete from invites
+   where (revoked_at is not null and revoked_at < now() - interval '30 days')
+      or (revoked_at is null and expire_at is not null
+          and expire_at < now() - interval '30 days');
 
   /* 未提交的媒体记录（S-009）。
      media_prepare() 插 committed=false 的记录占好路径，
