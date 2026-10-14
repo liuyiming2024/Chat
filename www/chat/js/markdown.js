@@ -316,7 +316,40 @@
     hydrate(box, slots);
     /* 对用户昵称做 @ 高亮：只作用于文本节点，不动标签与属性 */
     atWalk(box);
+    /* 给"@我"的气泡打标记（E-072）：.bubble.at-hit 这套样式写了却从未生效，
+       因为没有任何代码加过这个类。这里统一补上 —— 命中当前用户昵称的气泡
+       会显示黄色内描边，让人一眼看出自己被点名，而不必去数未读红点。 */
+    markAtHit(box);
     return box;
+  }
+
+  /**
+   * 标记"这条消息 @ 了我"。
+   *
+   * 当前昵称从 g.App.me() 拿，取不到就跳过 ——
+   * 拿不到时**不能猜**，猜错会把别人的消息染成我的高亮色。
+   */
+  function markAtHit(box) {
+    var nick = (g.App && g.App.me && g.App.me() && g.App.me().nick) || '';
+    if (!nick) return;
+    var hits = box.querySelectorAll('.at-mention');
+    for (var i = 0; i < hits.length; i++) {
+      if (hits[i].getAttribute('data-at') === nick) {
+        hits[i].className += ' at-me';
+        var b = closestBubble(hits[i]);
+        if (b) b.className += ' at-hit';
+      }
+    }
+  }
+
+  /** 向上找最近的气泡容器。找不到就返回 null，不硬造。 */
+  function closestBubble(node) {
+    var el = node;
+    for (var i = 0; el && i < 8; i++) {
+      if (el.classList && el.classList.contains('bubble')) return el;
+      el = el.parentElement;
+    }
+    return null;
   }
 
   /* 遍历文本节点，把 @xxx 替换成高亮 span */
@@ -341,6 +374,12 @@
         sp.className = 'at-mention';
         sp.setAttribute('data-at', m[2]);
         sp.appendChild(document.createTextNode('@' + m[2]));
+        /* ⚠ .at-mention.at-me 这条样式原来从来没被加上过（E-072）：
+           style.css 里写了 `.bubble.at-hit` 与 `.at-mention.at-me` 两套高亮（E-072-ATHIT），
+           但全仓 JS 从未添加这两个类 —— **两套都是死样式**。
+           结果：被人 @ 到的消息在界面上和普通消息一模一样，
+           用户只能在"未读红点"里猜自己被点名了。
+           现在统一在 markAtHit() 里补上（那里能拿到当前用户昵称）。 */
         frag.appendChild(sp);
         last = m.index + m[0].length;
       }
