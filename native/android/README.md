@@ -1,0 +1,36 @@
+# 聊天室 · 原生端（Android）
+
+真原生实现：**没有 WebView，不加载 www/**。（NATIVE-ARCH）
+
+## 为什么重写
+
+旧四端（Web / Android / Win / Mac / Linux）读的都是同一份 `www/` 网页：
+Android 用 Capacitor（`webDir: "www"`），桌面用 Electron（`loadFile(www/index.html)`）。
+**四个端本质是同一个网页的本地化**，被反馈"仍是 website 套壳"是准确的。
+
+## 现在的差别
+
+| 项 | 旧（套壳） | 现（原生） |
+|---|---|---|
+| 渲染 | WebView/Chromium 加载 HTML | Compose 绘制，XML/HTML 不参与 |
+| 存储 | localStorage + IndexedDB | SQLite（Room） |
+| 网络 | 浏览器 fetch | OkHttp |
+| 同步 | 页面 JS 轮询 | SyncEngine（协程，前后台降频） |
+
+## 服务端契约
+
+**不变**。原生端调的还是那 39 个 RPC（`state_get` / `state_delta` / `msg_send` …），
+协议三条（照抄 `chat/js/sb.js`，错一条就整个连不上）：
+
+1. anon key 放 `apikey` 头 —— 放进 `Authorization: Bearer` 会被网关当 JWT 解析而报 Invalid JWT
+2. 身份用 `x-session` 头传 token（服务端查 sessions 表）
+3. RPC 一律 POST `/rest/v1/rpc/<name>`
+
+## 状态
+
+- [x] 项目骨架、认证、网络层、本地库、同步引擎
+- [ ] 消息流 UI、媒体、通知、设置
+
+## 构建
+
+需要 Android SDK 与 JDK 17。当前环境只有 JDK 11，**未做编译验证**。
