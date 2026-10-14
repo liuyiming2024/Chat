@@ -1,74 +1,7 @@
--- 临时语法探针（用完即清）：只读事务里，语法错误在解析阶段报出，
--- 只读限制在执行阶段报出。据此区分"我的 SQL 写错了"和"只是没权限写"。
-create or replace function user_register(p_nick text, p_pwd text, p_real text default null)
-returns json language plpgsql volatile security definer
-set search_path = public, extensions, pg_temp as $$
-declare uid uuid; cnt int;
-begin
-  if not gate_passed() then raise exception '请先通过站点保护密码'; end if;
-  if not (select allow_register from site where id = true) then
-    raise exception '当前未开放注册';
-  end if;
-  if coalesce(length(p_nick), 0) < 1 then raise exception '请填写昵称'; end if;
-  if coalesce(length(p_nick), 0) > 24 then raise exception '昵称最多 24 个字符'; end if;
+-- 临时：验证并落地自定义口令相关的服务端改动（用完即清）
+drop function if exists invite_create(text, int, int);
 
-  -- ⚠ 昵称必须限制字符集（S-100，考古补回）。
-  -- 原来只校验 length >= 1，**不过滤控制字符、换行、零宽字符、同形异码字符**。
-  -- 后果是可以注册出跟别人**看起来一模一样**的昵称：
-  -- 用零宽字符或西里尔字母的同形字符冒充站长，其他人 @ 他、点他头像时
-  -- 根本分不出来。而前端没有此校验、只靠服务端兜底，
-  -- 所以这一层一旦漏了，仿冒就是畅通无阻的。
-  --
-  -- 白名单：汉字、ASCII 字母数字、下划线、连字符、点、空格、间隔号。
-  -- **只放行 ASCII 拉丁字母**这一点正是关键：西里尔字母的 а/е/о
-  -- 与拉丁 a/e/o 肉眼几乎无法区分，若放行就能注册出"和站长一模一样"的昵称。
-  -- 再叠加控制字符与零宽字符（U+200B-200F、U+2028/2029、U+FEFF）的显式排除。
-  -- 写法说明：PostgreSQL 的普通字符串字面量**不做** \uXXXX 转义，
-  -- POSIX 正则也不支持 \p{Han}。所以这里直接写汉字范围的字面量，
-  -- 零宽/控制字符用 chr() 显式比对（最稳，不依赖正则方言）。
-  -- ⚠ 连字符必须放在字符类**末尾**（本次踩坑）。
-  --   原来写成 '_\-. '，而 PostgreSQL 的 POSIX 正则在方括号内
-  --   **不把反斜杠当转义符** —— 于是 '\-.' 被解析成
-  --   从 '\'(0x5C) 到 '.'(0x2E) 的范围，起点大于终点，
-  --   整条语句直接报 "invalid regular expression: invalid range end"。
-  --   因为 psql 开了 ON_ERROR_STOP=1，这一个错误让**整份 schema.sql 停在这里**，
-  --   后面所有函数（含本次的自定义口令）一个都没建起来。
-  --
-  --   这类错误的教训：改 PG 正则必须能本地验证，否则只能靠实跑发现，
-  --   而实跑的代价是整份迁移挂掉。
-  if p_nick !~ '^[一-龥a-zA-Z0-9_. ·‧-]{1,24}$' then
-    raise exception '昵称只能包含中英文、数字、下划线、连字符和空格';
-  end if;
-  if p_nick ~ '[[:cntrl:]]' then
-    raise exception '昵称不能包含控制字符';
-  end if;
-  -- 零宽与不可见字符：U+200B~200F、U+2028、U+2029、U+FEFF
-  if p_nick like '%' || chr(8203) || '%'
-     or p_nick like '%' || chr(8204) || '%'
-     or p_nick like '%' || chr(8205) || '%'
-     or p_nick like '%' || chr(8206) || '%'
-     or p_nick like '%' || chr(8207) || '%'
-     or p_nick like '%' || chr(8232) || '%'
-     or p_nick like '%' || chr(8233) || '%'
-     or p_nick like '%' || chr(65279) || '%' then
-    raise exception '昵称不能包含不可见字符';
-  end if;
-
-  -- real_name 为可选字段（前端无真实姓名输入框），不强制
-  if length(p_pwd) < 4 then raise exception '密码至少 4 位'; end if;
-  select count(*) into cnt from users where lower(nick) = lower(p_nick);
-  if cnt > 0 then raise exception '昵称已被占用'; end if;
-
-  -- p_real 可为 null（前端不采集），列是 not null，故 coalesce
-  insert into users (nick, real_name, pwd_hash, role, status)
-  values (p_nick, coalesce(p_real, ''), crypt(p_pwd, gen_salt('bf', 10)), 'member', 'pending')
-  returning id into uid;
-
-  -- 站长账号自动通过；普通账号待审核
-  insert into logs (who_id, act, detail) values (uid, 'register', p_nick || ' 待审核');
-  return json_build_object('uid', uid, 'status', 'pending');
-end;
-$$;
+crea
 
 create or replace function invite_create(p_room text, p_hours int default 24, p_max_use int default 5,
                                           p_code text default null)
@@ -267,63 +200,6 @@ begin
 end;
 $$;
 
-create or replace function session_cleanup()
-returns int language plpgsql volatile security definer
-set search_path = public, extensions, pg_temp as $$
-declare n int;
-begin
-  delete from sessions where expires_at < now();
-  get diagnostics n = row_count;
+grant execute on function invite_create(text, int, int, text) to anon, authenticated;
 
-  /* login_attempts 也必须在这里清（S-007）。
-     原来只在"登录成功"时顺手删 24 小时前的记录 ——
-     那么纯爆破路径（永远不成功）会让这张表无限增长，
-     而爆破恰恰是最需要防的场景。清理不能依赖攻击者配合。 */
-  delete from login_attempts where created_at < now() - interval '24 hours';
-
-  /* 所有会自然过期/堆积的凭据表都要在这里清，不能只清 sessions。
-     bridge_ticket 刚加时就漏了 —— 跟门禁会话堆积是同一类缺陷。 */
-  delete from bridge_ticket where expires_at < now() or used_at is not null;
-
-  /* 失效的邀请口令（INV-RELEASE）。
-     撞码检查已经不再被它们阻挡（看的是"仍有效"），
-     但**行本身还留在表里**。留一段时间是必要的 ——
-     "谁在什么时候发过什么口令"是审计信息，不能一过期就抹掉。
-
-     不过也不能无限堆积：口令是会被反复生成的。
-     这里留 30 天，之后清掉。30 天内仍可追溯，之外不再占空间。 */
-  delete from invites
-   where (revoked_at is not null and revoked_at < now() - interval '30 days')
-      or (revoked_at is null and expire_at is not null
-          and expire_at < now() - interval '30 days');
-
-  /* 未提交的媒体记录（S-009）。
-     media_prepare() 插 committed=false 的记录占好路径，
-     用户中途放弃上传（关页面、断网、改主意）就永远留下 ——
-     还占着 storage 里已经传上去的字节。
-     留 24 小时宽限：正常上传不会超过这个时间。
-
-     ⚠ 必须放在这里，不能放在"某人登录成功"时 ——
-     那等于清理依赖有人来登录，跟 S-007 是同一个错误。 */
-  delete from media_objects
-   where committed = false
-     and created_at < now() - interval '24 hours';
-
-  /* 门禁会话只保留最近 200 条，多的删掉。
-     门禁每次成功检查都建一条，且没有限流（plpgsql 里 raise 会回滚，
-     失败计数加不上去 —— 真实限流只能在网关层做）。
-     所以这里必须有兜底：不管多频繁地刷，总量都压在 200 条以内。
-     200 够用了 —— 这是"同时有多少台设备过过门禁"的量级，不是用户数。 */
-  delete from sessions
-   where gate_ok = true
-     and user_id is null
-     and ctid not in (
-       select ctid from sessions
-        where gate_ok = true and user_id is null
-        order by expires_at desc
-        limit 200
-     );
-
-  return n;
-end;
-$$;
+grant execute on function invite_list() to anon, authenticated;

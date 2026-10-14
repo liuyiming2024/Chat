@@ -1084,6 +1084,15 @@ create index if not exists invites_room_idx on invites(room_id, created_at desc)
 
 -- 生成邀请码。
 -- 鉴权：登录 + 是本房间成员（或站长/管理员）+ 该成员没被单独禁掉邀请权。
+
+-- ⚠ 必须先删掉旧的 3 参数签名（本次踩坑）。
+--   PostgreSQL 的 CREATE OR REPLACE **改不了参数列表**：
+--   加了第 4 个参数后，它不是替换原函数，而是**新建一个重载**。
+--   于是两个版本并存，而 grant 只给了旧签名 ——
+--   结果：不传自定义口令时走老版本（正常），传了就走新版本（permission denied）。
+--   "有时能用有时没权限"这种错最难查，因为它看起来像权限配置飘了。
+drop function if exists invite_create(text, int, int);
+
 create or replace function invite_create(p_room text, p_hours int default 24, p_max_use int default 5,
                                           p_code text default null)
 returns json language plpgsql volatile security definer
@@ -2348,7 +2357,7 @@ create policy media_update on storage.objects
 --   invite_redeem 也要给 anon：邀请码的意义就是"任何人拿到都能用"，
 --   身份校验在函数内部做（必须已登录 + 已过门禁），不是靠 grant 层挡。
 -- ==================================================================
-grant execute on function invite_create(text, int, int) to anon, authenticated;
+grant execute on function invite_create(text, int, int, text) to anon, authenticated;
 grant execute on function invite_redeem(text) to anon, authenticated;
 grant execute on function invite_revoke(text) to anon, authenticated;
 grant execute on function invite_list() to anon, authenticated;
