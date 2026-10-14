@@ -1654,6 +1654,7 @@
          以为发出去了则连补救的机会都没有。
          所以这里必须给出持久可见的标识，并且能点一下重试。 */
       if (m.failed && !m.pending) {
+        /* E-091-FAILED：失败态必须看得见，否则发送失败的消息和正常消息一模一样。 */
         var fd = elc('span', 'msg-failed', '未发出');
         fd.title = '点击重试';
         fd.style.cursor = 'pointer';
@@ -2827,7 +2828,17 @@
   function checkStorageQuota() {
     var st = storageInfo();
     if (st.stateKB > st.quotaKB * 0.8) {
-      g.UI.toast('本地存储已用 ' + st.stateKB + ' KB（约 5 MB 上限），建议到「站点」导出备份后清理', 'err', 6000);
+      /* ⚠ 原来一律指向「站点 → 导出备份」（E-013-BACKUP），而那个入口需要 site.clean 权限。
+         普通成员收到一条指向自己够不着的功能的红色 toast，
+         且没有任何他能做的事 —— 警告变成了纯骚扰。
+         现在按权限分流：够得着就指过去，够不着就给他真能做的动作。 */
+      if (g.ACL.can(me, 'site.clean')) {
+        g.UI.toast('本地存储已用 ' + st.stateKB + ' KB（约 ' + Math.round(st.quotaKB / 1024)
+          + ' MB 上限），建议到「站点」导出备份后清理', 'err', 6000);
+      } else {
+        g.UI.toast('本地存储已用 ' + st.stateKB + ' KB。重要记录请长按消息复制留存'
+          + '——换设备或清浏览器数据会丢失。', 'err', 6000);
+      }
     }
   }
 
