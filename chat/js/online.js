@@ -135,7 +135,15 @@
 
   function tUser(u) {
     return {
-      id: u.id, nick: u.nick, note: u.realName || '', role: u.role,
+      /* ⚠ note 原来一律取自 realName（E-086-NOTE），而 realName 是**另一个字段**：
+           前端 note  = 用户自己填的「申请说明」
+           服务端 real_name = 管理员备注，前端不采集，登录接口也**刻意不返回**
+                              （避免实名信息随登录响应外泄）
+         服务端既然不返回，这里就恒为 '' —— 于是每次同步，
+         用户自己写的申请说明都被静默清空，站长也跟着看不到。
+         现在：服务端给了就用，没给（或为空）保持 undefined，
+         让上层合并时保留本地已有值，而不是拿空值覆盖。 */
+      id: u.id, nick: u.nick, note: (u.realName === undefined || u.realName === null || u.realName === '') ? undefined : u.realName, role: u.role,
       /* ⚠ 原来把 'banned' 映射成 'rejected'（E-076-BANNED）。
          这两个是**完全不同的两件事**：
            banned  = 曾经通过、后来被封禁的正式用户

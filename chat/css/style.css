@@ -1294,6 +1294,11 @@ body.mode-pro .md-bar { display: flex; }
 .perm-editor { max-height: 60vh; overflow: auto; }
 .perm-tpl { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
 .tpl-label { font-size: 12px; color: var(--text-dim); }
+/* 套用后的撤销条（E-085-TPL）。
+   必须显眼 —— 用户刚改完 40 多项，要让他一眼看到"还能反悔"。 */
+.perm-undo { margin-top: 6px; padding: 6px 8px; border-radius: 6px;
+  background: var(--warn-bg, #fff8e1); border: 1px solid var(--warn-line, #ffe082); }
+.perm-undo-tip { font-size: 12px; color: var(--text-dim); }
 .perm-sec { margin-bottom: 14px; }
 .perm-sec-title {
   font-size: 13px; font-weight: 600; color: var(--link, #1a6fd4);
