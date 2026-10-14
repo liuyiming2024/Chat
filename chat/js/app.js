@@ -4102,6 +4102,15 @@
   function editNotice(r) {
     g.UI.prompt('群公告', '支持 Markdown 与 $公式$', r.notice || '', function (v) {
       r.notice = v; touch(r); log('notice', '', r.id); save();
+      /* ⚠ 改公告有三个入口，只有一个同步服务端（E-070-NOTICE）：
+           roomSettings 走 g.Online.updateRoom()  ✓
+           editNotice()  ← 这里，原来不同步
+           /notice 命令   已在别处加了提示
+         同一个字段三个入口两种行为，从不同地方改结果不一样 ——
+         用户根本没法建立稳定的预期。接服务端前先如实告知。 */
+      if (g.Online && g.Online.isOnline && g.Online.isOnline()) {
+        g.UI.toast('公告只改了本机，其他设备暂不会同步', 'err', 5000);
+      }
     }, { required: false });
   }
   function editPwd(r) {
