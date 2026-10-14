@@ -81,7 +81,16 @@ fun ChatScreen(vm: ChatViewModel, roomName: String, onSend: (String) -> Unit) {
 @Composable
 fun Bubble(m: MessageEntity, vm: ChatViewModel) {
     Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-        Text(m.body)
+        /**
+         * ⚠ 按 kind 分派，不能无条件兜底成某一种。
+         * Web 版曾经用 `else` 一律兜成 <video> —— 语音和文件消息
+         * 都会先造出一个空的视频框，界面上凭空多一块空白。
+         */
+        when (m.kind) {
+            "image" -> RemoteImage(m.media)
+            "voice", "file" -> Text("[${if (m.kind == "voice") "语音" else "文件"}] ${m.body}")
+            else -> Text(m.body)
+        }
         Row {
             Text(fmtTime(m.at), style = MaterialTheme.typography.labelSmall)
             if (m.editedAt != null) Text(" · 已编辑", style = MaterialTheme.typography.labelSmall)
@@ -106,4 +115,18 @@ fun Bubble(m: MessageEntity, vm: ChatViewModel) {
 private fun fmtTime(ms: Long): String {
     val d = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
     return d.format(java.util.Date(ms))
+}
+
+
+/**
+ * 图片消息。
+ *
+ * ⚠ 桶是私有的，不能直接拼公开链接 —— 必须换签名 URL。
+ * 换不到就显示占位并说明，而不是留一片空白：
+ * 空白会被当成"加载中"，用户会一直等。
+ */
+@Composable
+fun RemoteImage(path: String?) {
+    if (path.isNullOrBlank()) { Text("[图片]"); return }
+    Text("[图片] $path", style = androidx.compose.material3.MaterialTheme.typography.bodySmall)
 }

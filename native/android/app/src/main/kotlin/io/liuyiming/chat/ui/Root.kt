@@ -9,6 +9,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import io.liuyiming.chat.ChatApp
+import io.liuyiming.chat.core.Strings
 import kotlinx.coroutines.launch
 
 @Composable
@@ -23,23 +24,38 @@ fun Root(app: ChatApp) {
  */
 @Composable
 fun Nav(app: ChatApp) {
-    var current by remember { mutableStateOf<Pair<String, String>?>(null) } // (id, name)
-    if (current == null) {
-        RoomList(app) { id, name -> current = id to name }
-    } else {
-        val (id, name) = current!!
-        val vm: ChatViewModel = viewModel()
-        LaunchedEffect(id) { vm.open(id) }
-        ChatScreen(vm, name) { vm.send(it) }
+    var screen by remember { mutableStateOf<Screen>(Screen.Rooms) }
+
+    when (val s = screen) {
+        is Screen.Rooms -> RoomList(
+            app,
+            onPick = { id, name -> screen = Screen.Chat(id, name) },
+            onSettings = { screen = Screen.Settings }
+        )
+        is Screen.Chat -> {
+            val vm: ChatViewModel = viewModel()
+            LaunchedEffect(s.id) { vm.open(s.id) }
+            ChatScreen(vm, s.name, onBack = { screen = Screen.Rooms }) { vm.send(it) }
+        }
+        is Screen.Settings -> SettingsScreen(onBack = { screen = Screen.Rooms })
     }
 }
 
+sealed interface Screen {
+    data object Rooms : Screen
+    data class Chat(val id: String, val name: String) : Screen
+    data object Settings : Screen
+}
+
 @Composable
-fun RoomList(app: ChatApp, onPick: (String, String) -> Unit) {
+fun RoomList(app: ChatApp, onPick: (String, String) -> Unit, onSettings: () -> Unit) {
     var rooms by remember { mutableStateOf(emptyList<io.liuyiming.chat.data.db.RoomEntity>()) }
     LaunchedEffect(Unit) { rooms = app.repo.rooms() }
     Column(Modifier.padding(16.dp)) {
-        Text("会话", style = MaterialTheme.typography.headlineMedium)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(Strings.t("rooms"), style = MaterialTheme.typography.headlineMedium)
+            TextButton(onClick = onSettings) { Text(Strings.t("settings")) }
+        }
         Spacer(Modifier.height(8.dp))
         rooms.forEach { r ->
             Text(r.name, modifier = Modifier

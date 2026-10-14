@@ -7,12 +7,15 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.lifecycle.lifecycleScope
 import io.liuyiming.chat.ChatApp
+import io.liuyiming.chat.core.Settings
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val app = application as ChatApp
+        // 语言必须在使用任何文案之前初始化，否则首屏会用默认语言闪一下
+        Settings.loadLang(this)
         setContent { ChatTheme { Root(app) } }
 
         // 前后台切换要告诉同步引擎：后台降频，省电也省免费额度
