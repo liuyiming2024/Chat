@@ -297,8 +297,24 @@
     for (i = 0; i < a.length; i++) m[a[i].id] = a[i];
     for (i = 0; i < b.length; i++) {
       var x = b[i], o = m[x.id];
-      if (!o) m[x.id] = x;
-      else if ((x.updatedAt || x.ts || 0) > (o.updatedAt || o.ts || 0)) m[x.id] = x;
+      if (!o) { m[x.id] = x; continue; }
+      if ((x.updatedAt || x.ts || 0) > (o.updatedAt || o.ts || 0)) {
+        /* ⚠ 服务端没给的字段不能拿 undefined 覆盖本地（E-086-NOTE）。
+           原来这里整对象替换：服务端响应里缺哪个字段，
+           本地那个字段就被清成 undefined。
+           典型受害者是用户的「申请说明」—— 登录接口刻意不返回 real_name
+           （避免实名信息外泄），于是每次同步都把用户自己写的说明清空，
+           站长看到的永远是一片空白。
+           通用规则：**值为 undefined 的键视为"未给出"，保留本地值**。 */
+        var merged = {}, k;
+        for (k in o) if (Object.prototype.hasOwnProperty.call(o, k)) merged[k] = o[k];
+        for (k in x) {
+          if (!Object.prototype.hasOwnProperty.call(x, k)) continue;
+          if (x[k] === undefined) continue;   /* 服务端没给 → 保留本地 */
+          merged[k] = x[k];
+        }
+        m[x.id] = merged;
+      }
     }
     return Object.keys(m).map(function (k) { return m[k]; });
   }
@@ -1734,7 +1750,12 @@
       acts.appendChild(bDel);
       /* 置顶：需 msg.pin 权限 */
       if (g.ACL.can(me, 'msg.pin', r)) {
-        var bPin = elc('button', 'msg-act', (r.pinned && r.pinned.indexOf(m.id) >= 0) ? '取消置顶' : '置顶');
+        /* ⚠ i-pin 这个图标画好了却从未使用（E-097-ICON）。
+           置顶是高频操作，纯文字按钮挤在消息操作区里，
+           和其他图标按钮风格不一致 —— 备好的图标不用，等于白画。 */
+        var bPin = elc('button', 'msg-act', '');
+        bPin.innerHTML = '<svg class="ic" aria-hidden="true"><use href="#i-pin"/></svg>'
+          + '<span>' + ((r.pinned && r.pinned.indexOf(m.id) >= 0) ? '取消置顶' : '置顶') + '</span>';
         bPin.onclick = function () { togglePin(m); };
         acts.appendChild(bPin);
       }
@@ -4486,10 +4507,33 @@
       d.appendChild(sec);
     });
 
+    /* ⚠ 套用前先快照（E-085-TPL）。
+       一次改写全部 40 余项权限，套用后**不预览、不提示**，
+       点"保存"才生效且直接覆盖 —— 用户只有两个选择：
+       硬着头皮保存，或者关掉窗口重来一遍，而重来意味着
+       之前手工调的每一条都得重新调。
+       有了快照就能"恢复套用前"，把不可撤销变成可撤销。 */
+    var snapshot = sels.map(function (sel) { return sel.value; });
+    var undoBar = elc('div', 'perm-undo hidden');
+    var undoBtn = elc('button', 'btn ghost sm', '恢复为套用前');
+    undoBtn.onclick = function () {
+      sels.forEach(function (sel, i) { sel.value = snapshot[i]; });
+      undoBar.classList.add('hidden');
+      g.UI.toast('已恢复为套用前的设置（尚未保存）', 'ok');
+    };
+    undoBar.appendChild(undoBtn);
+    undoBar.appendChild(elc('span', 'perm-undo-tip', '　点“保存”后才会生效'));
+    tpl.appendChild(undoBar);
+
     /* 快捷套用 */
     Array.prototype.forEach.call(tpl.querySelectorAll('[data-tpl]'), function (btn) {
       btn.onclick = function () {
         var mode = btn.getAttribute('data-tpl');
+        /* ⚠ 套用会一次改写全部权限，必须先确认（E-085）。
+           不确认的话：用户想点"普通成员模板"，手指一偏点到"全部恢复继承"，
+           40 多项设置瞬间归零，而界面上看不出发生过什么。 */
+        var label = ({ admin: '管理员模板', member: '普通成员模板', clear: '全部恢复继承' })[mode] || mode;
+        if (!window.confirm('套用「' + label + '」会改写下面全部权限项，确定吗？\n\n可以先套用，再用“恢复为套用前”撤销。')) return;
         sels.forEach(function (sel) {
           var p = sel.dataset.p;
           if (mode === 'clear') { sel.value = 'inherit'; return; }
@@ -4500,6 +4544,8 @@
           else if (tplSet.indexOf(p) < 0 && inRole) sel.value = 'deny';
           else sel.value = 'inherit';
         });
+        undoBar.classList.remove('hidden');
+        g.UI.toast('已套用「' + label + '」，尚未保存', 'ok');
       };
     });
 
@@ -4957,7 +5003,16 @@
         joinRoom('public', u, true);
         log('newuser', '手动开户 ' + n + (r ? '（' + r + '）' : ''));
         save();
-        g.UI.toast('已开户：' + n, 'ok');
+        /* ⚠ 手动开户只写本地（E-063-OPEN）。
+           在线模式下站长开的账号只在自己这台设备存在，
+           对方换设备登录就是「用户不存在」—— 而站长这里明明白白提示"已开户"。
+           这是最坑的一类：他以为帮人开好了，对方根本登不进来，
+           两边都不知道问题出在哪。接服务端前先如实告知。 */
+        if (g.Online && g.Online.isOnline && g.Online.isOnline()) {
+          g.UI.toast('已开户：' + n + '（仅本机会话，在线模式下对方暂不能登录）', 'err', 6000);
+        } else {
+          g.UI.toast('已开户：' + n, 'ok');
+        }
       }
     });
   }
