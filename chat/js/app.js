@@ -3018,6 +3018,17 @@
            但至少要知道自己在承担什么。 */
         var cb = body.querySelector('#icCustom');
         var hint = body.querySelector('#icCustomHint');
+        /* 自定义 + 长期有效 = 这个词会被一直占住（INV-RELEASE）。
+           好记的词是稀缺的，占住了别人就不能用 ——
+           得让人知道自己在做什么，而不是等别人来报"welcome 用不了"。 */
+        var hs = body.querySelector('#icHour');
+        if (hs && hint) hs.addEventListener('change', function () {
+          if (cb && String(cb.value || '').trim() && hs.value === '0' && hint) {
+            hint.className = 'field-hint warn';
+            hint.textContent = '自定义口令设成"长期有效"会一直占用这个词，'
+              + '别人以后就无法再用它了（除非你手动作废）。建议设个期限。';
+          }
+        });
         if (cb && hint) cb.addEventListener('input', function () {
           var v = String(cb.value || '').trim().toLowerCase();
           if (!v) { hint.className = 'field-hint'; hint.textContent = '字母和数字，3~24 位。不要用 0/1/i/l/o —— 口头传达最容易听错。好记的优先，别追求复杂。'; return; }
@@ -3040,11 +3051,12 @@
   }
 
   /* 谁能设置自定义口令（INV-CUSTOM）。
-     v_is_staff 的服务端口径是：房主 / 房间管理员 / 站长 / 全站管理员。
+     服务端口径是：房主 / 房间管理员 / 站长 / 全站管理员。
      这里必须与服务端**完全一致**，否则会出现"界面上有框、提交被拒"。
 
-     范围按你说的先放这三类；"大群群主"那条要等你想清楚群规模怎么算
-     （按人数？按活跃度？），先不猜。 */
+     ⚠ 试运行口径（2026-10-13）：范围按"先跑起来看"定的，
+     还没定死。"大群群主"这条要等想清楚群规模怎么算（人数？活跃度？），
+     没猜。等实测有人需要但够不着，再放。 */
   function canCustomCode(r) {
     if (!me) return false;
     if (me.role === 'owner' || me.role === 'admin') return true;
@@ -3068,18 +3080,27 @@
       if (!arr.length) { el.innerHTML = '<div class="empty-tip">还没有生成过口令</div>'; return; }
       el.innerHTML = '';
       arr.forEach(function (it) {
-        var row = elc('div', 'invite-row' + (it.revoked_at ? ' revoked' : ''));
+        var row = elc('div', 'invite-row' + (dead ? ' revoked' : ''));
         var longLive = !it.expire_at && (!it.max_use || it.max_use === 0);
+        /* 失效 = 作废 / 过期 / 次数用完（INV-RELEASE）。
+           失效的口令**不再占用名字**，别人可以重新用这个词 ——
+           这点必须在界面上说出来，否则生成者会以为它永远占着。 */
+        var expired = it.expire_at && new Date(it.expire_at).getTime() < Date.now();
+        var usedUp = it.max_use > 0 && it.used >= it.max_use;
+        var dead = !!(it.revoked_at || expired || usedUp);
         var stat = it.revoked_at ? '已作废'
+          : expired ? '已过期'
+          : usedUp ? '次数已用完'
           : (it.max_use && it.max_use > 0 ? ('已用 ' + it.used + ' / ' + it.max_use + ' 次') : ('已用 ' + it.used + ' 次'));
         row.innerHTML =
           '<div class="ir-top"><code>' + g.UI.esc(it.code) + '</code>' +
-          '<span class="tag' + (it.revoked_at ? '' : (longLive ? ' orange' : ' gray')) + '">' + g.UI.esc(stat) + '</span>' +
-          (longLive && !it.revoked_at ? '<span class="tag red">长期·不限次数</span>' : '') + '</div>' +
+          '<span class="tag' + (dead ? '' : (longLive ? ' orange' : ' gray')) + '">' + g.UI.esc(stat) + '</span>' +
+          (dead ? '<span class="tag gray">名字已释放</span>' : '') +
+          (longLive && !dead ? '<span class="tag red">长期·不限次数</span>' : '') + '</div>' +
           '<div class="ir-sub">' + g.UI.esc(it.room_name || it.room_id) +
           ' · ' + (it.expire_at ? ('到期 ' + g.UI.fmtTime(new Date(it.expire_at).getTime())) : '长期有效') +
           (it.revoked_at ? ' · 作废于 ' + g.UI.fmtTime(new Date(it.revoked_at).getTime()) : '') + '</div>';
-        if (!it.revoked_at) {
+        if (!dead) {
           var b = elc('button', 'mini-btn danger', '作废');
           b.onclick = function () {
             g.UI.confirm('作废口令 ' + it.code + '？作废后对方将无法再用它加入。', function () {
