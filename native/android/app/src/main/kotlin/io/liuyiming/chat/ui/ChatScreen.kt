@@ -14,7 +14,13 @@ import io.liuyiming.chat.sync.Clock
 import kotlinx.coroutines.launch
 
 @Composable
-fun ChatScreen(vm: ChatViewModel, roomName: String, onSend: (String) -> Unit) {
+/* ⚠ onBack 不能省（NATIVE-CHAT-ONBACK）。
+   Root.kt 传了 onBack，而这里没有同名参数 → 编译直接失败
+   "No parameter with name 'onBack' found"。
+   更重要的是**体验**：聊天页若没有显式返回入口，
+   用户只能靠系统返回键 —— 而系统返回键在嵌套导航里
+   直接退出整个 Activity，不是回到房间列表。 */
+fun ChatScreen(vm: ChatViewModel, roomName: String, onBack: () -> Unit, onSend: (String) -> Unit) {
     val messages by vm.messages.collectAsState()
     val err by vm.sendError.collectAsState()
     val sending by vm.sending.collectAsState()
@@ -27,6 +33,19 @@ fun ChatScreen(vm: ChatViewModel, roomName: String, onSend: (String) -> Unit) {
     val scope = rememberCoroutineScope()
 
     Column(Modifier.fillMaxSize()) {
+        /* 顶部返回行（NATIVE-CHAT-ONBACK）：
+           没有它，用户只能靠系统返回键，而在嵌套导航里
+           系统返回键会直接退出整个 Activity，不是回到房间列表。 */
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack) {
+                Text("‹", style = MaterialTheme.typography.headlineSmall)
+            }
+            Text(roomName, style = MaterialTheme.typography.titleMedium)
+        }
+
         /**
          * ⚠ 发送失败必须常驻可见（对应 Web 版"自动保存失败静默"那条判据）。
          * 只弹一次 toast 的话，（NATIVE-MSG）用户在看别处就错过了，
