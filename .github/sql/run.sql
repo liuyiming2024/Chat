@@ -1,58 +1,37 @@
--- ============================================================
--- Chat 核心链路端到端验证：「消息能存能取」
--- 全部在一个事务里，最后 rollback —— 测试完不留任何痕迹。
--- 做法：临时插一条会话 → 调 msg_send → 用 state_peek/state_delta 取回。
--- ============================================================
+-- 端到端验证（第二轮）：修正上一轮的错判
+-- 上一轮 ⑧ 用 count(*) 判删除，得出"没删掉" —— 那是**我的断言写错了**：
+-- messages.deleted 是逻辑删除标记，count(*) 本来就不会变。
+-- 这一轮改判 deleted 标记 + rev 是否 bump + 增量里能否取到删除态。
 begin;
-
 set local request.headers = '{"x-session": "e2e-probe-token"}';
-
 insert into sessions (token_hash, user_id, expires_at)
-select encode(digest('e2e-probe-token','sha256'), 'hex'), u.id, now() + interval '1 hour'
-from users u where u.status = 'active' limit 1;
+select encode(digest('e2e-probe-token','sha256'),'hex'), u.id, now() + interval '1 hour'
+from users u where u.status='active' limit 1;
 
 do $$
-declare
-  rid text; uid uuid; mid text; n0 int; n1 int;
-  rev0 bigint; rev1 bigint; d json; got text;
+declare rid text; mid text; rev0 bigint; rev1 bigint; rev2 bigint; d json;
+        del_flag boolean; dbody text;
 begin
   select id into rid from rooms limit 1;
-  uid := cur_user();
-  raise notice '① cur_user() = %（不为 null 才说明会话生效）', coalesce(uid::text,'NULL');
-
-  select count(*) into n0 from messages;
   rev0 := state_peek();
 
-  select (msg_send(rid,'text','E2E链路验证消息'))::json->>'id' into mid;
-  raise notice '② msg_send 返回 id = %', coalesce(mid,'NULL');
-
-  select count(*) into n1 from messages;
-  raise notice '③ 消息数 % -> %（+1 才叫存进去了）', n0, n1;
-
-  select body into got from messages where id = mid::uuid;
-  raise notice '④ 直接读回 = %', coalesce(got,'(读不到)');
-
+  select (msg_send(rid,'text','撤回同步验证'))::json->>'id' into mid;
   rev1 := state_peek();
-  raise notice '⑤ state_peek % -> %（必须变大，否则客户端不知道有新消息）', rev0, rev1;
+  raise notice '① 发送后 rev % -> %', rev0, rev1;
 
-  d := state_delta(rev0);
-  raise notice '⑥ state_delta 增量里含这条 = %',
-    case when d::text like '%E2E链路验证消息%' then '是' else '❌ 否' end;
-
-  raise notice '⑦ msg_edit 后 edited_at = %',
-    coalesce((select edited_at::text from messages where id = mid::uuid),'(null)');
-  perform msg_edit(mid::uuid, 'E2E改后内容');
-  raise notice '   改后 body = %',
-    coalesce((select body from messages where id = mid::uuid),'(null)');
-  raise notice '   改后 edited_at = %',
-    coalesce((select edited_at::text from messages where id = mid::uuid),'(null)');
-
+  -- 撤回
   perform msg_delete(mid::uuid);
-  raise notice '⑧ msg_delete 后剩余消息数 = %', (select count(*) from messages);
-end $$;
+  rev2 := state_peek();
+  raise notice '② 撤回后 rev % -> %（必须再涨，否则别的设备不知道被撤了）', rev1, rev2;
 
+  select deleted, body into del_flag, dbody from messages where id = mid::uuid;
+  raise notice '③ deleted=%, body=%（逻辑删除：行还在、内容清空）', del_flag, coalesce(dbody,'(空)');
+
+  -- 从"发送之前"的位置拉增量，看能不能拿到这条被撤的消息
+  d := state_delta(rev0);
+  raise notice '④ 增量里能取到这条 = %',
+    case when d::text like '%撤回同步验证%' then '是' else '❌ 否' end;
+end $$;
 rollback;
 
--- 回滚后确认零残留
 select count(*)::text as 回滚后消息数 from messages;
-select count(*)::text as 回滚后会话数 from sessions where token_hash = encode(digest('e2e-probe-token','sha256'),'hex');
