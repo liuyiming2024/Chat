@@ -6,6 +6,10 @@ on:
 jobs:
   android:
     runs-on: ubuntu-latest
+    # ⚠ 必须显式给 contents: write，否则"日志推回分支"那步 push 会被拒（403），
+    #   分支根本创建不出来 —— 结果就是只看得到"构建失败"四个字。
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-java@v4
