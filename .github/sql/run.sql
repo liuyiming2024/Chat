@@ -1,48 +1,9 @@
--- 前端调用的每个 RPC，服务端是否真的有
-with want(name) as (values
-('acl_mine'),
-('bridge_ticket_create'),
-('bridge_ticket_redeem'),
-('gate_check'),
-('gate_set'),
-('invite_create'),
-('invite_list'),
-('invite_redeem'),
-('invite_revoke'),
-('logout'),
-('media_commit'),
-('media_prepare'),
-('media_url'),
-('media_url_by_path'),
-('member_add'),
-('member_admin'),
-('member_remove'),
-('member_set_can_invite'),
-('msg_delete'),
-('msg_edit'),
-('msg_media'),
-('msg_send'),
-('profile_update'),
-('room_create'),
-('room_join'),
-('room_update'),
-('site_init'),
-('site_ready'),
-('state_delta'),
-('state_get'),
-('state_peek'),
-('state_put'),
-('state_seq'),
-('user_delete'),
-('user_login'),
-('user_mute'),
-('user_password'),
-('user_perms_set'),
-('user_register'),
-('user_review'),
-('user_role_set')
-)
-select w.name,
-       case when exists (select 1 from pg_proc p where p.pronamespace='public'::regnamespace and p.proname=w.name)
-            then '有' else '❌ 缺' end as 状态
-from want w order by 状态 desc, w.name;
+-- 站点实际数据：判断"消息能存能取"是否真的跑通过
+select '用户数' as item, count(*)::text as n from users
+union all select '房间数', count(*)::text from rooms
+union all select '消息数', count(*)::text from messages
+union all select '媒体数', count(*)::text from media
+union all select '已通过用户', count(*)::text from users where status='active';
+
+-- 站点是否已初始化
+select key, left(value,40) as v from site_meta limit 8;
