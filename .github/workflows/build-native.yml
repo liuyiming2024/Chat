@@ -17,6 +17,19 @@ jobs:
           distribution: temurin
           java-version: 17
       - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.9
+      - name: 补生成 gradle wrapper
+        working-directory: native/android
+        # ⚠ 仓库里只有 gradle-wrapper.properties，缺 gradlew 与 gradle-wrapper.jar。
+        #   本地没法生成 jar（二进制），所以在 CI 里用 gradle 现生成，
+        #   这样以后 ./gradlew 就能用了，也让本地复现路径一致。
+        continue-on-error: true
+        run: |
+          gradle wrapper --gradle-version 8.9 || true
+          chmod +x gradlew 2>/dev/null || true
+          ls -la gradle/wrapper/ 2>/dev/null || true
+
       - name: 构建 debug 包
         id: build
         working-directory: native/android
@@ -24,7 +37,7 @@ jobs:
         #   所以把输出落盘、再推回分支，否则只能看到"失败了"却不知道为什么。
         run: |
           set -uo pipefail
-          ./gradlew assembleDebug --stacktrace 2>&1 | tee build.log
+          gradle assembleDebug --stacktrace 2>&1 | tee build.log
           echo "RC=${PIPESTATUS[0]}"
       - name: 日志推回 diag 分支
         if: always()
