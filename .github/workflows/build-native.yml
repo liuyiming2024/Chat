@@ -38,7 +38,12 @@ jobs:
         run: |
           set -uo pipefail
           gradle assembleDebug --stacktrace 2>&1 | tee build.log
-          echo "RC=${PIPESTATUS[0]}"
+          # ⚠ 直接以 gradle 的退出码结束这一步（BUILD-EXIT-CODE）。
+          #   原来写成 echo "RC=${PIPESTATUS[0]}" 再在下一步 grep "^RC=" ——
+          #   但那行 echo 在 tee **之后**，根本不会写进 build.log，
+          #   于是下一步永远 grep 不到，构建成功也被判成失败。
+          #   日志里明明写着 BUILD SUCCESSFUL，job 却是红的 —— 非常误导。
+          exit ${PIPESTATUS[0]}
       - name: 日志推回 diag 分支
         if: always()
         continue-on-error: true
@@ -53,12 +58,6 @@ jobs:
           git add -f .diag || true
           git commit -m "原生端构建日志 $(date -u +%Y%m%d-%H%M%S)" || echo "无变化"
           git push -f origin diag-native
-      - name: 失败则让 job 失败
-        if: always()
-        run: |
-          if [ -f native/android/build.log ] && grep -q "^RC=0" native/android/build.log; then exit 0; fi
-          echo "::error::构建失败，详见 diag-native 分支的 .diag/native-build.log"
-          exit 1
       - uses: actions/upload-artifact@v4
         with:
           name: chat-native-debug
