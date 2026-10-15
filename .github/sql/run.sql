@@ -1,7 +1,2 @@
--- Archive 迁移后验证
-select table_name from information_schema.tables
- where table_name like 'profile%' order by table_name;
-
-select count(*)::text as 函数数 from pg_proc where proname like 'profile%' or proname like 'journal%';
-
-select key, value from acl_perm_label where key='site.profile';
+-- 占位：正式的库结构在 supabase/schema.sql（各项目自己的 schema）。
+-- 这个空文件是给「数据库执行」workflow 用的，用完即清，避免下次误跑。
