@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.devtools.ksp")
 }
 
@@ -29,7 +30,9 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true }
-    composeOptions { kotlinCompilerExtensionVersion = "1.5.15" }
+    /* ⚠ 删掉了 composeOptions { kotlinCompilerExtensionVersion = "1.5.15" }。
+       那是 Kotlin **1.x** 时代的写法；2.0 起由 compose 插件自动管理编译器版本，
+       同时保留这个旧写法会与新插件冲突（BUILD-COMPOSE-PLUGIN）。 */
 }
 
 dependencies {
