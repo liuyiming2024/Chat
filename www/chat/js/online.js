@@ -23,6 +23,10 @@
   var online = false;      // 后端可用且站点已初始化
   var reachable = false;   // 后端能连上（不一定已初始化）
   var seq = null;          // 上次看到的序号
+  /* ⚠ 消息专用游标（S-095），**不能与 seq 合并**。
+     seq 是全局状态序号（用户/房间/日志共用），推进很快；
+     消息分页有自己的进度，被 seq 覆盖就等于把没拉到的消息标成已拉过。 */
+  var msgSince = null;
   var timer = null;
   var onStateCb = null;
   var onModeCb = null;
@@ -257,22 +261,51 @@
    * N×N 增长 —— 免费额度层面唯一还开着的水龙头。
    */
 
+  /* ⚠ 消息分页循环（S-095）。
+     服务端每次最多给 500 条消息，剩下用 msgCursor 继续要。
+     ⚠ 关键：**消息游标 msgSince 必须独立于全局 seq 保存**。
+        用 seq 覆盖它，就等于把没拉到的那批标记为"已拉过" ——
+        下一次从新 seq 开始，中间那些**永远拉不到了**。
+        这是"截断 + 游标推进"最典型的静默丢失，必须避开。
+
+     循环上限 50 轮（最多 2.5 万条）：
+       真有那么多消息时，与其卡在循环里，不如先让用户看到最近的，
+       剩下的下次轮询继续补。设上限也是防止服务端异常时无限打下去。 */
+  var MSG_PAGE_MAX = 50;
+
   function pull() {
     return g.SB.rpc('state_get', {}).then(function (j) {
       var s = convert(j);
       if (s && j && typeof j.rev === 'number') seq = j.rev;
+      if (j && typeof j.msgCursor === 'number') msgSince = j.msgCursor;
       if (s && onStateCb) onStateCb(s);
-      return s;
+      if (!(j && j.msgMore)) return s;
+      return pullMoreMessages(1).then(function () { return s; });
     });
+  }
+
+  /* 继续往前补更旧的消息（state_get 给的游标是这批里最旧的 rev） */
+  function pullMoreMessages(round) {
+    if (round > MSG_PAGE_MAX) return Promise.resolve();
+    return g.SB.rpc('state_delta', { p_since: msgSince || 0 }).then(function (j) {
+      if (j && typeof j.msgCursor === 'number') msgSince = j.msgCursor;
+      var s = convert(j);
+      if (s && onStateCb) onStateCb(s);
+      if (!(j && j.msgMore)) return null;
+      return pullMoreMessages(round + 1);
+    }).catch(function () { return null; });
   }
 
   /* 增量拉取：只取上次之后变化的部分 */
   function pullDelta() {
     return g.SB.rpc('state_delta', { p_since: seq || 0 }).then(function (j) {
       if (j && typeof j.rev === 'number') seq = j.rev;
+      if (j && typeof j.msgCursor === 'number') msgSince = j.msgCursor;
       var s = convert(j);
       if (s && onStateCb) onStateCb(s);
-      return s;
+      if (!(j && j.msgMore)) return s;
+      /* 增量也分页：离线很久回来时，一次可能拉不完 */
+      return pullMoreMessages(1).then(function () { return s; });
     });
   }
 
