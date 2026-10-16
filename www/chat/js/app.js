@@ -1651,7 +1651,11 @@
         : (mine ? '你撤回了一条消息' : '该消息已被撤回');
       /* 管理员/站长可查看原文：撤回与移除都刻意保留内容，便于追溯 */
       if (g.ACL.can(me, 'msg.viewRaw', r)) {
-        var see = elc('button', 'msg-act', '查看原文');
+        /* Q-Chat-E-106：btn-src 是给 CSS 用的钩子。
+           极简模式下要隐藏它（"查看原文"是专业向功能），
+           但不能用 msg-act —— 引用/复制/编辑共用这个 class，
+           一并隐藏的话极简模式下连"复制"都用不了，那是误伤。 */
+        var see = elc('button', 'msg-act btn-src', '查看原文');
         see.onclick = function () {
           var d2 = elc('div', '');
           d2.innerHTML = '<div class="form-tip">来自：' + g.UI.esc(nick(findUser(m.from)) || '未知') +
