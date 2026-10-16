@@ -23,6 +23,7 @@ const https = require('https');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { URL } = require('url');
 
 const CONCURRENCY = 4;          // 并发片数。太多会被服务端限流，4 是实测比较稳的值
@@ -104,10 +105,64 @@ function fetchRange(url, start, end, fd, tries) {
   });
 }
 
+/* ============================================================
+   完整性校验（S-098，考古补回）
+   ------------------------------------------------------------
+   ⚠ 为什么这条必须有：
+     下载地址里有 gh-proxy.com / gh.llkk.cc / ghproxy.net 这类
+     **第三方代理镜像**。它们不是我们控制的服务器，
+     返回什么由它们决定 —— 只要字节数一样，用户根本无从分辨
+     拿到的是不是我发出去的那个安装包。
+
+     原来这里只校验长度。**长度对 ≠ 内容对**。
+     少一个字节、多一个字节、或者整个换成别的程序，
+     只要长度碰巧一致就全部放行。这是供应链攻击的标准入口。
+
+   ⚠ 为什么必须诚实区分「没校验」和「校验通过」：
+     清单里暂时没有真实哈希值（要有得先拿到真实安装包才能算）。
+     这时返回 verified:false + reason:'no-hash'，
+     **绝不能填个占位符假装校验过** ——
+     假校验比不校验更危险：界面显示"已验证"，实际什么都没验。
+
+     调用方必须把 reason 如实告诉用户，不能吞掉。
+   ============================================================ */
+function hashFile(file) {
+  return new Promise((ok, no) => {
+    /* 流式算：安装包 80MB 起步，全读进内存太浪费 */
+    const h = crypto.createHash('sha256');
+    const st = fs.createReadStream(file);
+    st.on('data', (c) => h.update(c));
+    st.on('end', () => ok(h.digest('hex')));
+    st.on('error', no);
+  });
+}
+
+/* 校验下载结果。
+   want 为空 → 明确返回「未校验」，不冒充成功。 */
+function verify(file, want) {
+  if (!want || typeof want !== 'string' || want.length !== 64) {
+    /* 注意：长度必须是 64。填 'abc' 这种也算"有值"，
+       但那显然不是真的 sha256 —— 不卡长度的话形同没校验。 */
+    return Promise.resolve({
+      verified: false, reason: 'no-hash', sha256: null
+    });
+  }
+  return hashFile(file).then((got) => ({
+    verified: got === want.toLowerCase(),
+    reason: got === want.toLowerCase() ? 'ok' : 'mismatch',
+    sha256: got
+  }));
+}
+
 /* 主入口。
-   opts: { url, dest, bytes, onProgress({loaded,total,pct}) }
-   返回 { ok, path, bytes, chunks, fellBack }
-   注意：fellBack=true 表示服务端不支持 Range，退化成了单线程。 */
+   opts: { url, dest, bytes, sha256, onProgress({loaded,total,pct}) }
+   返回 { ok, path, bytes, chunks, fellBack, verified, reason, sha256 }
+   注意：fellBack=true 表示服务端不支持 Range，退化成了单线程。
+
+   ⚠ verified 字段的含义（三种，调用方必须区分对待）：
+     · verified:true  reason:'ok'        —— 与清单哈希一致
+     · verified:false reason:'no-hash'   —— 清单没提供哈希，**无法验证**
+     · verified:false reason:'mismatch'  —— 哈希不一致，**绝不能安装** */
 function download(opts) {
   const { url, dest, onProgress } = opts;
   const total = opts.bytes || 0;
@@ -119,7 +174,14 @@ function download(opts) {
     let exist = 0;
     try { exist = fs.statSync(dest).size; } catch (e) { exist = 0; }
     if (size && exist === size) {
-      return { ok: true, path: dest, bytes: size, chunks: 0, skipped: true };
+      /* ⚠ 已存在的文件**也要校验**（S-098）。
+         原来"长度一样就直接跳过"，于是上次下了一半的、
+         或被别的东西覆盖过的缓存文件会被直接当成成品。
+         跳过下载可以，跳过校验不行。 */
+      return verify(dest, opts.sha256).then((v) => ({
+        ok: true, path: dest, bytes: size, chunks: 0, skipped: true,
+        verified: v.verified, reason: v.reason, sha256: v.sha256
+      }));
     }
 
     const dir = path.dirname(dest);
@@ -128,7 +190,10 @@ function download(opts) {
     /* 不支持 Range → 单线程，老老实实写一遍 */
     if (!info.acceptRange || !size) {
       return single(info.url, dest, size, onProgress).then((n) =>
-        ({ ok: true, path: dest, bytes: n, chunks: 1, fellBack: true }));
+        verify(dest, opts.sha256).then((v) => ({
+          ok: true, path: dest, bytes: n, chunks: 1, fellBack: true,
+          verified: v.verified, reason: v.reason, sha256: v.sha256
+        })));
     }
 
     /* 分片 */
@@ -158,7 +223,11 @@ function download(opts) {
     return Promise.all(tasks).then(() => {
       fs.closeSync(fd);
       tick();
-      return { ok: true, path: dest, bytes: size, chunks: ranges.length, fellBack: false };
+      /* 长度校验只保证"没少字节"，保证不了"内容对" —— 还必须算哈希 */
+      return verify(dest, opts.sha256).then((v) => ({
+        ok: true, path: dest, bytes: size, chunks: ranges.length, fellBack: false,
+        verified: v.verified, reason: v.reason, sha256: v.sha256
+      }));
     }).catch((e) => {
       try { fs.closeSync(fd); } catch (x) { }
       throw e;
@@ -188,4 +257,4 @@ function single(url, dest, size, onProgress) {
   });
 }
 
-module.exports = { download, probe, CONCURRENCY };
+module.exports = { download, probe, hashFile, verify, CONCURRENCY };

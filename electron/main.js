@@ -120,15 +120,32 @@ function startBridge() {
  *   这里只负责"把正确的文件下载下来并打开它"。 */
 const { ipcMain: ipc } = require('electron');
 
-ipc.handle('chat:downloadUpdate', async (e, url, file) => {
+/* ⚠ S-098（考古补回）：下载完**必须看校验结果再决定要不要打开**。
+   原来这里下完直接 shell.showItemInFolder(res.path) ——
+   chunked.download 当时也确实没做哈希校验，所以"没接线"和"没实现"
+   两件事叠在一起，等于完全没有防护。
+
+   现在 chunked 会返回 verified / reason，这里必须分三种处理：
+     · verified:true  reason:'ok'        正常打开
+     · verified:false reason:'no-hash'   清单没提供哈希 → 可以打开，
+                                         但**必须如实告诉用户无法验证**
+     · verified:false reason:'mismatch'  **绝不能打开**：
+                                         内容对不上，要么包被换过，要么下坏了。
+                                         删掉文件并明确报错。
+
+   ⚠ 第三种绝不能"警告一下继续打开" ——
+     那等于把决定权推给一个无法判断的用户，而他要装的是可执行程序。 */
+ipc.handle('chat:downloadUpdate', async (e, url, file, sha256) => {
   const os = require('os');
   const path = require('path');
+  const fs = require('fs');
   const dest = path.join(os.tmpdir(), file);
 
   try {
     const res = await chunked.download({
       url,
       dest,
+      sha256: sha256 || null,
       onProgress: (p) => {
         /* 进度推回渲染进程，界面上能显示百分比和速度 */
         if (e && e.sender && !e.sender.isDestroyed()) {
@@ -136,8 +153,32 @@ ipc.handle('chat:downloadUpdate', async (e, url, file) => {
         }
       }
     });
+
+    if (res.reason === 'mismatch') {
+      /* 内容对不上：删掉，绝不留一个看起来能装的文件在临时目录里。
+         留着的话用户可能从别处找到它并手动运行。 */
+      try { fs.unlinkSync(res.path); } catch (x) { }
+      return {
+        ok: false,
+        err: '下载内容与清单记录不一致，已删除。'
+           + '可能是下载出错，也可能是文件被替换过 —— 请换个网络重试，'
+           + '或直接到 GitHub Releases 页面手动下载。',
+        tampered: true
+      };
+    }
+
     shell.showItemInFolder(res.path);
-    return { ok: true, path: res.path, bytes: res.bytes, chunks: res.chunks, fellBack: !!res.fellBack };
+    return {
+      ok: true, path: res.path, bytes: res.bytes, chunks: res.chunks,
+      fellBack: !!res.fellBack,
+      verified: !!res.verified,
+      /* no-hash 时必须把"无法验证"如实传回界面。
+         静默当成已验证，比不做校验更糟 —— 界面上写着"已验证"，
+         实际什么都没验，用户会因此放松警惕。 */
+      verifyNote: res.reason === 'no-hash'
+        ? '这份清单没有提供校验值，无法确认文件完整性'
+        : (res.reason === 'no-webcrypto' ? '当前环境不支持校验' : '')
+    };
   } catch (err) {
     return { ok: false, err: String((err && err.message) || err) };
   }

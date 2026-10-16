@@ -775,6 +775,17 @@ body.dark .typing-bar::before { background: #6ab0ff; }
 }
 .toast-ok { background: rgba(7, 193, 96, .92); }
 .toast-err { background: rgba(217, 48, 37, .92); }
+/* ⚠ 警告态必须有自己的样式（S-098）。
+   代码里用 toast(msg,'warn') 提示"清单没提供哈希，无法验证完整性"，
+   但 CSS 里原来**根本没有 .toast-warn** ——
+   于是这条警告长得和普通提示一模一样（默认黑色半透明），
+   用户扫一眼就过去了，等于没提示。
+
+   这是"第三种状态"：既不是成功（绿）也不是失败（红），
+   而是"能装，但没法确认它是原版"。必须视觉上和另外两种区分开，
+   否则用户会把"无法验证"当成"验证过了"。 */
+.toast-warn { background: rgba(214, 138, 26, .94); }
+body.dark .toast-warn { background: rgba(196, 122, 18, .94); }
 @keyframes toastIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; } }
 
 /* ================= 图片 / 视频预览 ================= */
