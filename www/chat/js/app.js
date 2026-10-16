@@ -287,7 +287,21 @@
       markSaveFailed(e2);
     }
     if (pushTimer) clearTimeout(pushTimer);
-    pushTimer = setTimeout(function () { g.Sync.commit(S); }, 60);
+    /* ⚠ 原来这里广播**全量 S**（S-090）。
+       `Sync.commit(S)` 会把整个状态对象 postMessage 出去 ——
+       消息多时是几十 MB 的结构化克隆，**每保存一次就一次**。
+       而 save() 是高频调用（输入防抖、心跳、发消息……），
+       于是房间越用越大、越用越卡，卡顿的根源是广播本身。
+
+       而且 sync.js 早就备好了轻量通道 `ping()`：
+       只发一个 {t:'patch', at}，对方收到后**自己读快照再合并**
+       （见下方 onPatch 回调）—— 效果一样，传输量差几个数量级。
+
+       ⚠ 不能简单删掉广播：那样别的标签感知不到变化。
+         必须用 ping 替代 commit，而不是去掉这一行。 */
+    pushTimer = setTimeout(function () {
+      if (g.Sync && g.Sync.ping) g.Sync.ping();
+    }, 60);
     if (!silent) renderAll();
     return wrote;
   }
@@ -3894,6 +3908,17 @@
       ['网络', e.online ? '在线' : '离线（不影响使用）'],
       ['屏幕 / DPR', e.screen + ' @' + e.dpr + 'x'],
       ['用户数 / 房间数', S.users.length + ' / ' + S.rooms.length],
+      /* ⚠ S.seq 原来**全项目没有任何一处读它**（S-086）。
+         save() 里每次 +1，但没人看 —— 纯粹是死计数器。
+
+         死代码最坏的地方不是占几字节，是**误导**：
+         后来者看到"有个 seq 在递增"，会以为存在基于它的写入冲突检测，
+         于是放心地不去查真正的冲突处理 —— 而那个其实并不存在。
+
+         所以给它一个真实用途而不是放着：显示在这里作为诊断信息。
+         它确实有用 —— 两个标签同时开着，各自的 seq 不同步增长，
+         一眼就能看出"这份状态被几个地方写过、写到第几次了"。 */
+      ['状态写入次数（seq）', S.seq || 0],
       ['消息总数', Object.keys(S.messages).reduce(function (a, k) { return a + S.messages[k].length; }, 0)],
       ['状态快照体积', (function () {
         try { return (Math.round((localStorage.getItem(KEY) || '').length / 1024)) + ' KB（不含媒体）'; }
