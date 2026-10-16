@@ -174,6 +174,13 @@
       owner: r.owner, admins: r.admins || [], members: r.members || null,
       pwd: r.hasPwd ? '(已设置)' : null, notice: r.notice || '',
       muted: [],
+      /* ⚠ 群内禁言从服务端读（S-113）。
+         roomMuted 形如 { userId: 到期时间戳毫秒 }，
+         服务端只回传**仍在生效**的 —— 所以过期后下一次同步自动解禁，
+         不需要前端定时器，也不会出现"界面还禁着、其实早该解了"。
+         ⚠ 不能给默认值 {} 以外的值：缺这个字段时应当是"无人被禁言"，
+         写成 null 会让 acl.js 的 room.roomMuted[uid] 直接抛 TypeError。 */
+      roomMuted: (r.roomMuted && typeof r.roomMuted === 'object') ? r.roomMuted : {},
       /* 被单独关掉邀请权的成员（服务端 can_invite=false） */
       noInvite: r.noInvite || [],
       createdAt: r.createdAt || 0,
@@ -635,6 +642,15 @@
   function setMute(userId, minutes) {
     return g.SB.rpc('user_mute', { p_user: userId, p_minutes: minutes || 0 });
   }
+  /* ⚠ 群内禁言（S-113）。
+     与 setMute（全站）是两个不同的 RPC、两个不同的权限点 ——
+     不能互相替代：用 room_mute 传全站语义会让群主越权，
+     用 user_mute 做群内禁言则是"在群里操作却全站生效"（E-069）。
+     minutes<=0 表示解除。 */
+  function setRoomMute(roomId, userId, minutes) {
+    return g.SB.rpc('room_mute',
+      { p_room: roomId, p_user: userId, p_minutes: (minutes > 0 ? minutes : 0) });
+  }
   /* 权限矩阵：授予 / 撤销单个权限点 */
   function setPerms(userId, perms, denied) {
     return g.SB.rpc('user_perms_set', {
@@ -710,6 +726,7 @@
     inviteRevoke: inviteRevoke, inviteList: inviteList, setCanInvite: setCanInvite,
     changePwd: changePwd, profileUpdate: profileUpdate,
     addMember: addMember, removeMember: removeMember, setAdmin: setAdmin,
+    setRoomMute: setRoomMute,
     setMute: setMute, setPerms: setPerms, setRole: setRole,
     prepareMedia: prepareMedia, commitMedia: commitMedia, mediaUrl: mediaUrl,
     uploadMedia: uploadMedia,

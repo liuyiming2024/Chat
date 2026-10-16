@@ -3735,12 +3735,25 @@
           log('mute', u2.nick + ' ' + min + '分钟（全站）', r.id);
           save(); renderChat(); return;
         }
-        r.muted = r.muted || [];
-        if (r.muted.indexOf(u2.id) < 0) r.muted.push(u2.id);
+        /* ⚠ 群内禁言必须调服务端（S-113）。
+           只 push 本地 room.muted 是"假禁言"：换设备就没、
+           被禁者自己改一下就解了、服务端根本不知道有过这次处置。 */
+        r.roomMuted = r.roomMuted || {};
+        r.roomMuted[u2.id] = now() + min * 60000;
         touch(r);
         sysMsg(cur, '「' + u2.nick + '」在本群被禁言 ' + min + ' 分钟');
         log('mute', u2.nick + ' ' + min + '分钟（本群）', r.id);
-        save(); renderChat(); return;
+        save(); renderChat();
+        if (g.Online && g.Online.isOnline() && g.Online.setRoomMute) {
+          g.Online.setRoomMute(r.id, u2.id, min).catch(function (e) {
+            /* ⚠ 回滚只能**还原原值**，不能"算"出新值（S-112）。
+               原来失败时算成 now()+600000，于是解除失败反而加了 10 分钟。 */
+            delete r.roomMuted[u2.id];
+            save(true); renderChat();
+            g.UI.toast('禁言失败：' + ((e && e.message) || '网络错误'), 'err');
+          });
+        }
+        return;
       }
       case 'unmute': {
         var p3 = rest.split(/\s+/).filter(Boolean);
@@ -3764,11 +3777,22 @@
           sysMsg(cur, '「' + u3.nick + '」的全站禁言已解除');
           log('unmute', u3.nick + '（全站）', r.id); save(); renderChat(); return;
         }
-        /* r.muted 不解的话，禁言一旦加上就再也解不掉（E-068）。 */
+        /* 同上：本群解禁也要走服务端，且要一并清本地老数组（E-068）。 */
+        var hadMute = r.roomMuted && r.roomMuted[u3.id];
+        r.roomMuted = r.roomMuted || {};
+        delete r.roomMuted[u3.id];
         r.muted = (r.muted || []).filter(function (x) { return x !== u3.id; });
         touch(r);
         sysMsg(cur, '「' + u3.nick + '」在本群的禁言已解除');
-        log('unmute', u3.nick + '（本群）', r.id); save(); renderChat(); return;
+        log('unmute', u3.nick + '（本群）', r.id); save(); renderChat();
+        if (g.Online && g.Online.isOnline() && g.Online.setRoomMute) {
+          g.Online.setRoomMute(r.id, u3.id, 0).catch(function (e) {
+            if (hadMute) r.roomMuted[u3.id] = hadMute;   /* 还原原值，不新算 */
+            save(true); renderChat();
+            g.UI.toast('解除失败：' + ((e && e.message) || '网络错误'), 'err');
+          });
+        }
+        return;
       }
       case 'kick': {
         var u4 = byNick(rest.split(/\s+/)[0] || '');
@@ -4476,6 +4500,43 @@
             sysMsg(r.id, '「' + u.nick + '」被禁言 ' + m + ' 分钟'); log('mute', u.nick, r.id); save();
           });
         }
+      });
+    }
+    /* ⚠ 群内禁言单独一个按钮（S-113）。
+       原来这里只有全站禁言 —— 而这是**成员管理面板**，
+       点开某人就是想管他在这个群里的行为，语义上要的就是群内禁言。
+       两个按钮并存才能看出区别：
+         「禁言」     = 全站，所有房间都不能说（需管理员及以上）
+         「本群禁言」 = 只在这个群（房主/房管即可）
+       合成一个的话，房主只能选全站，等于被迫越权。 */
+    if (g.ACL.can(me, 'room.mute', r)) {
+      var inMuted = !!(r.roomMuted && r.roomMuted[u.id] && r.roomMuted[u.id] > Date.now());
+      btn(inMuted ? '解除本群禁言' : '本群禁言', '', function () {
+        if (inMuted) {
+          var prev = r.roomMuted[u.id];
+          delete r.roomMuted[u.id]; touch(r); save();
+          if (g.Online && g.Online.isOnline() && g.Online.setRoomMute) {
+            g.Online.setRoomMute(r.id, u.id, 0).catch(function (e) {
+              r.roomMuted[u.id] = prev;   /* 还原原值 */
+              save(true);
+              g.UI.toast('解除失败：' + ((e && e.message) || '网络错误'), 'err');
+            });
+          }
+          return;
+        }
+        g.UI.prompt('本群禁言时长', '分钟', '10', function (v) {
+          var m = parseInt(v, 10) || 10;
+          r.roomMuted = r.roomMuted || {};
+          r.roomMuted[u.id] = now() + m * 60000; touch(r);
+          sysMsg(r.id, '「' + u.nick + '」在本群被禁言 ' + m + ' 分钟');
+          log('mute', u.nick + ' ' + m + '分钟（本群）', r.id); save();
+          if (g.Online && g.Online.isOnline() && g.Online.setRoomMute) {
+            g.Online.setRoomMute(r.id, u.id, m).catch(function (e) {
+              delete r.roomMuted[u.id]; save(true);
+              g.UI.toast('禁言失败：' + ((e && e.message) || '网络错误'), 'err');
+            });
+          }
+        });
       });
     }
     if (g.ACL.can(me, 'room.kick', r) && r.type !== 'public') {
