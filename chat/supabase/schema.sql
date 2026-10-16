@@ -71,9 +71,18 @@ create table if not exists users (
   denied      text[] not null default '{}',
   bio         text not null default '',
   created_at  timestamptz not null default now(),
-  last_seen   timestamptz not null default now()
+  last_seen   timestamptz not null default now(),
+  /* ⚠ rev 是**真正的"资料版本"**（S-085，考古补回）。
+     原来前端把 last_seen 当成 updatedAt 用 —— 那是"最后上线时间"，
+     不是"资料最后修改时间"。两者混用的后果见 state_delta 处的注释。
+     沿用项目既有的全局单调序号（与 messages 一致）。 */
+  rev         bigint
 );
 create index if not exists users_nick_idx on users (lower(nick));
+/* ⚠ create table if not exists 对**已存在的表整段跳过**（SCHEMA-ALTER），
+   后加的列永远加不上 —— 线上实测就是这样缺列的。必须显式 alter。 */
+alter table users add column if not exists rev bigint;
+create index if not exists users_rev_idx on users (rev);
 
 create table if not exists sessions (
   -- 只存 sha256(token)，不存明文。
@@ -100,6 +109,9 @@ create table if not exists rooms (
   notice     text not null default '',
   pwd_hash   text,                            -- 群密码（bcrypt），可空
   created_at timestamptz not null default now()
+  /* 同 users：真正的资料版本。原来前端拿 created_at 当 updatedAt，
+     而 created_at **永远不变** —— 房间合并判据因此完全失效。 */
+  rev         bigint
 );
 
 create table if not exists room_members (
@@ -164,7 +176,30 @@ drop trigger if exists messages_rev_bu on messages;
 create trigger messages_rev_bu before update on messages
   for each row execute function msg_rev_bump();
 
+/* ⚠ users / rooms 也要 bump rev（S-085）。
+   只给 messages 建触发器是不够的 —— 用户资料、房间名/公告的变更
+   同样要能被增量拉取感知到，否则前端按 rev 比大小时拿不到这些变更。
+   msg_rev_bump 本身是通用的（就是取一个全局号），直接复用。 */
+drop trigger if exists users_rev_bi on users;
+create trigger users_rev_bi before insert on users
+  for each row execute function msg_rev_bump();
+
+drop trigger if exists users_rev_bu on users;
+create trigger users_rev_bu before update on users
+  for each row execute function msg_rev_bump();
+
+drop trigger if exists rooms_rev_bi on rooms;
+create trigger rooms_rev_bi before insert on rooms
+  for each row execute function msg_rev_bump();
+
+drop trigger if exists rooms_rev_bu on rooms;
+create trigger rooms_rev_bu before update on rooms
+  for each row execute function msg_rev_bump();
+
 -- ---------- 操作日志 ----------
+alter table rooms add column if not exists rev bigint;
+create index if not exists rooms_rev_idx on rooms (rev);
+
 create table if not exists logs (
   id         uuid primary key default gen_random_uuid(),
   who_id     uuid references users(id) on delete set null,
@@ -381,7 +416,11 @@ begin
         'status', u.status, 'perms', u.perms, 'bio', u.bio,
         'mutedUntil', (extract(epoch from u.muted_until) * 1000)::bigint,
         'createdAt', (extract(epoch from u.created_at) * 1000)::bigint,
-        'lastSeen', (extract(epoch from u.last_seen) * 1000)::bigint
+        'lastSeen', (extract(epoch from u.last_seen) * 1000)::bigint,
+        /* ⚠ rev 必须回传（S-085）。
+           不回传的话前端只能拿 lastSeen 顶替"资料版本"，
+           于是**每次上线都算一次"资料变更"**，合并判据彻底失真。 */
+        'rev', u.rev
       )) from users u), '[]'::json),
     'rooms', coalesce((select json_agg(r) from (
       select json_build_object(
@@ -389,6 +428,14 @@ begin
         'desc', rm.description, 'notice', rm.notice,
         'hasPwd', (rm.pwd_hash is not null),
         'createdAt', (extract(epoch from rm.created_at) * 1000)::bigint,
+        /* ⚠ rev 必须回传（S-085，这条最要紧）。
+           rooms 表**根本没有 updated_at 列**，前端 tRoom 只能拿
+           created_at 顶替 —— 而 created_at 永远不变。
+           于是 mergeArr 的 `x.updatedAt > o.updatedAt` 恒为 false，
+           **房间资料的合并分支永远不执行**：
+           服务端改了房间名/公告，前端同步回来时被整个丢弃。
+           这正是"公告改了不同步""置顶只改本地"那一族问题的共同根因。 */
+        'rev', rm.rev,
         'members', coalesce((select json_agg(mm.user_id) from room_members mm where mm.room_id = rm.id), '[]'::json),
         'admins', coalesce((select json_agg(aa.user_id) from room_admins aa where aa.room_id = rm.id), '[]'::json),
         /* 被单独关掉邀请权的成员。
@@ -754,7 +801,11 @@ begin
         'status', u.status, 'perms', u.perms, 'bio', u.bio,
         'mutedUntil', (extract(epoch from u.muted_until) * 1000)::bigint,
         'createdAt', (extract(epoch from u.created_at) * 1000)::bigint,
-        'lastSeen', (extract(epoch from u.last_seen) * 1000)::bigint
+        'lastSeen', (extract(epoch from u.last_seen) * 1000)::bigint,
+        /* ⚠ rev 必须回传（S-085）。
+           不回传的话前端只能拿 lastSeen 顶替"资料版本"，
+           于是**每次上线都算一次"资料变更"**，合并判据彻底失真。 */
+        'rev', u.rev
       )) from users u), '[]'::json),
     'rooms', coalesce((select json_agg(r) from (
       select json_build_object(
@@ -762,6 +813,14 @@ begin
         'desc', rm.description, 'notice', rm.notice,
         'hasPwd', (rm.pwd_hash is not null),
         'createdAt', (extract(epoch from rm.created_at) * 1000)::bigint,
+        /* ⚠ rev 必须回传（S-085，这条最要紧）。
+           rooms 表**根本没有 updated_at 列**，前端 tRoom 只能拿
+           created_at 顶替 —— 而 created_at 永远不变。
+           于是 mergeArr 的 `x.updatedAt > o.updatedAt` 恒为 false，
+           **房间资料的合并分支永远不执行**：
+           服务端改了房间名/公告，前端同步回来时被整个丢弃。
+           这正是"公告改了不同步""置顶只改本地"那一族问题的共同根因。 */
+        'rev', rm.rev,
         'members', coalesce((select json_agg(mm.user_id) from room_members mm where mm.room_id = rm.id), '[]'::json),
         'admins', coalesce((select json_agg(aa.user_id) from room_admins aa where aa.room_id = rm.id), '[]'::json),
         /* 被单独关掉邀请权的成员。
