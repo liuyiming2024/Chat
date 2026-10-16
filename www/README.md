@@ -65,8 +65,16 @@ python3 server.py        # 然后打开 http://localhost:8000/
 ## 浏览器要求
 
 Chrome / Edge / Firefox / Safari 近两年版本均可。
-`file://` 直接打开时部分浏览器会限制 IndexedDB，此时媒体存内存，
-聊天功能照常；用 `python3 server.py` 或在线版打开则全部功能可用。
+用 `python3 server.py` 或在线版打开时全部功能可用（媒体存 IndexedDB，容量大）。
+
+`file://` 直接打开时部分浏览器会限制 IndexedDB，此时**媒体降级存 localStorage**：
+图片视频**能存下来**（刷新后还在），但 localStorage 只有几 MB 配额，
+发几张大图就可能写满 —— 写不进去时会**明确提示**，不会假装成功。
+文字聊天不受影响，照常可用。
+
+⚠ 这里原来说「媒体存内存」，是错的（S-103）：实际存的是 localStorage。
+两者差别不小 —— 存内存是刷新即丢，存 localStorage 是能留住但占配额。
+按「README 不夸大」的规矩改成实话：不往好里说，也不往坏里说。
 
 ---
 

@@ -1353,6 +1353,34 @@ body.mode-pro .md-bar { display: flex; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .pinned-row:hover { background: #fff2d6; }
+/* ⚠ .pinned-txt 原来**根本没有样式定义**（S-104）。
+   父级 .pinned-row 写了 text-overflow:ellipsis，
+   但那是作用在 flex **容器**上的，不会传给子 span。
+   而 span 作为 flex item 默认 min-width:auto —— 不收缩。
+   两者叠加的结果：置顶的长消息**不省略、直接撑破置顶栏**，
+   把旁边的取消置顶按钮挤出去。
+
+   min-width:0 是关键：不加它，flex:1 也压不下去。 */
+.pinned-txt {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ⚠ 设置面板里的下拉框也一直没有样式（S-104）。
+   浏览器默认 select 是白底黑字、带原生箭头，
+   在这套界面里很突兀 —— **深色模式下尤其刺眼**：
+   整个面板是深色，唯独这个框是白的。
+   深色模式必须显式覆盖，否则它不会跟着变。 */
+.sel {
+  padding: 4px 8px;
+  border: 1px solid #d8dbe0;
+  border-radius: 4px;
+  background: #fff;
+  color: #333;
+  font-size: 13px;
+  max-width: 60%;
+}
+body.dark .sel { background: #2a2d31; color: #ddd; border-color: #43474d; }
 .pinned-row b { color: #333; flex: none; }
 .pinned-x {
   border: none; background: transparent; color: #b26a00;
