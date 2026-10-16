@@ -108,9 +108,11 @@ create table if not exists rooms (
   description text not null default '',
   notice     text not null default '',
   pwd_hash   text,                            -- 群密码（bcrypt），可空
-  created_at timestamptz not null default now()
-  /* 同 users：真正的资料版本。原来前端拿 created_at 当 updatedAt，
-     而 created_at **永远不变** —— 房间合并判据因此完全失效。 */
+  created_at timestamptz not null default now(),
+  /* ⚠ 上一行末尾的逗号：我第一版漏了，迁移直接 syntax error。
+     建表语句里最后一列后面必须跟逗号才能接新列 —— 但**更根本的问题**
+     是 create table if not exists 对已存在的表整段跳过，
+     所以真正生效的是下面那句 alter，不是这里的声明。两处都要对。 */
   rev         bigint
 );
 
