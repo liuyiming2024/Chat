@@ -457,7 +457,20 @@ begin
            不回传的话前端刷新一次开关就"自己弹回来"——
            而服务端其实已经禁掉了，界面与事实不符。 */
         'noInvite', coalesce((select json_agg(ni.user_id) from room_members ni
-                              where ni.room_id = rm.id and ni.can_invite = false), '[]'::json)
+                              where ni.room_id = rm.id and ni.can_invite = false), '[]'::json),
+        /* ⚠ 群内禁言必须回传（S-113）。
+           不回传的话前端只能继续用本地 room.muted 数组 ——
+           而数组改的是本地、换设备就没、被禁者自己改一下就解了，
+           **服务端根本不知道有过这次禁言**。
+           这里回传"仍在生效"的禁言：user_id → 到期时间戳（毫秒）。
+           已过期的不再回传（前端据此自动解禁，不用等定时器）。 */
+        'roomMuted', coalesce((select json_object_agg(
+            mu.user_id,
+            (extract(epoch from mu.muted_until) * 1000)::bigint)
+          from room_members mu
+          where mu.room_id = rm.id
+            and mu.muted_until is not null
+            and mu.muted_until > now()), '{}'::json)
       ) as r from rooms rm) x), '[]'::json),
     'messages', coalesce((select json_agg(json_build_object(
         'id', m.id, 'room', m.room_id, 'from', m.from_id, 'type', m.type,
@@ -842,7 +855,20 @@ begin
            不回传的话前端刷新一次开关就"自己弹回来"——
            而服务端其实已经禁掉了，界面与事实不符。 */
         'noInvite', coalesce((select json_agg(ni.user_id) from room_members ni
-                              where ni.room_id = rm.id and ni.can_invite = false), '[]'::json)
+                              where ni.room_id = rm.id and ni.can_invite = false), '[]'::json),
+        /* ⚠ 群内禁言必须回传（S-113）。
+           不回传的话前端只能继续用本地 room.muted 数组 ——
+           而数组改的是本地、换设备就没、被禁者自己改一下就解了，
+           **服务端根本不知道有过这次禁言**。
+           这里回传"仍在生效"的禁言：user_id → 到期时间戳（毫秒）。
+           已过期的不再回传（前端据此自动解禁，不用等定时器）。 */
+        'roomMuted', coalesce((select json_object_agg(
+            mu.user_id,
+            (extract(epoch from mu.muted_until) * 1000)::bigint)
+          from room_members mu
+          where mu.room_id = rm.id
+            and mu.muted_until is not null
+            and mu.muted_until > now()), '{}'::json)
       ) as r from rooms rm) x), '[]'::json),
     /* order by 必须写在 json_agg(...) 内部。
        写成 json_agg(x) ... order by m.created_at 会让整句变成聚合查询，
@@ -1072,6 +1098,53 @@ begin
     end if;
   end if;
   insert into room_members (room_id, user_id) values (p_room, uid) on conflict do nothing;
+  perform nextval('state_rev');
+  return true;
+end;
+$$;
+
+/* ⚠ 群内禁言（S-113）—— 这条把"假禁言"变成真禁言。
+   原来的状态：服务端 room_members.muted_until 列建好了，
+   acl_can_speak 也会查它（第 2206 行附近），
+   **但没有任何一个函数会往里写值**，而前端用的是 room.muted 数组。
+   两套数据结构各走各的，于是群内禁言：
+     - 只改本地，换设备就没了
+     - 被禁者改一下本地数据就解了
+     - 服务端根本不知道有过这次禁言
+   等于"看着有这个功能，实际谁也管不住谁"。
+
+   统一到服务端：写 room_members.muted_until，
+   前端改为读这个时间戳（不再用本地数组）。
+   ⚠ 权限必须用带房间的 acl_require ——
+     不带房间的话会命中 ROOM_INHERENT 里的 user.mute，
+     于是群主能借"群内禁言"清除别人的**全站**禁言（权限提升）。 */
+create or replace function room_mute(p_room text, p_user uuid, p_minutes int default 10)
+returns boolean language plpgsql volatile security definer
+set search_path = public, extensions, pg_temp as $$
+declare uid uuid; mins int;
+begin
+  perform acl_require('room.mute', p_room);
+  uid := cur_user();
+  if uid is null then raise exception '请先登录'; end if;
+  if p_user is null then raise exception '未指定成员'; end if;
+
+  mins := coalesce(p_minutes, 10);
+  if mins < 0 then mins := 0; end if;
+  /* 上限 30 天：不限时长的话一次误操作就把人永久关在外面，
+     而"永久"往往不是操作者的本意。 */
+  if mins > 43200 then mins := 43200; end if;
+
+  if not exists (select 1 from room_members where room_id = p_room and user_id = p_user) then
+    raise exception '该用户不在此房间';
+  end if;
+
+  update room_members set muted_until =
+    case when mins = 0 then null else now() + make_interval(mins => mins) end
+   where room_id = p_room and user_id = p_user;
+
+  insert into logs (who_id, act, detail)
+  values (uid, case when mins = 0 then 'unmute' else 'mute' end,
+          p_room || ':' || p_user::text || ' ' || mins || '分钟');
   perform nextval('state_rev');
   return true;
 end;
@@ -2046,6 +2119,7 @@ language sql immutable as $$
       'room.create','room.rename','room.notice','room.desc','room.pwd',
       'room.invite','room.kick','room.delete','room.export',
       'user.view','user.mute','user.ban','user.create',
+      'room.mute',
       'audit.review','audit.log',
       'site.name','site.register','site.clean','site.export',
       'sys.notice','sys.env'
@@ -2075,7 +2149,8 @@ create or replace function acl_room_inherent() returns text[]
 language sql immutable as $$
   select array[
     'room.rename','room.notice','room.desc','room.pwd',
-    'room.invite','room.kick','room.delete','room.export','user.mute'
+    'room.invite','room.kick','room.delete','room.export','user.mute',
+    'room.mute'
   ];
 $$;
 
@@ -2169,6 +2244,11 @@ insert into acl_perm_label (key, value) values
   ('room.notice','修改群公告'), ('room.desc','修改群简介'),
   ('room.pwd','修改群密码'), ('room.invite','邀请成员'),
   ('room.kick','移出成员'), ('room.grant','设置群管理员'),
+  /* ⚠ room.mute 是 S-113 新增的**独立权限点**。
+     不能直接复用 user.mute —— 那个在 ROOM_INHERENT 里，
+     不带房间调用会命中固有权力，导致群主能借"群内禁言"
+     清掉别人的**全站**禁言（权限提升，见 room_mute 注释）。 */
+  ('room.mute','群内禁言'),
   ('room.delete','解散群聊'), ('room.export','导出群聊记录'),
   ('user.view','查看成员'), ('user.mute','禁言'),
   ('user.ban','封禁账号'), ('user.create','手动开户'),
@@ -2447,3 +2527,10 @@ grant execute on function invite_redeem(text) to anon, authenticated;
 grant execute on function invite_revoke(text) to anon, authenticated;
 grant execute on function invite_list() to anon, authenticated;
 grant execute on function member_set_can_invite(text, uuid, boolean) to anon, authenticated;
+/* ⚠ 显式授权 room_mute（S-113）。
+   上面 2317 行有 `grant execute on all functions`，
+   但那条**只授予执行到它那一刻已存在的函数** ——
+   之后新建的函数不会被自动覆盖，漏了就报 permission denied。
+   而且签名必须写全：room_mute(text, uuid, int)，
+   写成 room_mute(text) 会建出一个**不存在的重载的授权**，静默无效。 */
+grant execute on function room_mute(text, uuid, int) to anon, authenticated;
