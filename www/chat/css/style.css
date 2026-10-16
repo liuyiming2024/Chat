@@ -35,6 +35,30 @@ input, textarea, select { font-family: inherit; font-size: 14px; }
   --wx-text: #191919;
   --wx-sub: #8c8c8c;
   --wx-blue: #576b95;
+
+  /* Q-Chat-E-108（变量作用域检查抓出）
+     ⚠⚠ 下面这 7 个变量**原本只在 body.dark 里定义**，
+     但被 20 处规则在 dark 块【之外】使用 ——
+     浅色（默认）模式下这些变量全部无效，`var(--x)` 取不到值，
+     整条声明被丢弃。受影响的元素包括：
+       搜索结果悬停 · 表情面板 · 公式符号面板 · 权限面板 · 查看原文框 · 加载更多
+     表现是：浅色下鼠标划过搜索结果**毫无反馈**（用户以为点不动），
+     符号/权限面板的背景、边框、次要文字全部退回继承值。
+
+     根因：深色模式是后加的，加的时候把新变量写进了 body.dark，
+     没同步一份到 :root。加的时候深色看着正常，浅色静默退化，没人发现。
+
+     ⚠ 值必须与深色那份语义对应（不是照抄）：
+       --hover 取 .user-line:hover 现用的 #efefef，不是深色的 #1e2126 */
+  --bg: #fff;
+  --bg-panel: #fff;
+  --bg-chat: #f5f5f5;
+  --text: #191919;
+  --text-dim: #8c8c8c;
+  --border: #dcdcdc;
+  --hover: #efefef;
+  --link: #576b95;
+  --code-bg: #f6f8fa;
 }
 
 /* ================= 布局 ================= */
@@ -1245,6 +1269,22 @@ body.dark {
   --link: #7fb3ff;
   --code-bg: #1a1c21;
 }
+
+/* Q-Chat-E-108（变量接线检查抓出）
+   ⚠ 上面那 4 个 --bubble-* 变量定义了**却零使用**。
+   于是深色模式下气泡仍是浅色的：
+     对方气泡 = .bubble 的 #fff → 深色界面里一块刺眼的白
+     我的气泡 = --wx-bubble 的 #95ec69 → 亮绿，同样刺眼
+   深色模式做了整站配色，唯独占了屏幕最大面积的气泡没接上。
+   这种"变量齐备、规则没写"的失效最隐蔽 —— 看 :root 以为都配好了。 */
+body.dark .bubble {
+  background: var(--bubble-other);
+  color: var(--bubble-other-text);
+}
+body.dark .msg-row.me .bubble {
+  background: var(--bubble-me);
+  color: var(--bubble-me-text);
+}
 body.dark .sidebar,
 body.dark .side-panel,
 body.dark .composer,
@@ -1525,7 +1565,10 @@ body.dark .demo-note { background: #2a2318; color: #d9b26a; }
   padding: 7px; border: 1px dashed var(--border); border-radius: 6px;
   background: transparent; color: var(--link); font-size: 12.5px; cursor: pointer;
 }
-.load-more:hover { background: var(--bg-hover); }
+/* Q-Chat-E-108：原来是 var(--bg-hover) —— 这个名字**从未定义过**，
+   且没有 fallback。整条声明无效，悬停完全没反馈。
+   正确名字是 --hover（上面刚补进 :root，浅色 #efefef / 深色 #1e2126）。 */
+.load-more:hover { background: var(--hover); }
 
 /* 消息渲染缓存的外壳：display:contents 让它不产生盒子，不影响布局 */
 .msg-cache-wrap { display: contents; }
