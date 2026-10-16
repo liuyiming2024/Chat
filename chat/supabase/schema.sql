@@ -202,6 +202,19 @@ create trigger rooms_rev_bu before update on rooms
 alter table rooms add column if not exists rev bigint;
 create index if not exists rooms_rev_idx on rooms (rev);
 
+/* ⚠ 回填老数据的 rev（S-085）—— 这一步不做，前面全白做。
+   触发器只管**新建和更新**，加列之前就存在的行 rev 全是 null。
+   而前端判新旧用的是 `x.rev > o.rev`：
+     null > null  → false  → **合并分支依然不执行**
+   等于改了个寂寞，且这次的"寂寞"比原来更难发现 ——
+   因为列也在、触发器也在，看代码以为修好了。
+
+   幂等：只回填 rev is null 的行，重复跑不会把已有号冲掉。
+   注意：update 会触发上面的 bu 触发器再取一个号，
+   最终 rev 是触发器给的那个 —— 无所谓，只要非 null 且与全局水位同步前进。 */
+update users set rev = nextval('state_rev') where rev is null;
+update rooms set rev = nextval('state_rev') where rev is null;
+
 create table if not exists logs (
   id         uuid primary key default gen_random_uuid(),
   who_id     uuid references users(id) on delete set null,
