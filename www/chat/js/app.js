@@ -298,7 +298,29 @@
     for (i = 0; i < b.length; i++) {
       var x = b[i], o = m[x.id];
       if (!o) { m[x.id] = x; continue; }
-      if ((x.updatedAt || x.ts || 0) > (o.updatedAt || o.ts || 0)) {
+      /* ⚠ 判据必须优先用 rev，不能用 updatedAt（S-085）。
+         updatedAt 在 users 上其实是 lastSeen（最后上线时间），
+         在 rooms 上其实是 createdAt（**永远不变**）——
+         两个都不是"资料版本"，拿它们比大小得出的结论是错的。
+
+         rooms 那条尤其致命：createdAt 恒不变 →
+         `x.updatedAt > o.updatedAt` 恒为 false →
+         **房间合并分支从不执行**，服务端改的房间名/公告被整个丢弃。
+
+         现在两边都有真正的 rev（服务端触发器写入，老行已回填）。 */
+      var xr = (typeof x.rev === 'number') ? x.rev : null;
+      var or = (typeof o.rev === 'number') ? o.rev : null;
+      var newer;
+      if (xr !== null && or !== null) {
+        newer = xr > or;
+      } else {
+        /* ⚠ rev 缺失时**必须合并，不能退回 updatedAt 判据**。
+           退回旧判据对 rooms 来说等于永远不合并 —— 那正是这个 bug 本身。
+           用户和房间都是小体量数据，多合并一次的代价远小于丢一次更新：
+           丢更新表现为"改了不生效"，多合并最多是界面重绘一下。 */
+        newer = true;
+      }
+      if (newer) {
         /* ⚠ 服务端没给的字段不能拿 undefined 覆盖本地（E-086-NOTE）。
            原来这里整对象替换：服务端响应里缺哪个字段，
            本地那个字段就被清成 undefined。
