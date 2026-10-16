@@ -1410,6 +1410,8 @@
         };
       }
     }
+    /* Q-Chat-E-105：body 上挂这个类是给 CSS 用的（输入框描红边），
+       让"正在丢数据"跟着用户走，而不是只在顶部固定位置提示一次。 */
     document.body.classList.add('save-failing');
   }
   function markSaveOk() {
