@@ -472,26 +472,68 @@ begin
             and mu.muted_until is not null
             and mu.muted_until > now()), '{}'::json)
       ) as r from rooms rm) x), '[]'::json),
+    /* ⚠ 消息增量必须分页，不能一次拉全表（S-095）。
+       原来这里**没有任何 limit**：离线三天回来，一次拉回期间的全部消息。
+       消息多到一定程度，这个请求会：
+         - 超出网关响应体上限 → 直接失败
+         - 或慢到超时，前端重试，于是**永远拉不下来**
+       而失败的表现只是"消息一直是旧的"，用户看不出是拉取卡住了。
+
+       ⚠ 但**不能简单加 limit 就完事** —— 那是最危险的做法：
+         截断后前端拿到的是"一部分消息"，而 p_since 会推进到最新 rev，
+         中间没拉到的那些**永远拉不到了**（下一次从新 rev 开始）。
+         这就成了静默丢失：少了消息，且没有任何提示。
+
+       所以必须同时返回游标：
+         msgCursor = 本次这批消息的最大 rev
+         msgMore   = 后面还有没有
+       前端拿到 msgMore=true 时，用 msgCursor 继续拉，直到 false。
+       ⚠ 消息游标必须**独立于全局 rev 保存** ——
+         用全局 rev 覆盖它，就等于把没拉到的那批标成"已拉过"。 */
     'messages', coalesce((select json_agg(json_build_object(
-        'id', m.id, 'room', m.room_id, 'from', m.from_id, 'type', m.type,
-        'text', m.body, 'mediaId', m.media_path, 'name', m.media_name,
-        'size', m.media_size, 'replyTo', m.reply_to,
-        'deleted', m.deleted,
-   'edited',  m.edited_at,
-        'ts', (extract(epoch from m.created_at) * 1000)::bigint
-      ) order by m.rev) from messages m
-      /* ⚠ 是 >= 不是 >。
-         客户端拿到的 p_since 来自 state_peek()，那是"最后分配出去的号"，
-         而最后分配的号往往正是刚发的那条消息的 rev。
-         用 > 会把这条漏掉 —— 用户自己发的消息，自己这边看不到。
-         用 >= 最多重复送最后一条，前端按 id merge 会去重，无害。 */
-      where coalesce(m.rev, 0) >= coalesce(p_since, 0)
-        and (
-          exists (select 1 from rooms r where r.id = m.room_id and r.type = 'public')
-          or exists (select 1 from room_members mm
-                     where mm.room_id = m.room_id and mm.user_id = me)
-        )
-      ), '[]'::json),
+        'id', t.id, 'room', t.room_id, 'from', t.from_id, 'type', t.type,
+        'text', t.body, 'mediaId', t.media_path, 'name', t.media_name,
+        'size', t.media_size, 'replyTo', t.reply_to,
+        'deleted', t.deleted,
+        'edited', t.edited_at,
+        'ts', (extract(epoch from t.created_at) * 1000)::bigint
+      ) order by t.rev) from (
+        select m.id, m.room_id, m.from_id, m.type, m.body, m.media_path,
+               m.media_name, m.media_size, m.reply_to, m.deleted,
+               m.edited_at, m.created_at, m.rev
+          from messages m
+         /* ⚠ 是 >= 不是 >。
+            客户端拿到的 p_since 来自 state_peek()，那是"最后分配出去的号"，
+            而最后分配的号往往正是刚发的那条消息的 rev。
+            用 > 会把这条漏掉 —— 用户自己发的消息，自己这边看不到。
+            用 >= 最多重复送最后一条，前端按 id merge 会去重，无害。 */
+         where coalesce(m.rev, 0) >= coalesce(p_since, 0)
+           and (
+             exists (select 1 from rooms r where r.id = m.room_id and r.type = 'public')
+             or exists (select 1 from room_members mm
+                        where mm.room_id = m.room_id and mm.user_id = me)
+           )
+         order by m.rev
+         limit 500
+      ) t), '[]'::json),
+    'msgCursor', coalesce((select max(t.rev) from (
+        select m.rev from messages m
+         where coalesce(m.rev, 0) >= coalesce(p_since, 0)
+           and (
+             exists (select 1 from rooms r where r.id = m.room_id and r.type = 'public')
+             or exists (select 1 from room_members mm
+                        where mm.room_id = m.room_id and mm.user_id = me)
+           )
+         order by m.rev limit 500) t), coalesce(p_since, 0)),
+    'msgMore', (select count(*) > 500 from (
+        select 1 from messages m
+         where coalesce(m.rev, 0) >= coalesce(p_since, 0)
+           and (
+             exists (select 1 from rooms r where r.id = m.room_id and r.type = 'public')
+             or exists (select 1 from room_members mm
+                        where mm.room_id = m.room_id and mm.user_id = me)
+           )
+         order by m.rev limit 501) t),
     'logs', coalesce((select json_agg(json_build_object(
         'id', l.id, 'who', l.who_id, 'act', l.act, 'detail', l.detail,
         'target', l.target, 'ts', (extract(epoch from l.created_at) * 1000)::bigint
@@ -874,23 +916,51 @@ begin
        写成 json_agg(x) ... order by m.created_at 会让整句变成聚合查询，
        报 "column must appear in the GROUP BY clause" —— 本地测试没跑到
        state_get 所以没暴露，真连上才炸。 */
+    /* 同 state_delta：全量首次拉取也要分页（S-095）。
+       这里只取最近 30 天内、**最新的 500 条**（按 rev 倒序再正序还原）。
+       注意是"最新的"而不是"最旧的" ——
+       首次打开时用户要看的是最近的消息，不是一个月前的。
+       剩下更旧的由前端拿 msgCursor 继续往前补（见 msgMore）。 */
     'messages', coalesce((select json_agg(json_build_object(
-        'id', m.id, 'room', m.room_id, 'from', m.from_id, 'type', m.type,
-        'text', m.body, 'mediaId', m.media_path, 'name', m.media_name,
-        'size', m.media_size, 'replyTo', m.reply_to,
-        'deleted', m.deleted,
-   'edited',  m.edited_at,
-        'ts', (extract(epoch from m.created_at) * 1000)::bigint
-      ) order by m.created_at) from messages m
-      where m.created_at > now() - interval '30 days'
-        -- 只能看到自己所在房间的消息。
-        -- 原来不加这层：私聊和别人的群聊会一视同仁全量返回。
-        and (
-          exists (select 1 from rooms r where r.id = m.room_id and r.type = 'public')
-          or exists (select 1 from room_members mm
-                     where mm.room_id = m.room_id and mm.user_id = me)
-        )
-      ), '[]'::json),
+        'id', t.id, 'room', t.room_id, 'from', t.from_id, 'type', t.type,
+        'text', t.body, 'mediaId', t.media_path, 'name', t.media_name,
+        'size', t.media_size, 'replyTo', t.reply_to,
+        'deleted', t.deleted,
+        'edited', t.edited_at,
+        'ts', (extract(epoch from t.created_at) * 1000)::bigint
+      ) order by t.rev) from (
+        select m.id, m.room_id, m.from_id, m.type, m.body, m.media_path,
+               m.media_name, m.media_size, m.reply_to, m.deleted,
+               m.edited_at, m.created_at, m.rev
+          from messages m
+         where m.created_at > now() - interval '30 days'
+           -- 只能看到自己所在房间的消息。
+           -- 原来不加这层：私聊和别人的群聊会一视同仁全量返回。
+           and (
+             exists (select 1 from rooms r where r.id = m.room_id and r.type = 'public')
+             or exists (select 1 from room_members mm
+                        where mm.room_id = m.room_id and mm.user_id = me)
+           )
+         order by m.rev desc limit 500
+      ) t), '[]'::json),
+    'msgCursor', coalesce((select min(t.rev) from (
+        select m.rev from messages m
+         where m.created_at > now() - interval '30 days'
+           and (
+             exists (select 1 from rooms r where r.id = m.room_id and r.type = 'public')
+             or exists (select 1 from room_members mm
+                        where mm.room_id = m.room_id and mm.user_id = me)
+           )
+         order by m.rev desc limit 500) t), 0),
+    'msgMore', (select count(*) > 500 from (
+        select 1 from messages m
+         where m.created_at > now() - interval '30 days'
+           and (
+             exists (select 1 from rooms r where r.id = m.room_id and r.type = 'public')
+             or exists (select 1 from room_members mm
+                        where mm.room_id = m.room_id and mm.user_id = me)
+           )
+         limit 501) t),
     'logs', coalesce((select json_agg(json_build_object(
         'id', l.id, 'who', l.who_id, 'act', l.act, 'detail', l.detail,
         'target', l.target, 'ts', (extract(epoch from l.created_at) * 1000)::bigint
