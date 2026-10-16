@@ -154,7 +154,16 @@
       status: u.status || 'active',
       perms: u.perms || [], banned: u.status === 'banned',
       mutedUntil: u.mutedUntil || 0, bio: u.bio || '',
-      createdAt: u.createdAt || 0, updatedAt: u.lastSeen || u.createdAt || 0,
+      createdAt: u.createdAt || 0,
+      /* ⚠ updatedAt 用的是 lastSeen —— **语义不对**（S-085）。
+         lastSeen 是"最后上线时间"，不是"资料最后修改时间"。
+         拿它当版本判据，等于"谁最后上线谁赢"：
+         用户只是上线了一下，也会把别人真正的资料修改盖掉。
+         保留这一行只为兼容，合并判据请一律用下面的 rev。 */
+      updatedAt: u.lastSeen || u.createdAt || 0,
+      /* 真正的资料版本（服务端 users.rev，全局单调序号）。
+         由 users 表的 insert/update 触发器写入，加列前的老行已回填。 */
+      rev: (typeof u.rev === 'number') ? u.rev : null,
       lastSeen: u.lastSeen || 0
     };
   }
@@ -167,7 +176,17 @@
       muted: [],
       /* 被单独关掉邀请权的成员（服务端 can_invite=false） */
       noInvite: r.noInvite || [],
-      createdAt: r.createdAt || 0, updatedAt: r.createdAt || 0
+      createdAt: r.createdAt || 0,
+      /* ⚠ 原来 updatedAt 直接用 createdAt（S-085，这条最致命）。
+         created_at **永远不变**，于是 mergeArr 里
+         `x.updatedAt > o.updatedAt` 恒为 false ——
+         **房间资料的合并分支从来没执行过**：
+         服务端改了房间名/公告，前端同步回来时被整个丢弃。
+         这正是"改公告不同步""置顶只改本地"那一族问题的共同根因 ——
+         不是没调服务端，是调了、存了、返回了，被前端判据丢掉了。 */
+      updatedAt: r.createdAt || 0,
+      /* 真正的资料版本（服务端 rooms.rev）。加列前的老房间已回填。 */
+      rev: (typeof r.rev === 'number') ? r.rev : null
     };
   }
 
