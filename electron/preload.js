@@ -25,7 +25,12 @@ contextBridge.exposeInMainWorld('ElectronBridge', {
      下载交给主进程 —— 渲染进程没有写文件的能力。 */
   version: APP_VERSION,
   openDownload: (url) => ipcRenderer.send('chat:openDownload', url),
-  downloadUpdate: (url, file) => ipcRenderer.invoke('chat:downloadUpdate', url, file),
+  /* ⚠ S-098：第四个参数 sha256 必须透传。
+     不传的话主进程拿不到期望值，校验会退化成 no-hash ——
+     而 no-hash 和"校验通过"在界面上看起来不一样，
+     但漏传时很容易被当成"反正有校验"，这是最隐蔽的失效方式。 */
+  downloadUpdate: (url, file, sha256) =>
+    ipcRenderer.invoke('chat:downloadUpdate', url, file, sha256 || null),
   /* 下载进度回调。返回取消函数 —— 组件卸载时必须调，否则重复监听会叠加。 */
   onDownloadProgress: (cb) => {
     const h = (_e, p) => cb(p);

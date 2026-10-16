@@ -1,4 +1,5 @@
 {
+  "_sha256_note": "⚠ sha256 说明（S-098）：下载地址里含 gh-proxy.com / gh.llkk.cc / ghproxy.net 等**第三方代理镜像**，它们不由我们控制。原来只比对 size —— 长度对不等于内容对，一个被换成别的程序但大小相同的包会被原样放行。客户端已实现 sha256 校验，但**清单里目前还没有真实哈希值**：要有真实值，得先有真实安装包才能算出来。sha256 为 null 时客户端会如实提示「无法验证完整性」，绝不会冒充「已验证」。打包后请运行 Tool/tools/verify/gen-update-hash.py 生成本字段，不要手填。",
   "schema": 1,
   "updated": "2026-10-10",
   "minVersion": "1.3.0",
@@ -9,6 +10,7 @@
       "win": {
         "name": "chat-win-setup.exe",
         "size": 80117760,
+        "sha256": null,
         "mirrors": [
           "https://github.com/liuyiming2024/Chat/releases/latest/download/chat-win-setup.exe",
           "https://gh-proxy.com/https://github.com/liuyiming2024/Chat/releases/latest/download/chat-win-setup.exe",
@@ -20,6 +22,7 @@
       "winzip": {
         "name": "chat-win-portable.exe",
         "size": 80000000,
+        "sha256": null,
         "mirrors": [
           "https://github.com/liuyiming2024/Chat/releases/latest/download/chat-win-portable.exe",
           "https://gh-proxy.com/https://github.com/liuyiming2024/Chat/releases/latest/download/chat-win-portable.exe",
@@ -31,6 +34,7 @@
       "mac": {
         "name": "chat-mac.dmg",
         "size": 98271232,
+        "sha256": null,
         "mirrors": [
           "https://github.com/liuyiming2024/Chat/releases/latest/download/chat-mac.dmg",
           "https://gh-proxy.com/https://github.com/liuyiming2024/Chat/releases/latest/download/chat-mac.dmg",
@@ -42,6 +46,7 @@
       "maczip": {
         "name": "chat-mac.zip",
         "size": 98271232,
+        "sha256": null,
         "mirrors": [
           "https://github.com/liuyiming2024/Chat/releases/latest/download/chat-mac.zip",
           "https://gh-proxy.com/https://github.com/liuyiming2024/Chat/releases/latest/download/chat-mac.zip",
@@ -53,6 +58,7 @@
       "linux": {
         "name": "chat-linux.AppImage",
         "size": 108086886,
+        "sha256": null,
         "mirrors": [
           "https://github.com/liuyiming2024/Chat/releases/latest/download/chat-linux.AppImage",
           "https://gh-proxy.com/https://github.com/liuyiming2024/Chat/releases/latest/download/chat-linux.AppImage",
@@ -64,6 +70,7 @@
       "android": {
         "name": "chat-android.apk",
         "size": 4295000,
+        "sha256": null,
         "mirrors": [
           "https://github.com/liuyiming2024/Chat/releases/latest/download/chat-android.apk",
           "https://gh-proxy.com/https://github.com/liuyiming2024/Chat/releases/latest/download/chat-android.apk",

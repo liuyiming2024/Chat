@@ -185,7 +185,12 @@
             return r.blob();
           }).then(function (b) {
             onProgress({ loaded: b.size, total: b.size, pct: 100 });
-            resolve({ blob: b, chunks: 1, fellBack: true });
+            verifyBlob(b, opts && opts.sha256).then(function (v) {
+              resolve({
+                blob: b, chunks: 1, fellBack: true,
+                verified: v.verified, reason: v.reason, sha256: v.sha256
+              });
+            });
           });
         }
 
@@ -239,7 +244,14 @@
             off += c.buf.length;
           });
           tick();
-          resolve({ blob: new Blob([out]), chunks: chunks.length, fellBack: false });
+          var blobOut = new Blob([out]);
+          /* 长度校验只保证没少字节，保证不了内容对 —— 还得算哈希 */
+          verifyBlob(blobOut, opts && opts.sha256).then(function (v) {
+            resolve({
+              blob: blobOut, chunks: chunks.length, fellBack: false,
+              verified: v.verified, reason: v.reason, sha256: v.sha256
+            });
+          });
         }).catch(reject);
       }).catch(reject);
     });
@@ -271,6 +283,55 @@
         if (tries < 3) return fetchRange(url, start, end, tries + 1);
         throw e;
       });
+  }
+
+  /* ============================================================
+     完整性校验（S-098，考古补回）
+     ------------------------------------------------------------
+     ⚠ 为什么网页端也要有：
+       清单里的下载地址包含 gh-proxy.com / gh.llkk.cc / ghproxy.net
+       这类**第三方代理镜像**。它们不由我们控制，返回什么由它们决定。
+       原来只比对 size —— **长度对不等于内容对**。
+       一个被换成别的程序、但大小恰好一样的包，会被原样放行。
+
+     ⚠ 三种结果必须区分，不能合成"成功/失败"两种：
+       · verified:true   reason:'ok'        与清单一致
+       · verified:false  reason:'no-hash'   清单没提供哈希，**无法验证**
+       · verified:false  reason:'mismatch'  不一致，**绝不能安装**
+
+       前两种都还不是灾难，第三种是 —— 必须让用户明确知道。
+       而"没提供哈希"也不能冒充成"已验证"：
+       界面显示"已验证"而实际什么都没验，比不显示更糟。
+
+     ⚠ crypto.subtle 只在 https / localhost 下可用。
+       file:// 下它是 undefined —— 这时**如实返回 no-hash 并说明原因**，
+       不要退回自造的哈希函数：自造哈希看着能用，
+       实际等于没验证，却会让界面显示"已通过校验"。
+     ============================================================ */
+  function sha256OfBlob(blob) {
+    if (!(window.crypto && crypto.subtle && crypto.subtle.digest)) {
+      return Promise.resolve({ verified: false, reason: 'no-webcrypto', sha256: null });
+    }
+    return blob.arrayBuffer().then(function (buf) {
+      return crypto.subtle.digest('SHA-256', buf);
+    }).then(function (d) {
+      return Array.prototype.map.call(new Uint8Array(d), function (b) {
+        return ('0' + b.toString(16)).slice(-2);
+      }).join('');
+    });
+  }
+
+  function verifyBlob(blob, want) {
+    /* 长度必须严格 64。填 'abc' 也算"有值"，但那不是 sha256 ——
+       不卡这个长度，形同没校验。 */
+    if (!want || typeof want !== 'string' || want.length !== 64) {
+      return Promise.resolve({ verified: false, reason: 'no-hash', sha256: null });
+    }
+    return sha256OfBlob(blob).then(function (got) {
+      if (!got || got.indexOf && got.verified === false) return got;
+      var same = (got === want.toLowerCase());
+      return { verified: same, reason: same ? 'ok' : 'mismatch', sha256: got };
+    });
   }
 
   function fmtSize(n) {
@@ -316,6 +377,7 @@
     fmtSize: fmtSize,
     bestSource: bestSource,
     downloadChunked: downloadChunked,
+    verifyBlob: verifyBlob,
     probe: probe,
     check: check,
     platform: platform,

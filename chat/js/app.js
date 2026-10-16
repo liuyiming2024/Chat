@@ -4262,10 +4262,29 @@
               var sp = pg.querySelector('span');
               if (sp) sp.textContent = (p.pct || 0) + '%　' + g.Updater.fmtSize(p.loaded) + ' / ' + g.Updater.fmtSize(p.total);
             }) : null;
-            return g.ElectronBridge.downloadUpdate(url, a.name).then(function (res) {
+            /* ⚠ S-098：第三个参数是清单里的 sha256，必须传下去。
+               不传 → 主进程降级成 no-hash → 界面上会显示"无法验证"，
+               而不是"校验通过"。这两者必须让用户分得清。 */
+            return g.ElectronBridge.downloadUpdate(url, a.name, a.sha256 || null).then(function (res) {
               if (off) off();
+              if (res && res.tampered) {
+                /* 内容对不上：这是最严重的一种失败，
+                   必须说清"可能是被替换过"，不能只说"下载失败"。
+                   用户据此会去 GitHub 手动下，而不是反复重试。 */
+                btn.disabled = false; btn.textContent = t('retry');
+                g.UI.toast(res.err || t('update.fail'), 'err', 12000);
+                return;
+              }
               if (res && res.ok) {
-                g.UI.toast('已下载，请在弹出的文件夹里安装'); mo.close();
+                mo.close();
+                if (res.verifyNote) {
+                  /* 校验通过和"没校验"必须分开说。
+                     合成一句"已下载"的话，用户以为验证过了，
+                     实际这份清单根本没提供哈希值。 */
+                  g.UI.toast('已下载，请在弹出的文件夹里安装。注意：' + res.verifyNote, 'warn', 10000);
+                } else {
+                  g.UI.toast('已下载（已通过完整性校验），请在弹出的文件夹里安装');
+                }
               } else {
                 btn.disabled = false; btn.textContent = t('retry');
                 g.UI.toast((res && res.err) || t('update.fail'), 'err');
