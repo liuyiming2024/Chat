@@ -1798,7 +1798,14 @@
       }
       /* Delete：物理删除，释放空间，仅站长 */
       if (me.role === 'owner') {
-        var bPurge = elc('button', 'msg-act danger', 'Delete');
+        /* ⚠ 按钮文字原来是英文「Delete」（S-110 核实）。
+           同一排按钮里：删除、移除、Delete —— 前两个是中文，唯独这个是英文。
+           更糟的是它和上面的「删除」是**两种不同的删除**：
+             删除 = 逻辑删除（可恢复）
+             Delete = 物理抹除（不可恢复）
+           而界面上这两个长得几乎一样，用户根本分不清哪个能后悔。
+           改成中文并让字面就带出区别：「抹除」——和「删除」明显不是一回事。 */
+        var bPurge = elc('button', 'msg-act danger', '抹除');
         bPurge.title = '物理删除：从数据里抹掉并释放媒体空间（不可恢复）';
         bPurge.onclick = function () {
           g.UI.confirm('Delete 这条消息？数据将被抹掉、媒体空间释放，不可恢复。', function () {
@@ -2461,8 +2468,14 @@
       if (g.ACL.can(me, 'msg.pin', r)) {
         var x = elc('button', 'pinned-x');
         x.innerHTML = '<svg class="ic ic-sm" aria-hidden="true"><use href="#i-close"/></svg>';
+        /* ⚠ 原来这里连续写了两遍 `x.title = '取消置顶';`（S-110 核实）。
+           重复赋值本身无害，但它是**某次编辑留下的残渣** ——
+           看到它的下一个人会以为漏了什么（比如第二行本该是别的值），
+           于是犹豫要不要改。这种"看着像有玄机其实没有"的死代码要清掉。
+           另外补 aria-label：这个按钮只有图标没有文字，
+           屏幕阅读器读不出"取消置顶"，只能念出一个空按钮。 */
         x.title = '取消置顶';
-        x.title = '取消置顶';
+        x.setAttribute('aria-label', '取消置顶');
         x.onclick = function (e) { e.stopPropagation(); togglePin(m); };
         row.appendChild(x);
       }
@@ -3435,6 +3448,13 @@
       var box = elc('div', 'emoji-grid');
       grp.e.forEach(function (c) {
         var b = elc('button', 'emoji-cell', c);
+        /* ⚠ 表情格子原来只有图形内容（S-110）。
+           屏幕阅读器会直接念出这个字符（比如"露出牙齿的笑脸"），
+           一屏几十个格子连着念，等于噪音；
+           而用键盘 Tab 过去时更是完全不知道焦点在哪。
+           补 aria-label 说明"这是插入表情的按钮"，并让图形本身对读屏器隐藏。 */
+        b.setAttribute('aria-label', '插入表情');
+        b.setAttribute('role', 'button');
         b.onclick = function () {
           var ta = $('input');
           if (ta) {
@@ -3470,6 +3490,9 @@
         var b = elc('button', 'sym-cell');
         b.innerHTML = '<span class="sym-name">' + g.UI.esc(it[0]) + '</span>';
         b.title = it[1];
+        /* 同上：符号格子也要让读屏器知道这是什么。
+           这里用 it[0]（符号名，如「箭头」）比念符号本身有用得多。 */
+        b.setAttribute('aria-label', '插入符号：' + g.UI.esc(it[0]));
         b.onclick = function () {
           var ta = $('input');
           if (ta) {
@@ -3512,8 +3535,15 @@
     });
   }
 
-  function sendMediaFile(file, kind) {
-    var r = findRoom(cur);
+  /* ⚠ 第三个参数 roomId（S-109）：**把目标房间固定下来**。
+     原来只用全局 cur，而批量发图是 `setTimeout(..., i * 350)` 逐个发的 ——
+     发到第 3 张时用户切了房间，第 4 张就飞到新房间去了。
+     消息发错房间是所有 bug 里最严重的一类：
+     它可能把发给 A 的图送到了 B 那儿，而发的人浑然不觉。
+     所以调用方必须把"发起时的房间"显式传进来，不能依赖回调执行时的 cur。 */
+  function sendMediaFile(file, kind, roomId) {
+    var rid = roomId || cur;
+    var r = findRoom(rid);
     var sp = g.ACL.canSpeak(me, r);
     if (!sp.ok) { g.UI.toast(sp.why, 'err'); return; }
     /* 按类型细分权限：图片 / 视频 / 语音 / 文件各自独立 */
@@ -3537,7 +3567,7 @@
             return null;
           }
           var m = {
-            id: uid('msg'), room: cur, from: me.id, type: kind,
+            id: uid('msg'), room: rid, from: me.id, type: kind,
             mediaId: id, name: file.name, size: g.Media.dataUrlSize(u), ts: now()
           };
           return (kind === 'video'
@@ -5888,7 +5918,11 @@
       if (!fs.length) return;
       if (fs.length === 1) { sendMediaFile(fs[0], 'image'); return; }
       g.UI.confirm('发送这 ' + fs.length + ' 张图片？', function () {
-        fs.forEach(function (f, i) { setTimeout(function () { sendMediaFile(f, 'image'); }, i * 350); });
+        /* 固定发起时的房间：连发到第几张时切了房间，剩下的不能跟着跑过去 */
+        var rid0 = cur;
+        fs.forEach(function (f, i) {
+          setTimeout(function () { sendMediaFile(f, 'image', rid0); }, i * 350);
+        });
       });
     });
     /* ⚠ 粘贴图片：截图后 Ctrl+V 是最自然的发图方式，原来完全没接。
@@ -5908,8 +5942,9 @@
       }
       if (!imgs.length) return;
       e.preventDefault();   /* 有图才拦，粘文字照常 */
+      var rid0 = cur;   /* 同上：粘贴多图也是连发，房间必须固定 */
       imgs.forEach(function (f, i2) {
-        setTimeout(function () { sendMediaFile(f, 'image'); }, i2 * 350);
+        setTimeout(function () { sendMediaFile(f, 'image', rid0); }, i2 * 350);
       });
     });
     /* Markdown 工具条：插入语法 */
