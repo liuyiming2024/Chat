@@ -1250,10 +1250,32 @@ body.dark .side-panel,
 body.dark .composer,
 body.dark .chat-head { background: var(--bg-panel); border-color: var(--border); }
 body.dark .msg-scroll { background: var(--bg-chat); }
+/* Q-Chat-E-106（CSS 接线检查抓出）
+   ⚠ .member-item 这个 class **从未存在过**，成员行实际叫 .user-line。
+   于是这条 hover 规则对成员行完全不生效 ——
+   深色模式下鼠标划过成员列表，只有房间列表有反馈，成员列表毫无反应。
+   用户会以为成员行不可点击（而它明明是可以点的）。 */
 body.dark .room-item:hover,
-body.dark .member-item:hover { background: var(--hover); }
-body.dark .modal-card,
+body.dark .user-line:hover { background: var(--hover); }
+
+/* ⚠⚠ 深色模式下弹窗是"白框套深色芯" —— 这条最刺眼（Q-Chat-E-106）。
+   .modal-card 是**不存在的名字**（弹窗容器实际叫 .modal），
+   所以只有 .modal-body 拿到了深色背景，而：
+     .modal      背景硬编码 #fff
+     .modal-head 未定义背景 → 继承 .modal 的白
+     .modal-foot 同上
+   → 深色模式下弹窗的**标题栏和底部按钮栏整条是白的**，只有中间一块深色。
+   这是"名字漂移"导致的规则失效：写这条规则时容器还叫 modal-card，
+   后来改名成 modal，这条没跟着改，于是静默失效了三年。
+
+   ⚠ 必须连 head / foot 一起补，只补 .modal 不够 ——
+     head 和 foot 有自己的 border（#eee），在深色面板上是两条突兀的亮线。 */
+body.dark .modal { background: var(--bg-panel); color: var(--text); }
 body.dark .modal-body { background: var(--bg-panel); color: var(--text); }
+body.dark .modal-head { border-bottom-color: #2a2f36; }
+/* ⚠ .modal-foot 还自带 background:#fafafa（浅灰），
+   只改边框不改背景的话，深色弹窗底部会是一条浅灰带 —— 比白边更怪。 */
+body.dark .modal-foot { border-top-color: #2a2f36; background: #1b1e23; }
 body.dark .field,
 body.dark .input,
 body.dark textarea.input {
@@ -1343,13 +1365,33 @@ body.dark .gate-card { background: var(--bg-panel); }
 /* ============ 极简模式 ============
    隐藏专业向控件，让界面保持干净。
    公式照常渲染，只是不显示语法辅助入口。 */
+/* Q-Chat-E-106（CSS 接线检查抓出）
+   ⚠ 极简模式原本**形同虚设**：下面 7 个选择器里，只有 .md-bar 是真实存在的，
+   其余 6 个对应的元素要么不存在、要么用了别的名字。
+   于是切到极简模式后，界面几乎没变化 ——
+   而 "极简/专业" 是设置里的一个明确开关，切了没反应，用户只会以为按钮坏了。
+
+   逐个核对结果：
+     .md-bar          ✅ 存在（Markdown 工具条）
+     .btn-sym         ❌ 符号面板按钮用的是 id="btnSym"，class 是 md-btn
+     .cmd-hint        ❌ 元素从未实现
+     .md-src-toggle   ❌ 元素从未实现
+     .md-code-lang    ✅ 存在（markdown.js 生成）
+     .code-line-no    ❌ 元素从未实现
+     .msg-tools .btn-src ❌ 代码里容器叫 msg-acts、按钮叫 msg-act，没有 btn-src
+
+   修法：**只做接线，不猜功能**。
+   存在的对齐到真名字（.btn-sym → #btnSym，.msg-tools .btn-src → .msg-acts .btn-src）；
+   不存在的（cmd-hint / md-src-toggle / code-line-no）保留并标注"预留" ——
+   删了会丢线索，猜着实现又可能做错方向。 */
 body.mode-simple .md-bar,
-body.mode-simple .btn-sym,
-body.mode-simple .cmd-hint,
-body.mode-simple .md-src-toggle { display: none !important; }
-body.mode-simple .md-code-lang,
-body.mode-simple .code-line-no { display: none !important; }
-body.mode-simple .msg-tools .btn-src { display: none !important; }
+body.mode-simple #btnSym,
+body.mode-simple .md-code-lang { display: none !important; }
+/* 预留（对应元素尚未实现，规则暂不生效，勿删）：
+   .cmd-hint   —— 命令输入提示
+   .md-src-toggle —— Markdown 源码切换
+   .code-line-no  —— 代码块行号 */
+body.mode-simple .msg-acts .btn-src { display: none !important; }
 
 /* 专业模式：显示语法辅助 */
 body.mode-pro .md-bar { display: flex; }
@@ -1538,6 +1580,13 @@ button:active,
   stroke-linejoin: round;
 }
 .ic-sm { width: 16px; height: 16px; }
+/* 死样式（Q-Chat-E-106 核查后确认，保留以便追溯）：
+   .ic-lg        —— 规划过 22px 大号图标，实际全局只用 .ic / .ic-sm，从未用上
+   .perm-grid    —— 权限面板实际用 .perm-row（flex 单列），网格版未采用
+   .perm-item    —— 同上
+   .rec-sec      —— 录音秒数实际用 id="recSec"，这里的 class 版选择器永不命中
+   ⚠ 保留而非删除：删了会丢掉"曾经规划过什么"的线索。
+     但**不要照着这些名字去接功能** —— 它们不等于"待实现的需求"。 */
 .ic-lg { width: 22px; height: 22px; }
 /* 实心例外（play） */
 .ic-fill { fill: currentColor; stroke: none; }
