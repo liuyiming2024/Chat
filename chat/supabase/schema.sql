@@ -53,6 +53,15 @@ insert into site (id) values (true) on conflict (id) do nothing;
 
 -- 老库补列（幂等）
 alter table site add column if not exists gate_prev_hash text;
+/* 无门模式（用户主动取消站点保护密码）。
+   ⚠ 必须是一个独立的布尔列，不能用 "gate_hash is null" 代替 ——
+      gate_hash 为空同时表示"站点尚未初始化"，两者语义相反：
+        未初始化 → 任何人都能调 site_init 建站长（危险）
+        无门     → 站点已建好，只是不再设门禁（正常开放）
+      混用一个字段，就会在取消密码的瞬间把站点退回"可被人抢注站长"的状态。
+   账号验证仍在：绝大多数 RPC 要求 cur_user() 非空（登录），
+   gate_passed 只是"能否读取公开信息"这一层，不是身份。 */
+alter table site add column if not exists gate_disabled boolean not null default false;
 alter table site add column if not exists gate_new_enc   bytea;
 alter table site add column if not exists gate_grace     int not null default 0;
 
@@ -344,11 +353,17 @@ $$;
 -- 未初始化时只放行 site_ready() / site_init()，其余一律要求有效会话。
 create or replace function gate_passed() returns boolean
 language sql stable as $$
-  select exists (
-    select 1 from sessions s
-    where s.token_hash = cur_token_hash() and s.expires_at > now()
-      and (s.gate_ok or s.user_id is not null)   -- 过了门禁，或已登录账号
-  );
+  /* 无门模式：直接放行（Q-Chat-S-120）。
+     ⚠ 这里"放行"的含义很窄 —— 只是允许读取站点公开信息
+       （site_ready / state_get / user_register 等少数几个）。
+       绝大多数写操作仍要求 cur_user() 非空，也就是**必须登录账号**。
+       所以取消保护密码 ≠ 公开站点内容，账号这道门还在原处。 */
+  select coalesce((select gate_disabled from site where id = true), false)
+      or exists (
+        select 1 from sessions s
+        where s.token_hash = cur_token_hash() and s.expires_at > now()
+          and (s.gate_ok or s.user_id is not null)   -- 过了门禁，或已登录账号
+      );
 $$;
 
 -- 生成会话（gate_ok=true 表示仅过了保护密码）
@@ -376,7 +391,10 @@ $$;
 -- 站点是否已初始化
 create or replace function site_ready() returns boolean
 language sql stable as $$
-  select exists (select 1 from site where gate_hash is not null);
+  -- ⚠ 无门模式下 gate_hash 被清空，但站点确实是"已初始化"的。
+  --   不加这个 or，前端会误判成未初始化、弹出"创建站点"页 ——
+  --   那等于把已建好的站点当成空站，风险极大。
+  select exists (select 1 from site where gate_hash is not null or gate_disabled);
 $$;
 
 -- 序号：前端轮询比对，也用于 Actions 保活
@@ -424,7 +442,9 @@ begin
     'rev', v_rev,
     'me', me,
     'site', (select row_to_json(s) from (
-      select site_name, allow_register, (gate_hash is not null) as has_gate from site where id = true) s),
+      select site_name, allow_register, (gate_hash is not null) as has_gate,
+             -- Q-Chat-S-120：无门模式。前端据此跳过密码框。
+             coalesce(gate_disabled, false) as gate_off from site where id = true) s),
     /* 用户与房间量小且变动会牵动权限，每次都带上，不做增量 */
     'users', coalesce((select json_agg(json_build_object(
         'id', u.id, 'nick', u.nick, 'realName', u.real_name, 'role', u.role,
@@ -563,8 +583,16 @@ returns json language plpgsql volatile security definer
 set search_path = public, extensions, pg_temp as $fn$
 declare uid uuid; tk text;
 begin
-  if exists (select 1 from site where gate_hash is not null) then
+  /* ⚠ 原来只判 gate_hash 是否为空。
+     无门模式下 gate_hash 被清空，这个判断就失效了 ——
+     任何人都能再调一次 site_init，**凭空造出第二个站长**。
+     而 site_init 不检查 users 表是否已有 owner，所以这是真实可达的。
+     补上 owner 检查：只要已存在站长，就永远不允许再初始化。 */
+  if exists (select 1 from site where gate_hash is not null or gate_disabled) then
     raise exception '站点已初始化';
+  end if;
+  if exists (select 1 from users where role = 'owner') then
+    raise exception '站点已存在站长，不能重复初始化';
   end if;
   if length(p_gate) < 4 or length(p_pwd) < 4 then
     raise exception '密码至少 4 位';
@@ -606,6 +634,16 @@ set search_path = public, extensions, pg_temp as $$
 declare tk text; st record; ok_new boolean; ok_old boolean; plain text;
 begin
   select * into st from site where id = true;
+
+  /* 无门模式（Q-Chat-S-120）：不校验任何密码，直接签发一个只读会话。
+     前端据此跳过密码框。这里的会话是 gate_only ——
+     它能读公开信息，但**不能发消息**（msg_send 要求 cur_user() 非空）。
+     ⚠ 不能图省事返回一个"假的已登录会话"，那等于把匿名变成实名。 */
+  if coalesce(st.gate_disabled, false) then
+    tk := issue_session(null, true);
+    return json_build_object('ok', true, 'token', tk, 'show_new', null);
+  end if;
+
   if st.gate_hash is null then raise exception '站点尚未初始化'; end if;
 
   /* 这里【不能】做失败计数：plpgsql 的 raise exception 会回滚同一函数内
@@ -865,7 +903,9 @@ begin
     'serverNow', (extract(epoch from now()) * 1000)::bigint,
     'me', me,
     'site', (select row_to_json(s) from (
-      select site_name, allow_register, (gate_hash is not null) as has_gate from site where id = true) s),
+      select site_name, allow_register, (gate_hash is not null) as has_gate,
+             -- Q-Chat-S-120：无门模式。前端据此跳过密码框。
+             coalesce(gate_disabled, false) as gate_off from site where id = true) s),
     'users', coalesce((select json_agg(json_build_object(
         'id', u.id, 'nick', u.nick, 'realName', u.real_name, 'role', u.role,
         'status', u.status, 'perms', u.perms, 'bio', u.bio,
@@ -2603,4 +2643,74 @@ grant execute on function member_set_can_invite(text, uuid, boolean) to anon, au
    之后新建的函数不会被自动覆盖，漏了就报 permission denied。
    而且签名必须写全：room_mute(text, uuid, int)，
    写成 room_mute(text) 会建出一个**不存在的重载的授权**，静默无效。 */
+/* ============================================================
+   站点保护密码开关（Q-Chat-S-120）
+   ────────────────────────────────────────────────────────────
+   取消保护密码后，站点对所有人开放读取，但**账号验证仍在**：
+   msg_send / room_create 等一律要求 cur_user() 非空。
+   所以这不是"站点裸奔"，而是"去掉进站那道额外的门"。
+
+   ⚠ 只允许站长（owner）操作，且必须已登录。
+     这是不可逆感很强的操作 —— 虽然留了 gate_enable 退路，
+     但清空的是 bcrypt 哈希，**旧密码本身找不回来**，
+     重新开门必须设一个新密码。
+============================================================ */
+create or replace function gate_disable()
+returns json language plpgsql volatile security definer
+set search_path = public, extensions, pg_temp as $$
+declare uid uuid;
+begin
+  uid := cur_user();
+  if uid is null then raise exception '请先登录'; end if;
+  if not exists (select 1 from users where id = uid and role = 'owner') then
+    raise exception '仅站长可取消保护密码';
+  end if;
+  if not exists (select 1 from site where id = true and (gate_hash is not null or gate_disabled)) then
+    raise exception '站点尚未初始化';
+  end if;
+
+  update site set
+    gate_hash = null,
+    gate_prev_hash = null,
+    gate_new_enc = null,
+    gate_grace = 0,
+    gate_disabled = true
+  where id = true;
+
+  insert into logs (who_id, act, detail) values (uid, 'gate_disable', '取消站点保护密码，改为开放访问（账号验证仍在）');
+  return json_build_object('ok', true);
+end;
+$$;
+
+/* 重新设置保护密码（退路）。
+   取消不是单向的：随时可以再设一个回来。
+   ⚠ 但旧密码无法恢复 —— 存的是 bcrypt 哈希，清空即永久丢失。 */
+create or replace function gate_enable(p text)
+returns json language plpgsql volatile security definer
+set search_path = public, extensions, pg_temp as $$
+declare uid uuid;
+begin
+  uid := cur_user();
+  if uid is null then raise exception '请先登录'; end if;
+  if not exists (select 1 from users where id = uid and role = 'owner') then
+    raise exception '仅站长可设置保护密码';
+  end if;
+  if coalesce(length(p), 0) < 4 then raise exception '保护密码至少 4 位'; end if;
+
+  update site set
+    gate_hash = crypt(p, gen_salt('bf', 10)),
+    gate_prev_hash = null,
+    gate_new_enc = null,
+    gate_grace = 0,
+    gate_disabled = false
+  where id = true;
+
+  insert into logs (who_id, act, detail) values (uid, 'gate_enable', '重新启用站点保护密码');
+  return json_build_object('ok', true);
+end;
+$$;
+
+grant execute on function gate_disable() to anon, authenticated;
+grant execute on function gate_enable(text) to anon, authenticated;
+
 grant execute on function room_mute(text, uuid, int) to anon, authenticated;

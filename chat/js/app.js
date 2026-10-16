@@ -39,6 +39,9 @@
   /* 门禁：默认只给 1 天；切后台时会被清掉 */
   function setGateOk() { ckSet(GATE_KEY, '1', 1); }
   function gateOk() { return ckGet(GATE_KEY) === '1'; }
+  /* Q-Chat-S-120：站点是否已取消保护密码。
+     取值只来自服务端 state（每次 pull 刷新），本地不做持久化。 */
+  function gateOff() { return !!(S && S.gateOff); }
   function clrGate() { ckDel(GATE_KEY); }
 
   /* 账号凭据：三档有效期，互相独立
@@ -389,6 +392,10 @@
     });
     S.logs = mergeArr(S.logs || [], inS.logs || []).sort(function (p, q) { return q.ts - p.ts; }).slice(0, 400);
     if (inS.gate) S.gate = inS.gate;
+    /* Q-Chat-S-120：无门状态由服务端说了算，本地不缓存。
+       不写进持久化状态也是有意的 —— 服务端哪天重新开了门，
+       本地若拿着旧的 "无门" 结论，就会跳过密码框直接放行。 */
+    if (typeof inS.gateOff === 'boolean') S.gateOff = inS.gateOff;
     if (typeof inS.allowRegister === 'boolean') S.allowRegister = inS.allowRegister;
     if (inS.siteName) S.siteName = inS.siteName;
     if (me) { var u = findUser(me.id); if (u) me = u; }
@@ -956,8 +963,9 @@
       }
       if (g.Notifier) g.Notifier.onFocus();
       syncBadge();
-      /* 回到前台：门禁没了就重新弹，不能让界面停在一个已失效的状态 */
-      if (!gateOk()) reenterGate();
+      /* 回到前台：门禁没了就重新弹，不能让界面停在一个已失效的状态。
+         Q-Chat-S-120：无门模式下不弹 —— 没有密码可输，弹了就是死路。 */
+      if (!gateOk() && !(g.Online && g.Online.isOnline() && gateOff())) reenterGate();
     });
     window.addEventListener('focus', function () {
       if (g.Notifier) g.Notifier.onFocus();
@@ -6330,8 +6338,28 @@
         /* 站点已初始化：拉一次全量，再决定显示门禁还是直接进 */
         return g.Online.pull().then(function (inS) {
           if (inS && mergeState(inS)) save(true);
-          if (g.SB && g.SB.token()) afterGate();   /* 已有会话 */
-          else enterGate();
+          if (g.SB && g.SB.token()) { afterGate(); return true; }   /* 已有会话 */
+          /* Q-Chat-S-120：无门模式 —— 服务端已取消保护密码。
+             这里**绝不能**再调 enterGate()：
+             那个页面要求输入一个此刻根本不存在的密码，
+             用户会以为自己记错了，反复重试、始终进不去。
+             正确做法是向服务端要一个只读会话（gate 传空即可），
+             拿到会话后再走 afterGate()，由账号登录这道门接着把关。 */
+          if (inS && inS.gateOff) {
+            return g.Online.gate('').then(function () {
+              setGateOk();
+              return g.Online.pull();
+            }).then(function (s2) {
+              if (s2 && mergeState(s2)) save(true);
+              afterGate();
+              return true;
+            }).catch(function (e) {
+              var m = (e && e.message) ? String(e.message) : '';
+              g.UI.toast('进入站点失败：' + (m || '网络异常'), 'err');
+              return true;
+            });
+          }
+          enterGate();
           return true;
         }).catch(function () { return false; });
       })

@@ -249,6 +249,13 @@
     if (j.site) {
       out.siteName = j.site.site_name;
       if (typeof j.site.allow_register === 'boolean') out.allowRegister = j.site.allow_register;
+      /* Q-Chat-S-120：无门模式。
+         服务端取消了站点保护密码 —— 前端必须据此跳过密码框，
+         否则用户会卡在一个"请输入保护密码"的页面上，
+         而那个密码此刻在服务端已经不存在了，怎么输都不对。
+         这种"门已拆、牌子还挂着"的状态最让人困惑：
+         他会以为自己记错了密码，反复重试。 */
+      out.gateOff = !!j.site.gate_off;
     }
     /* 服务端已初始化 → 本地门禁标记为真，避免再弹本地门禁 */
     out.gate = { hash: 'server', salt: 'server' };
