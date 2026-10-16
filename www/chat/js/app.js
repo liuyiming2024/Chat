@@ -3469,14 +3469,20 @@
            补 aria-label 说明"这是插入表情的按钮"，并让图形本身对读屏器隐藏。 */
         b.setAttribute('aria-label', '插入表情');
         b.setAttribute('role', 'button');
-        b.onclick = function () {
-          var ta = $('input');
-          if (ta) {
-            var st = ta.selectionStart || ta.value.length;
-            ta.value = ta.value.slice(0, st) + c + ta.value.slice(st);
-            ta.focus(); drafts[cur] = ta.value;
-          }
-        };
+        /* Q-Chat-E-107
+           ⚠⚠ 这里原来自己手写 slice 插入，**没有用 insertAtCursor**。
+           而 E-094-EMOJI（表情插到光标处）修的是另一套面板 toggleEmoji ——
+           那套被后面的 $('btnEmoji').onclick 覆盖，**永远不会被调用**。
+           于是 E-094 等于修了个寂寞：用户实际点开的这个面板里，
+           光标问题原封不动还在。
+
+           具体表现：设置 ta.value 后浏览器把光标推到末尾，
+           所以连点三个表情时，只有第一个落在光标处，后两个全跑到末尾。
+           用户看来就是"时好时坏"，根本想不到是两套实现的问题。
+
+           insertAtCursor 已经处理好了：替换选中区、光标停在插入内容之后、
+           并派发 input 事件（草稿保存和输入框自动增高都挂在那上面）。 */
+        b.onclick = function () { insertAtCursor(c); };
         box.appendChild(b);
       });
       sec.appendChild(box);
@@ -5889,7 +5895,18 @@
       var f = e.target.files[0]; if (f) sendMediaFile(f, 'video');
       e.target.value = '';
     };
-    $('btnEmoji').onclick = toggleEmoji;
+    /* Q-Chat-E-107
+       ⚠ 原来这里是 $('btnEmoji').onclick = toggleEmoji;
+       而本函数后面（表情面板那处）又写了一次 onclick = emojiPanel。
+       **同一个函数内、后写的覆盖先写的** —— 于是 toggleEmoji 永远是死代码。
+
+       危害不只是多一份死代码：两套表情面板实现并存，
+       改的人（包括我）分不清哪套在生效。
+       E-094 修"表情插到光标处"时就修错了对象 ——
+       修的是被覆盖的 toggleEmoji，用户实际点开的 emojiPanel 里问题照旧，
+       于是"修好了"但用户那边毫无变化，且没人知道为什么。
+
+       保留 emojiPanel（有分组、有 aria-label），删掉这一行抢占绑定。 */
     if ($('btnAt')) $('btnAt').onclick = toggleAtPanel;
     $('btnHelp').onclick = helpModal;
     $('btnNewRoom').onclick = function () { createRoom(''); };
@@ -6233,33 +6250,6 @@
     for (var i = ms.length - 1; i >= 0; i--) { ms[i].remove(); break; }
   }
 
-  function toggleEmoji() {
-    var old = document.querySelector('.emoji-panel');
-    if (old) { old.remove(); return; }
-    var p = elc('div', 'emoji-panel');
-    ['😀', '😄', '😁', '😂', '🤣', '😊', '😍', '😘', '😉', '😎', '🤔', '😴',
-      '😭', '😡', '🥳', '😱', '🤯', '🫡', '👍', '👏', '🙏', '💪', '🎉', '❤️',
-      '🔥', '✨', '🌙', '☀️', '🍀', '🐟', '🚀', '💡', '📚', '💻', '🎵', '⭐'].forEach(function (s) {
-        var b = elc('button', 'emoji', s);
-        /* ⚠ 原来是 value += s，永远追加到末尾（E-094）。
-           用户把光标放在句子中间点表情，表情却跑到最后 ——
-           他必须再手动剪一段挪回去，等于这个功能没用。
-           改成插入到光标处，并保持光标在插入内容之后。 */
-        /* ⚠ 已有 insertAtCursor(text) 是**单参数**（E-094-EMOJI，@ 提及那处也在用）。
-           这里差点写成两参数版本：那样 text 会拿到 DOM 元素，
-           插入的是 "[object HTMLTextAreaElement]" —— 而且不报错。
-           同名函数重复定义更危险：会让 @ 提及那两处静默失效。 */
-        b.onclick = function () { insertAtCursor(s); p.remove(); $('input').focus(); };
-        p.appendChild(b);
-      });
-    var wrap = $('input').parentNode;
-    wrap.appendChild(p);
-    setTimeout(function () {
-      document.addEventListener('click', function h() {
-        p.remove(); document.removeEventListener('click', h);
-      });
-    }, 10);
-  }
 
   /* ================= 启动 ================= */
   /* 在线模式：认证与数据走服务端；连不上或站点未初始化则退回本地模式。
