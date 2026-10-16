@@ -2713,4 +2713,55 @@ $$;
 grant execute on function gate_disable() to anon, authenticated;
 grant execute on function gate_enable(text) to anon, authenticated;
 
+/* ================================================================
+   whoami() —— 跨项目统一账号的读取端（Q-Site-S-121）
+
+   用途：个人主页（liuyiming2024.github.io）要在导航条上显示
+   "当前是谁 · 什么角色 · 退出登录"，但它是一个纯静态页，
+   不能把 state_get() 的全量状态拉下来（那是为聊天室设计的，
+   包含房间、消息、成员，几十 KB 起，主页只要一行身份）。
+
+   ⚠ 为什么返回 {ok:false} 而不是 raise exception：
+     主页每次加载都会调它，未登录是**正常状态**而不是错误。
+     抛异常会让浏览器控制台飘红，也会让调用方必须写 try/catch，
+     把"没登录"和"网络断了"混成一谈。
+
+   ⚠ 不返回 real_name（沿用 user_login 的约定）：
+     实名不随任何响应外泄，连本人也不通过这种方式拿。
+
+   ⚠ 不返回权限清单：主页只需要显示角色名。
+     权限判定一律走服务端各函数体内的 if ... raise，
+     前端拿到的清单只用于"要不要显示这个按钮"，不参与安全判定。
+=============================================================== */
+create or replace function whoami()
+returns json language plpgsql stable security definer
+set search_path = public, extensions, pg_temp as $$
+declare uid uuid; u record;
+begin
+  uid := cur_user();
+  if uid is null then
+    return json_build_object('ok', false, 'err', 'not logged in');
+  end if;
+
+  select id, nick, role, status into u from users where id = uid;
+  if u.id is null then
+    /* 会话有效但用户没了（被物理删除）。
+       ⚠ 这种情况必须报 ok:false 并让前端清掉会话 ——
+         否则前端会一直拿着一个死 token，界面显示"已登录"而什么都做不了。 */
+    return json_build_object('ok', false, 'err', 'user gone');
+  end if;
+
+  return json_build_object(
+    'ok', true,
+    'id', u.id,
+    'nick', u.nick,
+    'role', u.role,
+    'status', u.status,
+    'site', (select site_name from site where id = true)
+  );
+end;
+$$;
+
+grant execute on function whoami() to anon, authenticated;
+
 grant execute on function room_mute(text, uuid, int) to anon, authenticated;

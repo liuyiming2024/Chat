@@ -90,6 +90,9 @@
       <!-- 语言切换。文案靠 data-i18n，切换时整页重刷一遍，不需改结构。 -->
       <button class="icon-btn lang-btn" id="btnLang" title="Language / 语言" aria-label="切换语言">文</button>
       <button class="icon-btn" id="btnTheme" title="切换深色 / 浅色" aria-label="切换深色 / 浅色"><svg class="ic" aria-hidden="true"><use href="#i-moon"/></svg></button>
+      <!-- Q-Site-S-121：账号区（昵称 + 角色 + 头像 + 退出）。
+           与聊天室同源，直接复用会话令牌，进过聊天室这里就能显示身份。 -->
+      <div id="acctHost" class="acct-host"></div>
       <a class="icon-btn" href="https://github.com/liuyiming2024/Chat" title="GitHub 仓库" target="_blank" rel="noopener">↗</a>
     </div>
   </div>
@@ -266,6 +269,7 @@
     <a href="docs/terms.html">使用须知</a>
   </div>
 </div>
+<script src="assets/account.js"></script>
 <script src="assets/site.js"></script>
 </body>
 </html>
