@@ -1,2 +1,3 @@
--- 占位：正式的库结构在 supabase/schema.sql（各项目自己的 schema）。
--- 这个空文件是给「数据库执行」workflow 用的，用完即清，避免下次误跑。
+select column_name, data_type from information_schema.columns
+ where table_name='users' and column_name similar to '%(at|seen|time)%'
+ order by column_name;
