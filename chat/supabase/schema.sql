@@ -656,7 +656,7 @@ drop function if exists gate_check(text);
 create or replace function gate_check(p text)
 returns json language plpgsql volatile security definer
 set search_path = public, extensions, pg_temp as $$
-declare tk text; st record; ok_new boolean; ok_old boolean; plain text;
+declare tk text; st record; ok_new boolean; ok_old boolean; plain text; v_recent int;
 begin
   select * into st from site where id = true;
 
@@ -665,6 +665,30 @@ begin
      它能读公开信息，但**不能发消息**（msg_send 要求 cur_user() 非空）。
      ⚠ 不能图省事返回一个"假的已登录会话"，那等于把匿名变成实名。 */
   if coalesce(st.gate_disabled, false) then
+    /* ⚠⚠ Q-Chat-S-131：这里原来**没有任何限流**，每次调用都签发一个新会话。
+
+       外部报告 C-2 说"门禁密码可无限爆破" —— 但实际情况比它说的更容易：
+       **门禁已经被我们关闭了**（S-120），gate_check 无门分支
+       不校验任何密码、直接发会话。攻击者连爆破都不用做，
+       循环调用这一条就能把 sessions 表灌满。
+
+       而 session_cleanup() 又恰恰对 anon 开放（同一份报告的 C-9），
+       等于**灌的权力**和**清的权力**都在攻击者手上 ——
+       他可以灌满，也可以顺手擦掉 login_attempts 里的痕迹。
+
+       ★ 关于"plpgsql 里做不了限流"：
+         文件里那句注释说的是"raise 会回滚 update，计数加不上去" ——
+         这只排除了**写计数**（update 计数再 raise，计数被回滚）。
+         **读计数不受影响**：先 select count 查已有多少，超阈值就 raise。
+         查询本身不需要回滚保护。所以 plpgsql 里是可以限流的，
+         那句注释把话说死了，导致这个口子一直敞开。 */
+    select count(*) into v_recent from sessions
+     where user_id is null
+       and created_at > now() - interval '5 minutes';
+    if v_recent >= 200 then
+      raise exception '请求过于频繁，请稍后再试';
+    end if;
+
     tk := issue_session(null, true);
     return json_build_object('ok', true, 'token', tk, 'show_new', null);
   end if;
@@ -2741,8 +2765,18 @@ end $$;
    执行时会报 error 而不是静默跳过 —— 一条报错就会中断整份迁移。
    所以逐个用 do 块包起来：不存在就跳过，不影响主流程。
    （下面用动态 SQL 实现，避免"为了收紧权限反而把部署搞挂"。） */
--- session_cleanup 只影响过期记录，保留给 anon 便于外部定时调用
-grant execute on function session_cleanup() to anon, authenticated;
+/* ⚠ Q-Chat-S-131（外部报告 C-9）：原来给 anon 是为了"外部定时调用方便"，
+   但它**同时**清 login_attempts —— 攻击者可以用它擦掉自己的爆破痕迹。
+
+   "清理自己的痕迹"这件事不该对匿名开放，方便性远不值这个代价。
+
+   ⚠ 收回后谁来做清理：
+     · GitHub Actions 的 db-run 用的是 SUPABASE_DB_URL（postgres 角色），
+       不受 anon 权限限制，可以照常调用
+     · 或者由 issue_session 里的惰性清理兜底（见下）
+   所以收回不等于没人清理。 */
+revoke execute on function session_cleanup() from anon;
+grant execute on function session_cleanup() to authenticated;
 
 -- Storage：媒体桶
 -- public=true 且零策略 = 匿名可读可写的公开文件托管点。
