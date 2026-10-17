@@ -1,35 +1,56 @@
-/* Q-Chat-S-125：验证统一 ACL 闸门 */
+/* Q-Chat-S-125：在**真实会话内**验证 ACL 闸门。
+   上一轮全是 no_user —— 因为迁移脚本没有登录会话，
+   只验到了"未登录"这一条路径，登录后的行为根本没验到。 */
+begin;
 do $$
-declare uid uuid; n int;
+declare
+  v_tok text := 'e2e_acl_' || md5(random()::text);
+  v_uid uuid; v_nick text;
+  v_member uuid; v_mnick text; v_mtok text;
+  r boolean; w text;
 begin
-  raise notice '① acl_can 重载数 = %（必须 1 —— >1 说明 drop 没生效）',
-    (select count(*) from pg_proc p join pg_namespace ns on ns.oid=p.pronamespace
-      where ns.nspname='public' and p.proname='acl_can');
-  raise notice '② acl_require 重载数 = %（必须 1）',
-    (select count(*) from pg_proc p join pg_namespace ns on ns.oid=p.pronamespace
-      where ns.nspname='public' and p.proname='acl_require');
+  select id, nick into v_uid, v_nick from users where role='owner' limit 1;
+  raise notice '站长：% / %', v_nick, v_uid;
 
-  select id into uid from users where role='owner' limit 1;
+  insert into sessions (token_hash, user_id, expires_at)
+  values (v_tok, v_uid, now() + interval '1 hour');
+  perform set_config('request.headers',
+    json_build_object('x-session', v_tok)::text, true);
 
-  -- 二餐兼容：老的两参数调用必须还能用
-  raise notice '③ 二餐 acl_can(perm, room) = %', acl_can('msg.send', null);
-  -- 三餐：查指定用户
-  raise notice '④ 三餐 acl_can(perm, room, user) = %', acl_can('drive.use', null, uid);
-  raise notice '⑤ acl_why 跨项目 = %（应 ok）', acl_why('drive.use', null, uid);
-  raise notice '⑥ acl_why 拼错 = %（应 unknown）', acl_why('nope.xyz', null, uid);
-  raise notice '⑦ site_perms 含 scope 列 = %',
-    (select count(*) from information_schema.columns
-      where table_name='site_perms' and column_name='scope');
-  raise notice '⑧ acl_perms_list 未登录 = %', acl_perms_list()::text;
-end $$;
+  raise notice '① 会话生效：cur_user = %', cur_user();
+  raise notice '② 站长 drive.use → acl_can = %（应 t）', acl_can('drive.use', null, v_uid);
+  raise notice '③ 站长 drive.use → acl_why = %（应 ok）', acl_why('drive.use', null, v_uid);
+  raise notice '④ 拼错的权限点 → %（应 unknown）', acl_why('nope.xyz', null, v_uid);
+  raise notice '⑤ 二餐兼容 msg.send = %（应 t）', acl_can('msg.send', null);
+  raise notice '⑥ 闸门放行：%', (select acl_require('drive.use'));
 
--- 闸门实测：造一个会被拒的场景，确认真的 raise exception
-do $$
-begin
+  -- 造一个普通成员，验证权限差异
+  insert into users (nick, pwd_hash, role, status)
+  values ('_e2e_m_' || substr(md5(random()::text),1,6), 'x', 'member', 'active')
+  returning id, nick into v_member, v_mnick;
+
+  raise notice '⑦ 成员 % drive.use = %（应 f —— 默认只给 owner/admin）',
+    v_mnick, acl_can('drive.use', null, v_member);
+  raise notice '⑧ 成员 drive.use → acl_why = %（应 no）', acl_why('drive.use', null, v_member);
+  raise notice '⑨ 成员 code.run = %（应 t —— 默认给 member）',
+    acl_can('code.run', null, v_member);
+
+  -- 闸门拒绝实测
   begin
-    perform acl_require('drive.use');   -- 未登录：必须先登录
-    raise notice '⑨ 闸门未拦住（不该出现）';
+    perform acl_require('drive.use', null, v_member);
+    raise notice '⑩ 闸门没拦住（不该出现）';
   exception when others then
-    raise notice '⑨ 闸门已拦住：%', SQLERRM;
+    raise notice '⑩ 闸门已拦住成员：%', SQLERRM;
   end;
+
+  -- 普通成员查别人权限应被拒
+  v_mtok := 'e2e_m_' || md5(random()::text);
+  insert into sessions (token_hash, user_id, expires_at)
+  values (v_mtok, v_member, now() + interval '1 hour');
+  perform set_config('request.headers',
+    json_build_object('x-session', v_mtok)::text, true);
+  raise notice '⑪ 成员查站长权限 = %（应 f —— 不能枚举他人）',
+    acl_can('drive.use', null, v_uid);
+  raise notice '⑫ 成员查自己 = %（应 f，他本来就没有）', acl_can('drive.use', null, v_member);
 end $$;
+rollback;
