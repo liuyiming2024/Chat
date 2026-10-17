@@ -47,16 +47,34 @@ class I18nTest {
     }
 
     /**
-     * 英文缺、中文有的 key，必须回退中文而不是空白。
-     * 这是"中英词典 key 双向校验"之外的第二道兜底 ——
-     * 校验只在开发期跑，运行时仍可能遇到（比如热修只改了一个词典）。
+     * ⚠ 这条原写成"中英文值应相等" —— **那是错的**，两个词典里都有的 key
+     *   值本来就该不同（"发送" vs "Send"）。而且"英文缺 key"这个场景
+     *   **根本构造不出来**：init 里的双向校验保证了不可能有单缺的 key。
+     *
+     *   所以它真正该测的是：**两种语言下每个 key 都取得到非空值**。
+     *   这才是"不会露出空白"的实际保证，也是能验证的。
+     *
+     * ⚠ 遍历 Strings.keys 而不是硬编码清单 —— 硬编码那份会与词典脱节，
+     *   变成"测了个过时清单"，加新词条测不到、删了还在测（假绿）。
      */
-    @Test fun `英文缺 key 回退中文`() {
+    @Test fun `两种语言下每个词条都取得到非空值`() {
+        val keys = Strings.keys
+        assertTrue("词典不该为空", keys.isNotEmpty())
+
+        I18n.set(I18n.ZH)
+        for (k in keys) assertFalse("中文缺 key: $k", Strings.t(k).isEmpty())
+
         I18n.set(I18n.EN)
-        val zhValue = run { I18n.set(I18n.ZH); Strings.t("send") }
+        for (k in keys) assertFalse("英文缺 key: $k", Strings.t(k).isEmpty())
+    }
+
+    /** 切换语言后必须立刻生效 —— Web 端踩过"切了不重绘，用户以为点了没用"。 */
+    @Test fun `切换语言立刻生效`() {
+        I18n.set(I18n.ZH)
+        val zh = Strings.t("send")
         I18n.set(I18n.EN)
-        assertEquals(zhValue, Strings.t("send")) // 两边都有时中文值应与自身一致
-        assertFalse(Strings.t("send").isEmpty())
+        val en = Strings.t("send")
+        assertNotEquals(zh, en)
     }
 
     @Test fun `超长限制文案含具体数字`() {
