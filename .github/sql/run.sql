@@ -1,17 +1,23 @@
-/* 核实 C-3：无会话（匿名）调 state_get，会不会返回全站用户？ */
+/* 核实 C-3（修正 ? 操作符：-> 返回 json，? 只有 jsonb 才有，需 ::jsonb） */
 do $$
-declare r json; n int; hasreal boolean;
+declare r json; u json;
 begin
-  raise notice '① 当前 gate_passed()（无任何会话）= %', gate_passed();
-  raise notice '② 当前 cur_user() = %', cur_user();
-
   select state_get() into r;
-  n := json_array_length(coalesce(r->'users','[]'::json));
-  raise notice '③ ★匿名调 state_get 返回用户数 = %', n;
-  raise notice '④ users 里含 realName 字段 = %', (r->'users'->0) ? 'realName';
-  raise notice '⑤ users 里含 perms 字段 = %', (r->'users'->0) ? 'perms';
-  raise notice '⑥ users 里含 bio 字段 = %', (r->'users'->0) ? 'bio';
-  raise notice '⑦ users 里含 lastSeen 字段 = %', (r->'users'->0) ? 'lastSeen';
-  raise notice '⑧ 首个用户 nick = % / role = %', r->'users'->0->>'nick', r->'users'->0->>'role';
-  raise notice '⑨ me 字段 = %（null 表示未登录）', r->>'me';
+  u := r->'users'->0;
+  raise notice '① 用户数 = %', json_array_length(coalesce(r->'users','[]'::json));
+  raise notice '② ★realName 是否下发 = %', (u::jsonb) ? 'realName';
+  raise notice '③ ★perms 是否下发 = %', (u::jsonb) ? 'perms';
+  raise notice '④ ★bio 是否下发 = %', (u::jsonb) ? 'bio';
+  raise notice '⑤ ★lastSeen 是否下发 = %', (u::jsonb) ? 'lastSeen';
+  raise notice '⑥ nick = % / role = % / status = %',
+    u->>'nick', u->>'role', u->>'status';
+  raise notice '⑦ me = %（null = 未登录，却拿到了全部）', coalesce(r->>'me','NULL');
+
+  -- state_delta 同样问题？
+  declare r2 json;
+  begin
+    select state_delta(0) into r2;
+    raise notice '⑧ state_delta 匿名返回用户数 = %',
+      json_array_length(coalesce(r2->'users','[]'::json));
+  end;
 end $$;
