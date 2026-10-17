@@ -93,6 +93,7 @@
       <!-- Q-Site-S-121：账号区（昵称 + 角色 + 头像 + 退出）。
            与聊天室同源，直接复用会话令牌，进过聊天室这里就能显示身份。 -->
       <div id="acctHost" class="acct-host"></div>
+      <script>SiteIdentity && SiteIdentity.mount(document.getElementById('acctHost'));</script>
       <a class="icon-btn" href="https://github.com/liuyiming2024/Chat" title="GitHub 仓库" target="_blank" rel="noopener">↗</a>
     </div>
   </div>
@@ -269,7 +270,9 @@
     <a href="docs/terms.html">使用须知</a>
   </div>
 </div>
-<script src="assets/account.js"></script>
+<!-- Q-Site-S-122：全站统一身份服务（放在主页，各项目共用同一份）。
+     同源，所以直接用绝对路径引用；离线时它会显示"离线"而不是崩溃。 -->
+<script src="https://liuyiming2024.github.io/assets/identity.js"></script>
 <script src="assets/site.js"></script>
 </body>
 </html>
