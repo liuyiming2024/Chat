@@ -1,21 +1,25 @@
-/* S-133：造测试账号，补上 5 项需要"第二个人"的功能验证 */
+/* 站长审核：过两个，留一个在队列 */
 do $outer$
-declare r json; okb boolean; v_allow boolean;
+declare r json; okb boolean; u1 uuid; u2 uuid; n int;
 begin
-  raise notice '① allow_register = %', (select allow_register from site where id=true);
-end $outer$;
+  select user_login('liuyiming2024','20120421lym') into r;
+  perform set_config('request.headers', json_build_object('x-session', r->>'token')::text, true);
 
--- 若未开放注册，先临时打开（注册的账号待审核，正好验证审核队列）
-update site set allow_register = true where id = true and not allow_register;
+  select id into u1 from users where nick='测试账号一';
+  select id into u2 from users where nick='测试账号二';
 
-do $outer$
-declare r json;
-begin
-  select user_register('测试账号一','test1234','用于验证私聊与@他人') into r;
-  raise notice '② 注册 测试账号一 = %', r->>'ok';
-  select user_register('测试账号二','test1234','用于验证群管理') into r;
-  raise notice '③ 注册 测试账号二 = %', r->>'ok';
-  select user_register('待审核账号','test1234','留在队列里验证审核功能') into r;
-  raise notice '④ 注册 待审核账号 = %', r->>'ok';
-  raise notice '⑤ 现在 pending 数 = %', (select count(*) from users where status='pending');
+  select user_review(u1,'active') into okb;
+  raise notice '① 通过 测试账号一 = %', okb;
+  select user_review(u2,'active') into okb;
+  raise notice '② 通过 测试账号二 = %', okb;
+
+  -- 审核队列：user_list 应只给管理员，且能看到 pending
+  select user_list() into r;
+  raise notice '③ 审核队列里 pending 数 = %',
+    (select count(*) from json_array_elements(coalesce(r->'users','[]'::json)) x
+      where x->>'status' = 'pending');
+  raise notice '④ 队列里能看到 待审核账号 = %',
+    (r::text like '%待审核账号%');
+  raise notice '⑤ 也能看到申请说明（仅管理员） = %',
+    (r::text like '%留在队列里验证审核功能%');
 end $outer$;
