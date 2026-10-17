@@ -2514,6 +2514,12 @@ create table if not exists site_perms (
   created_at    timestamptz not null default now()
 );
 
+/* ⚠ 已存在的表不会被 create table if not exists 更新 ——
+   线上这张表是上一版建的（没有 scope 列），
+   于是后面的 insert 报 column "scope" does not exist。
+   加列必须用 alter，这是"改已存在表"和"建新表"的区别。 */
+alter table site_perms add column if not exists scope text not null default 'site';
+
 /* 已注册的跨项目权限点。
    ⚠ 命名规则：<项目>.<动作>。
    项目删掉时：delete from site_perms where project = 'xxx';
