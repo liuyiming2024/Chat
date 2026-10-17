@@ -1,5 +1,5 @@
 /* 用站长号登录，发一批覆盖各功能的验证消息（真实落库） */
-do $$
+do $outer$
 declare v_uid uuid; v_tok text; r json; m1 uuid; m2 uuid; mlast uuid;
 begin
   select user_login('liuyiming2024','***REMOVED***') into r;
@@ -85,4 +85,4 @@ def fib(n):
   raise notice '⑦ 最终消息数 = %（含 1 条已撤回）',
     (select count(*) from messages);
   raise notice '⑧ rev 最大值 = %', (select max(rev) from messages);
-end $$;
+end $outer$;
