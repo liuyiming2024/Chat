@@ -2344,6 +2344,156 @@ begin
 end;
 $$;
 
+/* ==================================================================
+   跨项目权限（Q-Chat-S-124）
+   ==================================================================
+
+   背景：以前每个项目自己做权限。项目变多之后这行不通 ——
+   "能不能用云盘"这种问题，答案不该取决于你在哪个项目里问。
+
+   所以权限**升到集群层**，对外只暴露一个端点：
+
+       site_can(权限条目, 用户) → 状态值
+
+   ⚠ 与现有的 acl_can 的区别（两个都要留，不能合并）：
+       acl_can(perm, room)  —— Chat 专用，第二个参数是**房间**，管群内权限
+       site_can(perm, user) —— 跨项目，第二个参数是**用户**，管"能不能用某个项目"
+     第二个参数的语义完全不同（房间 vs 用户），合成一个必然出错。
+     这就是为什么它是新函数而不是给 acl_can 加参数。
+
+   ⚠ 为什么返回状态值而不是布尔：
+     true/false 只能回答"能不能"，回答不了"为什么不能"。
+     而"为什么"恰恰是用户最需要的：
+       denied  → 你被单独禁止了，找站长
+       banned  → 你被封禁了
+       unknown → 这个权限点压根没注册（多半是写代码时拼错了）
+     一律返回 false 的话，上面三种情况在界面上长得一模一样，
+     用户只会以为功能坏了。
+
+   ⚠ 权限点必须先在 site_perms 注册，否则返回 'unknown' 而不是放行。
+     这是刻意的设计：拼错的权限名如果静默通过，
+     等于那道权限检查根本不存在，而这种错没有任何提示。
+================================================================== */
+
+create table if not exists site_perms (
+  key           text primary key,
+  /* 所属项目。**删项目时按这个字段整批删**，不用一个个找。 */
+  project       text not null,
+  label         text not null default '',
+  /* 哪些角色默认拥有（不配置 = 只有站长有）。 */
+  default_roles text[] not null default '{}'::text[],
+  created_at    timestamptz not null default now()
+);
+
+/* ⚠ 这里不建 RLS 策略：site_perms 只是权限点的**定义表**，
+   真正的闸门在函数体里的 if 判断。
+   建了 RLS 反而会让"读权限点定义"也被权限挡住 ——
+   而权限页要先列出所有权限点才能配置，那就是死锁。 */
+
+/* 已注册的跨项目权限点。
+   ⚠ 命名规则：<项目>.<动作>。
+   项目删掉时：delete from site_perms where project='xxx';
+   一行搞定，其余项目不受影响。 */
+insert into site_perms (key, project, label, default_roles) values
+  ('drive.use',      'drive',   '使用云盘',     array['owner','admin']),
+  ('drive.admin',    'drive',   '云盘管理',     array['owner']),
+  ('archive.read',   'archive', '查看档案',     array['owner','admin']),
+  ('archive.write',  'archive', '写入档案',     array['owner']),
+  ('code.run',       'code',    '在线运行代码', array['owner','admin','member']),
+  ('code.runtime',   'code',    '管理运行时',   array['owner'])
+on conflict (key) do update set
+  project = excluded.project,
+  label = excluded.label,
+  default_roles = excluded.default_roles;
+
+/* ================================================================
+   site_can —— 跨项目权限判定（唯一端点）
+   参数：p_perm 权限条目；p_user 用户 id（也可用昵称，见下）
+   返回：'ok' | 'denied' | 'banned' | 'unknown' | 'no_user'
+=============================================================== */
+create or replace function site_can(p_perm text, p_user uuid) returns text
+language plpgsql stable security definer
+set search_path = public, extensions, pg_temp as $$
+declare u record; ok_reg boolean;
+begin
+  if p_perm is null or p_user is null then return 'unknown'; end if;
+
+  select * into u from users where id = p_user;
+  if not found then return 'no_user'; end if;
+
+  /* 1) 封禁：一律拒绝。
+     注意这里**没有**像 acl_can 那样给 msg.send 开后门 ——
+     跨项目权限里没有"让人知道自己被封了"的等价物，
+     开了后门反而会让被封的人仍能使用某个项目。 */
+  if u.status = 'banned' then return 'banned'; end if;
+
+  /* 2) 权限点必须已注册。拼错的权限名在这里被拦住。 */
+  select exists(select 1 from site_perms sp where sp.key = p_perm) into ok_reg;
+  if not ok_reg then return 'unknown'; end if;
+
+  /* 3) 站长恒为全部 */
+  if u.role = 'owner' then return 'ok'; end if;
+
+  /* 4) 显式禁止优先于显式授予（顺序不能反 ——
+        反了的话，一个被单独禁止的人只要也在授予列表里就能绕过） */
+  if p_perm = any (coalesce(u.denied, '{}'::text[])) then return 'denied'; end if;
+
+  /* 5) 显式授予 */
+  if p_perm = any (coalesce(u.perms, '{}'::text[])) then return 'ok'; end if;
+
+  /* 6) 角色默认（读注册表，不写死在函数里 ——
+        写死的话加一个权限点就要改函数，而改函数要防 PG-OVERLOAD） */
+  if exists (
+    select 1 from site_perms sp
+    where sp.key = p_perm and u.role = any (sp.default_roles)
+  ) then return 'ok'; end if;
+
+  return 'no';
+end;
+$$;
+
+/* 昵称版：方便调用方手上只有昵称。
+   ⚠ 昵称可重复吗？不能 —— user_register 里有唯一性检查。
+     但为稳妥，找不到或找到多个都返回 'no_user'。 */
+create or replace function site_can_nick(p_perm text, p_nick text) returns text
+language plpgsql stable security definer
+set search_path = public, extensions, pg_temp as $$
+declare n int; uid uuid;
+begin
+  select count(*) into n from users u where lower(u.nick) = lower(p_nick);
+  if n <> 1 then return 'no_user'; end if;
+  select u.id into uid from users u where lower(u.nick) = lower(p_nick);
+  return site_can(p_perm, uid);
+end;
+$$;
+
+/* 权限点清单：给权限页用，按项目分组。
+   ⚠ 只有管理员/站长能看 —— 权限点清单本身就是一份"系统能力地图"，
+     让普通成员看到会暴露还没上线的项目。 */
+create or replace function site_perms_list() returns json
+language plpgsql stable security definer
+set search_path = public, extensions, pg_temp as $$
+declare uid uuid; isadmin boolean;
+begin
+  uid := cur_user();
+  if uid is null then return json_build_object('ok', false, 'err', 'not logged in'); end if;
+  select exists(select 1 from users u where u.id = uid and u.role in ('owner','admin'))
+    into isadmin;
+  if not isadmin then return json_build_object('ok', false, 'err', 'no perm'); end if;
+
+  return json_build_object('ok', true, 'perms', coalesce((
+    select json_agg(json_build_object(
+      'key', sp.key, 'project', sp.project, 'label', sp.label,
+      'defaultRoles', sp.default_roles
+    )) from site_perms sp order by sp.project, sp.key
+  ), '[]'::json));
+end;
+$$;
+
+grant execute on function site_can(text, uuid) to anon, authenticated;
+grant execute on function site_can_nick(text, text) to anon, authenticated;
+grant execute on function site_perms_list() to anon, authenticated;
+
 -- 要求有某权限，否则抛错。写操作统一调这个，不要自己写 if。
 create or replace function acl_require(p_perm text, p_room text default null) returns boolean
 language plpgsql stable security definer

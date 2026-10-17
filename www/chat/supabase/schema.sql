@@ -81,6 +81,13 @@ create table if not exists users (
   bio         text not null default '',
   created_at  timestamptz not null default now(),
   last_seen   timestamptz not null default now(),
+  /* ⚠ avatar 必须存服务端（Q-Chat-S-123）：
+     原来头像只存在本地媒体库（me.avatarId），**换设备就没了**，
+     而且账号升到集群层后，在主页设的头像聊天室里看不到 ——
+     两个页面显示两个头像，"统一账号"就是假的。
+     这里只存 media id / URL，不存 base64（会让 users 表膨胀，
+     且每次 state_get 都把整张图拖回来）。 */
+  avatar      text,
   /* ⚠ rev 是**真正的"资料版本"**（S-085，考古补回）。
      原来前端把 last_seen 当成 updatedAt 用 —— 那是"最后上线时间"，
      不是"资料最后修改时间"。两者混用的后果见 state_delta 处的注释。
@@ -455,7 +462,8 @@ begin
         /* ⚠ rev 必须回传（S-085）。
            不回传的话前端只能拿 lastSeen 顶替"资料版本"，
            于是**每次上线都算一次"资料变更"**，合并判据彻底失真。 */
-        'rev', u.rev
+        'rev', u.rev,
+        'avatar', u.avatar
       )) from users u), '[]'::json),
     'rooms', coalesce((select json_agg(r) from (
       select json_build_object(
@@ -1845,8 +1853,15 @@ end;
 $$;
 
 -- 个人资料
+/* ⚠⚠ PG-OVERLOAD 陷阱（本仓库已踩过多次）：
+   create or replace function 在**签名变化**时会**新建重载**而不是替换。
+   加一个参数就属于签名变化 —— 于是线上同时存在 3 参和 4 参两个版本，
+   PostgREST 报 "Could not choose the best candidate function"。
+   改签名必须**先显式 drop**。 */
+drop function if exists profile_update(text, text, text);
+
 create or replace function profile_update(p_nick text default null, p_real text default null,
-                                          p_bio text default null)
+                                          p_bio text default null, p_avatar text default null)
 returns boolean language plpgsql volatile security definer
 set search_path = public, extensions, pg_temp as $$
 declare uid uuid;
@@ -1859,7 +1874,11 @@ begin
   update users set
     nick = coalesce(p_nick, nick),
     real_name = coalesce(p_real, real_name),
-    bio = coalesce(p_bio, bio)
+    bio = coalesce(p_bio, bio),
+    /* ⚠ 用 coalesce 就永远删不掉头像 —— 传 null 会被当成"没传"。
+       所以要区分：'' 表示明确清空，null 表示保持原样。 */
+    avatar = case when p_avatar = '' then null
+                  else coalesce(p_avatar, avatar) end
   where id = uid;
   perform nextval('state_rev');
   return true;
@@ -2763,5 +2782,56 @@ end;
 $$;
 
 grant execute on function whoami() to anon, authenticated;
+
+/* ================================================================
+   user_list() —— 用户列表（Q-Chat-S-123）
+
+   用途：集群层的账号设置页 / 审核页要列出用户。
+   为什么不能沿用 state_get()：那个是为聊天室设计的全量状态，
+   包含房间、消息、成员，几十 KB 起；而主页只要几行用户。
+   在门面页拉全量状态，既慢又把聊天室的数据结构暴露到别的页面。
+
+   ⚠ 权限：成员只能拿到自己那一行；管理员/站长才能拿全部。
+     这不是"前端不显示"就行 —— 这里就是闸门本身。
+     昵称、申请说明（real_name）都是个人信息，不能谁都能列。
+
+   ⚠ 不返回 pwd_hash / 会话信息。
+=============================================================== */
+create or replace function user_list(p_status text default null)
+returns json language plpgsql stable security definer
+set search_path = public, extensions, pg_temp as $$
+declare uid uuid; isadmin boolean;
+begin
+  uid := cur_user();
+  if uid is null then
+    return json_build_object('ok', false, 'err', 'not logged in');
+  end if;
+
+  select exists(select 1 from users u where u.id = uid and u.role in ('owner','admin'))
+    into isadmin;
+
+  return json_build_object('ok', true, 'users', coalesce((
+    select json_agg(json_build_object(
+      'id', u.id,
+      'nick', u.nick,
+      'role', u.role,
+      'status', u.status,
+      'bio', u.bio,
+      'avatar', u.avatar,
+      'createdAt', (extract(epoch from u.created_at) * 1000)::bigint,
+      /* ⚠ real_name（申请说明）**只对管理员返回**。
+         普通成员列用户时拿到别人的申请理由，那是信息泄露 ——
+         理由里常有真实姓名、班级。 */
+      'note', case when isadmin then u.real_name else null end
+    ))
+    from users u
+    where (isadmin or u.id = uid)
+      and (p_status is null or u.status = p_status)
+    order by u.created_at desc
+  ), '[]'::json));
+end;
+$$;
+
+grant execute on function user_list(text) to anon, authenticated;
 
 grant execute on function room_mute(text, uuid, int) to anon, authenticated;
