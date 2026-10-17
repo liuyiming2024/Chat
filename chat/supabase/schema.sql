@@ -66,6 +66,19 @@ alter table site add column if not exists gate_new_enc   bytea;
 alter table site add column if not exists gate_grace     int not null default 0;
 
 -- ---------- 用户 ----------
+/* ⚠⚠ Q-Chat-S-130：加列必须用 alter，不能用 create table if not exists。
+   `create table if not exists` 对**已存在的表完全跳过** ——
+   写在建表语句里的新列永远不会生效，而迁移不报错，看着像成功了。
+
+   第一次踩：site_perms 加 scope 列（S-125），insert 报 column 不存在才发现。
+   第二次踩：users 加 avatar 列（S-123）。这次更隐蔽 ——
+   state_delta() 引用 u.avatar，**列不存在 → 每次同步调用直接抛异常**，
+   等于实时同步从 S-123 起整条是坏的，而我当时只验了 profile_update，
+   没验"引用到该列的其他函数"。
+
+   ⚠ 教训：改 schema 后要验**引用该列的每个函数**，不是只验新增的那个。 */
+alter table users add column if not exists avatar text;
+
 create table if not exists users (
   id          uuid primary key default gen_random_uuid(),
   nick        text not null unique,
@@ -432,6 +445,10 @@ declare me uuid; v_from timestamptz; v_rev bigint;
 begin
   if not gate_passed() then raise exception '请先通过站点保护密码'; end if;
   me := cur_user();
+  /* ★ 同 state_get（Q-Chat-S-130 / 外部报告 C-3）：增量接口同样要查登录。
+     ⚠ 只堵 state_get 等于没堵 —— 绕过它直接调 state_delta
+     能拿到完全一样的东西。两个口子必须一起堵。 */
+  if me is null then raise exception '请先登录'; end if;
   v_rev := (select last_value from state_rev);
 
   /* 时间窗只给 logs 用（它没 rev 列）。
@@ -893,6 +910,25 @@ $$;
 
 -- 拉取全量状态（需已通过保护密码）
 /* 全量拉取。前端只在首次与"本地完全没数据"时用；日常轮询走 state_delta()。 */
+/* ⚠⚠ Q-Chat-S-130（外部安全报告 C-3，已**实测确认**）：
+   原来只查 gate_passed()，**不查 cur_user()** —— "过了门禁但没登录"的会话
+   能拿到全站 users：realName / perms / bio / lastSeen / mutedUntil 全在下发字段里。
+
+   实测（匿名，无任何会话）：
+     gate_passed() = t（站点保护密码已关闭，见 S-120）
+     cur_user()    = NULL
+     state_get()   → 返回用户，realName=t perms=t bio=t lastSeen=t
+
+   ★ 比报告描述的更严重：报告假设要先爆破门禁密码，
+     但**门禁已被我们关闭**（S-120），所以不需要任何凭据。
+
+   ★ 门禁与登录是两道独立的门：
+     门禁 = 站点保护密码（可关闭，关闭后谁都能进站）
+     登录 = 账号（始终要求）
+     关掉门禁是"不用输站点密码"，**不是"不用登录就能看用户资料"**。
+     原来把"过了门禁"当成"有身份"，两道门被混为一谈了。
+
+   ⚠ 前端只在登录后调用（Online 模块需要会话），要求登录不会破坏流程。 */
 create or replace function state_get()
 returns json language plpgsql stable security definer
 set search_path = public, extensions, pg_temp as $$
@@ -900,6 +936,8 @@ declare me uuid;
 begin
   if not gate_passed() then raise exception '请先通过站点保护密码'; end if;
   me := cur_user();
+  /* ★ 补上这道：没登录就不下发任何用户资料 */
+  if me is null then raise exception '请先登录'; end if;
   return json_build_object(
     /* ⚠ 服务端时间必须下发（E-049 / S-065）。
        前端的"在线判定"和"撤回时限"都拿本机 Date.now()
