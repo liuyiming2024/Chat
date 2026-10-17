@@ -34,6 +34,25 @@ class RulesTest {
         assertFalse(Rules.overLimit(s))
     }
 
+    /**
+     * ⚠ 这条**钉死口径**，不是重复测长度。
+     *
+     * 上面几条都用 `Rules.MAX_LEN` 做 repeat —— 好处是改常量不会牵连一堆用例，
+     * 坏处是**改常量时测试完全无感**：把 8000 悄悄改成 800，17 条全绿，
+     * 而服务端上限仍是 8000 —— 两端脱节，用户写 3000 字被客户端拦下，
+     * 或者客户端放行 2000 字被服务端拒（取决于改大还是改小）。
+     *
+     * 所以必须有一条直接断言"常量等于服务端的 8000"。
+     * 改这个值必须是**刻意同步服务端**的行为，不能是随手一改。
+     */
+    @Test fun `上限必须等于服务端的 8000`() {
+        assertEquals(8000, Rules.MAX_LEN)
+    }
+
+    @Test fun `撤回时限必须是 6 分钟`() {
+        assertEquals(6 * 60 * 1000L, Rules.REVOKE_WINDOW_MS)
+    }
+
     @Test fun `空消息不算超长`() {
         assertFalse(Rules.overLimit(""))
         assertEquals(Rules.MAX_LEN, Rules.remaining(""))
