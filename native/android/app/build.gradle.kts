@@ -61,4 +61,14 @@ dependencies {
     implementation("io.noties.markwon:core:4.6.2")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
+
+    /* ⚠ NATIVE-TEST：只加 junit，不加 Robolectric、不加模拟器。
+       被测的 Rules / I18n / Strings **刻意不 import 任何 android.* 包** ——
+       所以这些用例在纯 JVM 上就能跑，CI 里几秒钟出结果。
+
+       不加 Robolectric 是刻意的：它要下载 android-all 的 jar（几百 MB），
+       在 CI 上慢且容易因网络失败。而"能编译"长期是本项目的唯一验证手段，
+       现在要补的是**规则被验证过**，不是补 UI 测试。
+       真机行为另有验证清单（见 docs/原生端真机验证清单.md）。 */
+    testImplementation("junit:junit:4.13.2")
 }
