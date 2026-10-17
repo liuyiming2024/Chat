@@ -1,11 +1,22 @@
-/* 核实：git 历史里泄露的站长密码是否仍然有效（3f70c6c7 出现于 2026-10-08） */
+/* 核实：git 历史里泄露的三个密码，现在是否仍然有效 */
 begin;
 do $$
-declare r json;
+declare r json; ok boolean;
 begin
-  select auth_login('站长','bH5TPdrAFsu74M') into r;
-  raise notice '① ★泄露的站长密码登录结果 = %', r::text;
-exception when others then
-  raise notice '① 登录函数签名不同或失败：%', SQLERRM;
+  -- ① 门禁密码 omuAS6QbcP（3f70c6c7，2026-10-08）
+  begin
+    select gate_check('omuAS6QbcP') into r;
+    raise notice '① ★门禁密码 omuAS6QbcP 仍然有效 = %', (r->>'ok');
+  exception when others then
+    raise notice '① 门禁密码已失效或站点未初始化：%', SQLERRM;
+  end;
+
+  -- ② 站长密码 bH5TPdrAFsu74M
+  begin
+    select auth_login('站长','bH5TPdrAFsu74M') into r;
+    raise notice '② ★站长密码仍然有效 = %', (r->>'ok');
+  exception when others then
+    raise notice '② 站长密码调用失败：%', SQLERRM;
+  end;
 end $$;
 rollback;
