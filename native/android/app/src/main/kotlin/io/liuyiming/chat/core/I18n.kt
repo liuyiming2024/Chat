@@ -90,6 +90,17 @@ object Strings {
         return table[key] ?: zh[key] ?: ""
     }
 
+    /**
+     * 全部词条 key。
+     *
+     * ⚠ 为什么暴露出来（NATIVE-TEST）：不暴露的话，测试只能硬编码一份 key 列表，
+     *   而那份列表一旦与词典不同步，测试就变成"测了个过时清单"——
+     *   词典加了新 key 它测不到，词典删了 key 它还在测。**假绿。**
+     *   暴露 keys 让测试永远对着真实词典跑。
+     *   顺带也让"开发期自检"有了入口。
+     */
+    val keys: Set<String> get() = zh.keys
+
     init {
         val onlyZh = zh.keys - en.keys
         val onlyEn = en.keys - zh.keys
