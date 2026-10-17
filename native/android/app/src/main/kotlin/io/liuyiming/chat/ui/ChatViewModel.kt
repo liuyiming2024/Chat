@@ -3,6 +3,7 @@ package io.liuyiming.chat.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.liuyiming.chat.ChatApp
+import io.liuyiming.chat.core.Rules
 import io.liuyiming.chat.data.db.MessageEntity
 import io.liuyiming.chat.sync.Clock
 import kotlinx.coroutines.delay
@@ -41,14 +42,17 @@ class ChatViewModel(private val app: ChatApp) : ViewModel() {
      * 被服务端拒绝才弹"消息过长" —— 而这时输入框已经清空了，内容没了。
      * 写了半小时的东西因为一个本可提前拦截的限制而丢失，是最不该发生的损失。
      */
-    companion object { const val MAX_LEN = 8000 }
+    /** 保留原常量名以免别处引用断掉，但真值只有 Rules 一处。 */
+    companion object { const val MAX_LEN = Rules.MAX_LEN }
 
     fun send(text: String) {
         val room = _roomId.value ?: return
         val body = text.trim()
         if (body.isEmpty()) return
-        if (body.length > MAX_LEN) {
-            _sendError.value = "消息超过 ${MAX_LEN} 字（当前 ${body.length}），请分段发送"
+        // ⚠ 走 Rules，与单元测试是同一份判定 —— 不能在这里再写一遍 8000，
+        //    否则改了 Rules 而这里没改，测试全绿但线上行为不一致。
+        if (Rules.overLimit(text)) {
+            _sendError.value = "消息超过 ${Rules.MAX_LEN} 字（当前 ${body.length}），请分段发送"
             return
         }
 
@@ -73,10 +77,10 @@ class ChatViewModel(private val app: ChatApp) : ViewModel() {
      * 服务端才是真正的闸门。这里前端判一次是为了给出**正确的提示**：
      * 超时后按钮不该凭空消失，否则用户只会以为功能坏了。
      */
-    fun canRevoke(m: MessageEntity): Boolean {
-        val limitMs = 6 * 60 * 1000L
-        return (Clock.now() - m.at) <= limitMs
-    }
+    fun canRevoke(m: MessageEntity): Boolean = Rules.canRevoke(m.at, Clock.now())
+
+    /** 撤回剩余时间。<=0 表示已超时 —— 界面据此显示"已超时"而不是让按钮消失。 */
+    fun revokeLeftMs(m: MessageEntity): Long = Rules.revokeLeftMs(m.at, Clock.now())
 
     /** 待发队列条数。>0 时界面上要让用户看见 —— 看不见等于没有。 */
     private val _pendingCount = MutableStateFlow(0)

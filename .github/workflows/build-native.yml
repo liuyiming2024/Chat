@@ -44,6 +44,19 @@ jobs:
           #   于是下一步永远 grep 不到，构建成功也被判成失败。
           #   日志里明明写着 BUILD SUCCESSFUL，job 却是红的 —— 非常误导。
           exit ${PIPESTATUS[0]}
+      - name: 单元测试
+        id: unittest
+        working-directory: native/android
+        # ⚠ NATIVE-TEST：构建成功只说明"能编译"，说明不了"行为对不对"。
+        #   长度校验、撤回时限这类规则错了没有任何提示，
+        #   靠看界面永远发现不了 —— 必须自动化验证。
+        # ⚠ 直接以 gradle 的退出码结束（同 BUILD-EXIT-CODE 的教训）：
+        #   把 RC 写进日志再 grep 是会漏的，那行 echo 在 tee 之后不会落盘。
+        run: |
+          set -uo pipefail
+          gradle testDebugUnitTest --stacktrace 2>&1 | tee test.log
+          exit ${PIPESTATUS[0]}
+
       - name: 日志推回 diag 分支
         if: always()
         continue-on-error: true
@@ -55,6 +68,7 @@ jobs:
           git checkout -B diag-native
           mkdir -p .diag
           cp native/android/build.log .diag/native-build.log 2>/dev/null || echo "无 build.log" > .diag/native-build.log
+          cp native/android/test.log .diag/native-test.log 2>/dev/null || true
           git add -f .diag || true
           git commit -m "原生端构建日志 $(date -u +%Y%m%d-%H%M%S)" || echo "无变化"
           git push -f origin diag-native

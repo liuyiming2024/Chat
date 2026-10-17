@@ -3107,24 +3107,47 @@ begin
   select exists(select 1 from users u where u.id = uid and u.role in ('owner','admin'))
     into isadmin;
 
+  /* ⚠⚠ Q-Chat-S-133：`order by` **必须写在子查询里**，不能直接跟在聚合的 FROM 后。
+
+     原来写成 `select json_agg(...) from users u ... order by u.created_at desc`：
+     json_agg 是聚合函数，order by 直接跟在 FROM 后会被当成**窗口排序**，
+     于是 u.created_at 既不在 GROUP BY 里、也不在聚合里 →
+       ERROR: column "u.created_at" must appear in the GROUP BY clause
+
+     ★ **这不是理论问题，是实测出来的真故障**：
+       站长点开「审核队列」时这个函数**每次调用都抛异常**，
+       即"注册审核"这个功能是**完全不可用的** —— 队列永远空白，
+       新用户注册后站长根本看不到、也就永远过不了审。
+       （而且表现是"空白"而不是"报错"，前端拿到异常后不渲染，
+         站长只会以为"没人注册"。）
+
+     ⚠ 这是本仓库第 4 次踩同一个坑：
+       S-129 的 api_entry_list / api_note_list / api_summary_list 三个函数，
+       当时就知道"要用子查询排序"，**却没回头检查别处是否也有同样写法** ——
+       而 user_list 恰恰就是当时漏掉的那个。
+       **修好一处不等于同类都好了，必须全库再查一遍。**
+
+     修法：把排序移到内层子查询，外层只做聚合。 */
   return json_build_object('ok', true, 'users', coalesce((
-    select json_agg(json_build_object(
-      'id', u.id,
-      'nick', u.nick,
-      'role', u.role,
-      'status', u.status,
-      'bio', u.bio,
-      'avatar', u.avatar,
-      'createdAt', (extract(epoch from u.created_at) * 1000)::bigint,
-      /* ⚠ real_name（申请说明）**只对管理员返回**。
-         普通成员列用户时拿到别人的申请理由，那是信息泄露 ——
-         理由里常有真实姓名、班级。 */
-      'note', case when isadmin then u.real_name else null end
-    ))
-    from users u
-    where (isadmin or u.id = uid)
-      and (p_status is null or u.status = p_status)
-    order by u.created_at desc
+    select json_agg(t.j) from (
+      select json_build_object(
+        'id', u.id,
+        'nick', u.nick,
+        'role', u.role,
+        'status', u.status,
+        'bio', u.bio,
+        'avatar', u.avatar,
+        'createdAt', (extract(epoch from u.created_at) * 1000)::bigint,
+        /* ⚠ real_name（申请说明）**只对管理员返回**。
+           普通成员列用户时拿到别人的申请理由，那是信息泄露 ——
+           理由里常有真实姓名、班级。 */
+        'note', case when isadmin then u.real_name else null end
+      ) as j
+      from users u
+      where (isadmin or u.id = uid)
+        and (p_status is null or u.status = p_status)
+      order by u.created_at desc
+    ) t
   ), '[]'::json));
 end;
 $$;
