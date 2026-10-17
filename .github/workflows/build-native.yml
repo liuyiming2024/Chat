@@ -68,20 +68,24 @@ jobs:
       - name: 测试结果摘要
         if: always()
         working-directory: native/android
-        # 把每个用例的结果打印出来。只看 BUILD SUCCESSFUL 不够 ——
-        # 得看到"跑了几条、都叫什么"，否则无法确认测的是不是我以为的那个。
+        # ⚠ 把每条用例的结果 append 进 test.log（而不是只打到 stdout）。
+        #   因为沙箱读不到 Actions 日志，只有推回 diag 分支的 test.log 能看到 ——
+        #   不写进去的话，跑了几条、哪些通过了，**根本无从确认**。
+        #
+        # ⚠ 用 python -c 而不是嵌套 heredoc：heredoc 套在 YAML 的 run: | 里
+        #   缩进与结束标记极易出错，且失败信息极难定位。
         run: |
-          echo "=== 单元测试结果 ==="
-          find app/build/test-results -name '*.xml' 2>/dev/null | while read f; do
-            python3 - "$f" <<'PY'
-import sys, xml.etree.ElementTree as ET
-r = ET.parse(sys.argv[1]).getroot()
-print("%s: %s 条, 失败 %s" % (r.get('name'), r.get('tests'), r.get('failures')))
-for tc in r.iter('testcase'):
-    st = 'FAIL' if tc.find('failure') is not None else 'ok'
-    print("   [%s] %s" % (st, tc.get('name')))
-PY
-          done
+          python3 -c 'import glob, xml.etree.ElementTree as ET; import sys
+          n = 0
+          for f in sorted(glob.glob("app/build/test-results/**/*.xml", recursive=True)):
+              r = ET.parse(f).getroot()
+              print("%s: tests=%s failures=%s errors=%s" % (r.get("name"), r.get("tests"), r.get("failures"), r.get("errors")))
+              for tc in r.iter("testcase"):
+                  bad = tc.find("failure") is not None or tc.find("error") is not None
+                  n += 1
+                  print("   [%s] %s" % ("FAIL" if bad else "ok", tc.get("name")))
+          print("用例合计 %d" % n)' >> test.log 2>&1 || echo "（测试报告解析失败）" >> test.log
+          echo "--- 摘要结束 ---" >> test.log
 
       - name: 日志推回 diag 分支
         if: always()
