@@ -2524,11 +2524,30 @@ alter table site_perms add column if not exists scope text not null default 'sit
    ⚠ 命名规则：<项目>.<动作>。
    项目删掉时：delete from site_perms where project = 'xxx';
    一行搞定，其余项目不受影响。 */
+/* ⚠⚠ Q-Chat-S-127：权限点名字必须跟**实际检查的那个**一致，不能另起一套。
+     Archive 与 Chat 连的是**同一个库**（pimryrsxkwyafmponegp.supabase.co），
+     共用同一份 users / sessions / acl_can。
+     而 Archive 的每个函数检查的是 `acl_require('site.profile')` ——
+     我上一轮却在注册表里写了 `archive.read` / `archive.write`。
+
+     后果：**在权限页给 admin 开"查看档案"是无效的**。
+     页面上是的，Archive 根本不查它，admin 照样进不去。
+     这就是"分两套必然漂移"的实害 —— 而且是**静默的**：
+     配置界面看起来正常，点了也提示成功，实际什么都没发生。
+
+     所以这里以**实际生效的 key** 为准：注册 site.profile，
+     并删掉那两个没人检查的 archive.read / archive.write。
+     留着假权限点比不留更危险 —— 它让人以为配置过了。
+
+     ⚠ 为什么不改 Archive 去用 archive.read：
+       那要动 20 处 acl_require，而改名期间若有一处漏改，
+       就是"某个功能突然谁都能用"。保留既成事实的 key，风险最低。 */
+delete from site_perms where key in ('archive.read','archive.write');
+
 insert into site_perms (key, project, label, scope, default_roles) values
   ('drive.use',      'drive',   '使用云盘',     'site', array['owner','admin']),
   ('drive.admin',    'drive',   '云盘管理',     'site', array['owner']),
-  ('archive.read',   'archive', '查看档案',     'site', array['owner','admin']),
-  ('archive.write',  'archive', '写入档案',     'site', array['owner']),
+  ('site.profile',   'archive', '人物档案',     'site', array['owner']),
   ('code.run',       'code',    '在线运行代码', 'site', array['owner','admin','member']),
   ('code.runtime',   'code',    '管理运行时',   'site', array['owner'])
 on conflict (key) do update set
