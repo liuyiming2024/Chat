@@ -1,32 +1,36 @@
-/* 按提出人指定：用户名 liuyiming2024，密码 ***REMOVED***（均为小写）
-   ⚠ 本文件会进 git 历史，跑完立刻覆盖为占位 */
+/* 清空使用期数据（提出人："这些站都还没有投入使用，以前的数据都不用了"）
+   ⚠ 只清"用出来的数据"，不动"配置出来的元数据"：
+     保留 acl_perm_label / site_perms / site / users —— 那是规则不是流水。
+     清错了规则，站会直接不能跑；清错了流水，最多少几条记录。 */
 begin;
 do $$
-declare n int;
+declare n int; r record;
 begin
-  update users set nick = 'liuyiming2024',
-                   pwd_hash = crypt('***REMOVED***', gen_salt('bf', 10))
-   where role = 'owner';
-  get diagnostics n = row_count;
-  raise notice '① 已改用户名与密码，影响行数 = %', n;
-
-  delete from sessions;
-  raise notice '② 已清空全部会话';
+  for r in select unnest(array['messages','media_objects','invites',
+                               'bridge_ticket','drafts','login_attempts','logs']) as t
+  loop
+    begin
+      execute format('delete from %I', r.t);
+      get diagnostics n = row_count;
+      raise notice '  清 % = % 行', r.t, n;
+    exception when others then
+      raise notice '  跳过 %（%）', r.t, SQLERRM;
+    end;
+  end loop;
 end $$;
-commit;
 
-/* 统计各表现有数据，供提出人决定清哪些 */
+/* rooms 单独看：默认房间保留还是清，先看它叫什么 */
 do $$
 declare r record;
 begin
-  raise notice '=== 各表行数 ===';
-  for r in
-    select relname as t,
-           (xpath('/row/c/text()', query_to_xml(format('select count(*) as c from %I', relname), false, true, '')))[1]::text::bigint as n
-      from pg_class c join pg_namespace n on n.oid=c.relnamespace
-     where n.nspname='public' and c.relkind='r'
-     order by relname
+  for r in select id, name, type,
+                  (select count(*) from messages m where m.room_id = rooms.id) as msgs
+             from rooms
   loop
-    if r.n > 0 then raise notice '  % = % 行', r.t, r.n; end if;
+    raise notice '  房间「%」类型=% 消息数=%', r.name, r.type, r.msgs;
   end loop;
 end $$;
+rollback;
+
+/* 先不删房间：清掉的话用户进来一个房间都没有，得自己建。
+   等提出人确认要清再说 —— **删数据是不可逆的，宁可多问一次**。 */
