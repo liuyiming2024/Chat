@@ -1,6 +1,6 @@
 /* 用站长号登录，发一批覆盖各功能的验证消息（真实落库） */
 do $outer$
-declare v_uid uuid; v_tok text; r json; m1 uuid; m2 uuid; mlast uuid;
+declare v_uid uuid; v_tok text; r json; okb boolean; m1 uuid; m2 uuid; mlast uuid;
 begin
   select user_login('liuyiming2024','***REMOVED***') into r;
   if not (r->>'ok')::boolean then
@@ -69,14 +69,16 @@ def fib(n):
   raise notice '③ 已发 10 条，当前消息数 = %', (select count(*) from messages);
 
   -- 编辑：改第 1 条
-  select msg_edit(m1, '【验证】这条被编辑过了 —— 原文是"这是一条纯文本消息"。') into r;
+  select msg_edit(m1, '【验证】这条被编辑过了 —— 原文是纯文本消息。') into okb;
+  raise notice '   编辑返回 = %', okb;
   raise notice '④ 编辑后 edited_at = %',
     (select edited_at is not null from messages where id = m1);
 
   -- 撤回：先发一条再撤
   select msg_send('public','text','【验证】这条马上会被撤回。') into r;
   mlast := (r->>'id')::uuid;
-  select msg_delete(mlast) into r;
+  select msg_delete(mlast) into okb;
+  raise notice '   撤回返回 = %', okb;
   raise notice '⑤ 撤回后 deleted = %（逻辑删除）',
     (select deleted from messages where id = mlast);
   raise notice '⑥ 撤回后 body 长度 = %（已清空）',
