@@ -1,24 +1,19 @@
-/* 复验：messages 是扁平数组（前端 convert 时才按房间分组） */
+/* 用真实字段名复验（text / edited / replyTo / deleted） */
 do $outer$
-declare v_tok text; r json; n int;
+declare v_tok text; r json;
 begin
   select user_login('liuyiming2024','20120421lym') into r;
-  v_tok := r->>'token';
-  perform set_config('request.headers', json_build_object('x-session', v_tok)::text, true);
+  perform set_config('request.headers',
+    json_build_object('x-session', r->>'token')::text, true);
   select state_get() into r;
   raise notice '① 消息数 = %', json_array_length(coalesce(r->'messages','[]'::json));
-  raise notice '② 已撤回(deleted) = % 条',
-    (select count(*) from json_array_elements(r->'messages') x where (x->>'deleted')::boolean);
-  raise notice '③ 已编辑(editedAt 非空) = % 条',
-    (select count(*) from json_array_elements(r->'messages') x where x->>'editedAt' is not null);
-  raise notice '④ 有回复(replyTo 非空) = % 条',
-    (select count(*) from json_array_elements(r->'messages') x where x->>'replyTo' is not null);
-  raise notice '⑤ 含 @ 的 = % 条',
-    (select count(*) from json_array_elements(r->'messages') x where x->>'body' like '%@liuyiming2024%');
-  raise notice '⑥ 最长一条字数 = %',
-    (select max(length(x->>'body')) from json_array_elements(r->'messages') x);
-  raise notice '⑦ 有 rev = % 条',
-    (select count(*) from json_array_elements(r->'messages') x where x->>'rev' is not null);
-  raise notice '⑧ 首条正文 = %',
-    left((select x->>'body' from json_array_elements(r->'messages') x order by (x->>'rev')::bigint limit 1), 26);
+  raise notice '② 已撤回 = %', (select count(*) from json_array_elements(r->'messages') x where (x->>'deleted')::boolean);
+  raise notice '③ 已编辑 = %', (select count(*) from json_array_elements(r->'messages') x where x->>'edited' is not null);
+  raise notice '④ 有回复 = %', (select count(*) from json_array_elements(r->'messages') x where x->>'replyTo' is not null);
+  raise notice '⑤ 含 @ = %', (select count(*) from json_array_elements(r->'messages') x where x->>'text' like '%@liuyiming2024%');
+  raise notice '⑥ 最长 = % 字', (select max(length(x->>'text')) from json_array_elements(r->'messages') x);
+  raise notice '⑦ 公式 $$ 块级 = % 条', (select count(*) from json_array_elements(r->'messages') x where x->>'text' like '%$%$%');
+  raise notice '⑧ 代码块 = % 条', (select count(*) from json_array_elements(r->'messages') x where x->>'text' like '%```%');
+  raise notice '⑨ 表格 = % 条', (select count(*) from json_array_elements(r->'messages') x where x->>'text' like '%|---|---|%');
+  raise notice '⑩ 首条 = %', left((select x->>'text' from json_array_elements(r->'messages') x limit 1), 24);
 end $outer$;
