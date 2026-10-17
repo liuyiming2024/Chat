@@ -18,7 +18,7 @@ package io.liuyiming.chat.core
  */
 object Rules {
     /** 与服务端一致。改这里必须同步改服务端的 8000 上限。 */
-    const val MAX_LEN = 800
+    const val MAX_LEN = 8000
 
     /** 撤回时限。服务端才是真正的闸门，这里只负责给出正确提示。 */
     const val REVOKE_WINDOW_MS = 6 * 60 * 1000L
