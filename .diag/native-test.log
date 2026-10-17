@@ -1,0 +1,62 @@
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:checkDebugAarMetadata
+> Task :app:generateDebugResValues
+> Task :app:mapDebugSourceSetPaths
+> Task :app:generateDebugResources
+> Task :app:packageDebugResources
+> Task :app:createDebugCompatibleScreenManifests
+> Task :app:extractDeepLinksDebug
+> Task :app:processDebugMainManifest
+> Task :app:processDebugManifest
+> Task :app:processDebugManifestForPackage
+> Task :app:preDebugUnitTestBuild UP-TO-DATE
+> Task :app:javaPreCompileDebugUnitTest
+> Task :app:javaPreCompileDebug
+> Task :app:parseDebugLocalResources
+> Task :app:mergeDebugResources
+> Task :app:processDebugResources
+
+> Task :app:kspDebugKotlin
+w: [ksp] /home/runner/work/Chat/Chat/native/android/app/src/main/kotlin/io/liuyiming/chat/data/db/AppDatabase.kt:84: Schema export directory was not provided to the annotation processor so Room cannot export the schema. You can either provide `room.schemaLocation` annotation processor argument by applying the Room Gradle plugin (id 'androidx.room') OR set exportSchema to false.
+
+> Task :app:compileDebugKotlin
+w: file:///home/runner/work/Chat/Chat/native/android/app/src/main/kotlin/io/liuyiming/chat/ui/ChatViewModel.kt:21:10 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+
+> Task :app:compileDebugJavaWithJavac
+> Task :app:processDebugJavaRes
+> Task :app:bundleDebugClassesToCompileJar
+> Task :app:bundleDebugClassesToRuntimeJar
+> Task :app:kspDebugUnitTestKotlin
+> Task :app:compileDebugUnitTestKotlin
+> Task :app:compileDebugUnitTestJavaWithJavac NO-SOURCE
+> Task :app:processDebugUnitTestJavaRes
+> Task :app:testDebugUnitTest
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/unittest-1792249398386.json
+
+BUILD SUCCESSFUL in 21s
+25 actionable tasks: 25 executed
+io.liuyiming.chat.I18nTest: tests=8 failures=0 errors=0
+   [ok] 支持的语言设为当前
+   [ok] 语言标签与 Web 版一致
+   [ok] 切换语言立刻生效
+   [ok] 两种语言下每个词条都取得到非空值
+   [ok] 超长限制文案含具体数字
+   [ok] 缺 key 不返回 key 本身
+   [ok] 英文下取到英文
+   [ok] 不支持的语言回退默认
+io.liuyiming.chat.RulesTest: tests=11 failures=0 errors=0
+   [ok] 过一毫秒就撤不掉
+   [ok] 前后空白不计入长度
+   [ok] 刚发出的能撤
+   [ok] 超过一个字就算超长
+   [ok] 超时后剩余为负
+   [ok] 临界点仍可撤
+   [ok] 刚好到上限不算超长
+   [ok] 空消息不算超长
+   [ok] 上限必须等于服务端的 8000
+   [ok] 撤回时限必须是 6 分钟
+   [ok] 未来时间的消息不会因负数溢出而变成可撤
+用例合计 19
+--- 摘要结束 ---
