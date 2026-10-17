@@ -1,27 +1,39 @@
-/* 紧急：轮换已泄露的站长密码 + 清空所有会话 */
+/* 核实 A-1/A-2：Archive 6 张表的 RLS 状态 + anon 实际权限（同库） */
 begin;
 do $$
-declare n int;
+declare r record;
 begin
-  update users set pwd_hash = crypt('***REMOVED***', gen_salt('bf', 10))
-   where role = 'owner';
-  get diagnostics n = row_count;
-  raise notice '① 已重置站长密码，影响行数 = %', n;
+  raise notice '=== 未启 RLS 的表 ===';
+  for r in
+    select c.relname from pg_class c
+      join pg_namespace n on n.oid=c.relnamespace
+     where n.nspname='public' and c.relkind='r' and c.relrowsecurity=false
+     order by c.relname
+  loop
+    raise notice '  ✗ %', r.relname;
+  end loop;
 
-  delete from sessions;
-  raise notice '② 已清空全部会话（泄露期间可能有人用旧密码登录过）';
+  raise notice '=== anon 对这些表的实际权限 ===';
+  for r in
+    select table_name, string_agg(privilege_type,',') as p
+      from information_schema.role_table_grants
+     where grantee='anon' and table_schema='public'
+       and table_name in ('profiles','profile_entries','profile_notes',
+                          'profile_summaries','profile_media','api_tokens')
+     group by table_name
+  loop
+    raise notice '  anon 对 % 有：%', r.table_name, r.p;
+  end loop;
 
-  delete from login_attempts;
-  raise notice '③ 已清空登录尝试记录';
+  raise notice '=== Archive 表当前 RLS ===';
+  for r in
+    select c.relname, c.relrowsecurity
+      from pg_class c join pg_namespace n on n.oid=c.relnamespace
+     where n.nspname='public' and c.relkind='r'
+       and c.relname like 'profile%' or (c.relname='api_tokens')
+     order by c.relname
+  loop
+    raise notice '  % RLS=%', r.relname, r.relrowsecurity;
+  end loop;
 end $$;
-
-/* 验证：旧密码必须失效 */
-do $$
-declare r json;
-begin
-  select user_login('站长','***REMOVED***') into r;
-  raise notice '④ ★旧泄露密码登录 = %（必须 false）', (r->>'ok');
-exception when others then
-  raise notice '④ 旧密码被拒（或触发限流）：%', SQLERRM;
-end $$;
-commit;
+rollback;
