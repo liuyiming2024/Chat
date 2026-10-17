@@ -52,10 +52,36 @@ jobs:
         #   靠看界面永远发现不了 —— 必须自动化验证。
         # ⚠ 直接以 gradle 的退出码结束（同 BUILD-EXIT-CODE 的教训）：
         #   把 RC 写进日志再 grep 是会漏的，那行 echo 在 tee 之后不会落盘。
+        # ⚠⚠ --rerun-tasks 是**必须的**，不能省（NATIVE-TEST-CACHE）。
+        #   实测发现：不加它时 gradle 会用远程 build cache 的结果，
+        #   日志里显示 `testDebugUnitTest FROM-CACHE`，**测试根本没跑**，
+        #   而 job 是绿的 —— 这是最危险的假绿：以为验证过了，其实什么都没发生。
+        #
+        #   单元测试只要 1~2 秒，缓存它毫无收益，
+        #   却会换来"改了代码但测的还是旧结果"这种完全误导的结论。
+        #   **测试结果不可缓存** —— 一条测试的价值就在于它真的被执行了。
         run: |
           set -uo pipefail
-          gradle testDebugUnitTest --stacktrace 2>&1 | tee test.log
+          gradle testDebugUnitTest --rerun-tasks --stacktrace 2>&1 | tee test.log
           exit ${PIPESTATUS[0]}
+
+      - name: 测试结果摘要
+        if: always()
+        working-directory: native/android
+        # 把每个用例的结果打印出来。只看 BUILD SUCCESSFUL 不够 ——
+        # 得看到"跑了几条、都叫什么"，否则无法确认测的是不是我以为的那个。
+        run: |
+          echo "=== 单元测试结果 ==="
+          find app/build/test-results -name '*.xml' 2>/dev/null | while read f; do
+            python3 - "$f" <<'PY'
+import sys, xml.etree.ElementTree as ET
+r = ET.parse(sys.argv[1]).getroot()
+print("%s: %s 条, 失败 %s" % (r.get('name'), r.get('tests'), r.get('failures')))
+for tc in r.iter('testcase'):
+    st = 'FAIL' if tc.find('failure') is not None else 'ok'
+    print("   [%s] %s" % (st, tc.get('name')))
+PY
+          done
 
       - name: 日志推回 diag 分支
         if: always()
