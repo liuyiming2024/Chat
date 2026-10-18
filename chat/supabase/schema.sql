@@ -668,7 +668,7 @@ drop function if exists gate_check(text);
 create or replace function gate_check(p text)
 returns json language plpgsql volatile security definer
 set search_path = public, extensions, pg_temp as $$
-declare tk text; st record; ok_new boolean; ok_old boolean; plain text; v_recent int;
+declare tk text; st record; ok_new boolean; ok_old boolean; plain text; v_recent int; v_gate_fail int;
 begin
   select * into st from site where id = true;
 
@@ -707,9 +707,38 @@ begin
 
   if st.gate_hash is null then raise exception '站点尚未初始化'; end if;
 
-  /* 这里【不能】做失败计数：plpgsql 的 raise exception 会回滚同一函数内
-     此前的所有写入，raise 前 update 计数永远累加不上去。
-     真实限流必须在网关层做，见文件头「限流」一节。 */
+  /* ★★ Q-Chat-S-141：这里【原来声称做不了限流，那句话是错的】。
+
+     原注释写"plpgsql 的 raise exception 会回滚写入，计数加不上去，
+     所以真实限流必须在网关层做"——
+     **它只排除了「写计数再 raise」这一种写法**，却据此推断出"完全做不了"。
+     而本文件自己在无门分支里用的正是 `select count(*)` 读计数，
+     早就把这句话证伪了。注释把路说死，口子就一直敞着。
+
+     ★ 真正的解法（与 user_login 同一套，见上方注释）：
+       凭证失败时**返回 {ok:false, err} 而不是 raise** ——
+       没有 raise，这次写入就提交了，失败计数才真正累加得上去。
+       raise 与"记住失败次数"这两件事在 plpgsql 里不能共存，
+       必须二选一，而限流显然比"抛异常"重要。
+
+     ⚠ 前端必须检查 ok 字段：只看"有没有抛异常"会漏判，
+       用户会看到"保护密码错误"而实际是被限流了。
+       已同步改：chat/js/online.js 的 gate()。
+       （sb.js 与 Code/js/cloud.js 里的 gate_check 调用未改，
+        那两处走的是各自的封装，契约变更需要单独核对 ——
+        ⚠ 不要在这里写"已全部改完"，说清哪些没动。） */
+
+  /* 频率闸门：15 分钟内门禁失败 ≥ 20 次即拒绝。
+     门禁密码全站唯一，比单个账号密码更值得保护，
+     但阈值不能太低 —— 站长自己也可能记错、连着试好几次。
+     20 次/15 分钟：正常试错碰不到，脚本爆破则被压到
+     一天最多约 1900 次尝试，对任何像样的密码都太慢。 */
+  select count(*) into v_gate_fail from login_attempts
+   where kind = 'gate' and ok = false
+     and created_at > now() - interval '15 minutes';
+  if v_gate_fail >= 20 then
+    return json_build_object('ok', false, 'err', '保护密码尝试过于频繁，请 15 分钟后再试');
+  end if;
 
   ok_new := exists (select 1 from site where id = true and gate_hash = crypt(p, gate_hash));
   ok_old := false;
@@ -719,8 +748,17 @@ begin
   end if;
 
   if not ok_new and not ok_old then
-    raise exception '保护密码错误';
+    /* ⚠ 这里是 return 不是 raise —— 换成 raise 的话，
+       上面这行 insert 会被回滚，限流立刻失效（S-141）。 */
+    insert into login_attempts (nick, kind, ok) values ('__gate__', 'gate', false);
+    /* 失败不推进全局序号（同 user_login，避免被当成放大免费放大器） */
+    return json_build_object('ok', false, 'err', '保护密码错误');
   end if;
+
+  /* 通过：清掉门禁自己的失败计数，好让下一次从 0 开始。
+     ⚠ 只清 kind='gate'，不动账号登录的记录 ——
+        否则站长一次输错门禁密码，会把全站正在被爆破的账号记录一起抹掉。 */
+  delete from login_attempts where kind = 'gate' and ok = false;
 
   /* 宽限次数：新密码登录也消耗 ——
      只要有人用新密码成功进来过，就说明新密码已经在流通，旧密码没必要继续留。 */
@@ -840,6 +878,23 @@ create table if not exists login_attempts (
 );
 create index if not exists login_attempts_time_idx on login_attempts (created_at desc);
 create index if not exists login_attempts_nick_idx on login_attempts (lower(nick), created_at desc);
+
+/* ★ Q-Chat-S-141：加 kind 列，区分「账号登录失败」与「门禁密码失败」。
+
+   ⚠ 必须用 alter，不能写进上面的 create table if not exists：
+     表早就存在了，`create table if not exists` 对已存在的表是**完全跳过**的，
+     新列根本加不进去，后面引用它的 insert 会报
+     `column "kind" does not exist`。
+     本仓库栽在这个坑上不止一次（users.avatar 就是这么丢的）。
+
+   为什么门禁计数不能混进账号登录的昵称维度：
+     门禁密码是**全站唯一**的一个密码，它不存在"哪个昵称"的概念。
+     硬塞一个假昵称进去，会让两个维度的计数互相污染 ——
+     门禁爆破几次就把某个昵称锁住，或者反过来。
+     而**全局闸门（15 分钟 300 次）仍然共享**，这是有意的：
+     两者爆破的是同一个站，合成一道防线更合理。 */
+alter table login_attempts add column if not exists kind text not null default 'login';
+create index if not exists login_attempts_kind_idx on login_attempts (kind, created_at desc);
 
 /* 管理员手动清理入口。
    必须鉴权：谁都能调的话，攻击者可以反复清空失败记录，

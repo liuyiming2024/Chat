@@ -171,8 +171,19 @@
   /* ---------------- 站点与账号 ---------------- */
 
 
+  /* ★ Q-Chat-S-141：gate_check 凭证失败改为返回 {ok:false, err} 而非抛异常
+     （raise 会回滚写入，失败计数记不上，限流就形同虚设）。
+
+     ⚠⚠ 这里原写法有个更隐蔽的错：
+       `if (!t) throw ...` —— 失败时 t 是**整个 json 对象** {ok:false,err:...}，
+       它非 null，所以不会抛错，而是被当成 token 存进会话！
+       后果：后续所有请求带着这个假 token，全部以莫名其妙的原因失败，
+       而界面上"看起来登录成功了"。
+     必须先判 ok === false，再取 token。 */
   function gateCheck(pwd) {
-    return rpc('gate_check', { p: pwd }).then(function (t) {
+    return rpc('gate_check', { p: pwd }).then(function (r) {
+      if (r && r.ok === false) throw new Error(r.err || '保护密码错误');
+      var t = r && r.token;
       if (!t) throw new Error('保护密码错误');
       setSession(t, null);
       return t;

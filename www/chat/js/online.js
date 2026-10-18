@@ -84,8 +84,18 @@
     return g.SB.rpc('bridge_ticket_redeem', { p_code: code, p_origin: origin || '' });
   }
 
+  /* ★ Q-Chat-S-141：服务端凭证失败改为【返回 {ok:false, err}】而不是抛异常
+     —— 因为 raise 会回滚同一函数内的写入，失败计数根本记不上。
+     与 user_login 同一套契约。
+
+     ⚠ 所以这里**必须先检查 ok 字段**：
+        只判断"有没有 token"的话，被限流时用户看到的是
+        "保护密码错误"，而真实原因是"试太多次被暂时挡住"——
+        他会以为自己记错了密码，继续试，越试越被挡。
+        这两种提示必须分开。 */
   function gate(pwd) {
     return g.SB.rpc('gate_check', { p: pwd }).then(function (r) {
+      if (r && r.ok === false) throw new Error(r.err || '保护密码错误');
       var t = r && r.token;
       if (!t) throw new Error('保护密码错误');
       g.SB.setSession(t, null);
