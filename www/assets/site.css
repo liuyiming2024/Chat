@@ -159,6 +159,26 @@ a:hover { text-decoration: underline; }
 .card p { margin: 0; font-size: 13.5px; color: var(--dim); line-height: 1.6; }
 .card-icon { font-size: 22px; margin-bottom: 8px; display: block; }
 
+/* Q-Chat-S-138：命中当前设备的那张卡片。
+   ⚠ 只加边框与角标，不改其他卡片的样式 ——
+     弱化处理会让"判错时的补救"变得不明显，
+     而其他卡片正是判错时唯一的补救路径。 */
+.card.plat-mine {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 16%, transparent);
+}
+/* ⚠ color-mix 兼容性兜底：老浏览器不认会连整条 box-shadow 一起丢，
+   那就只剩边框色，仍然可辨，不会变成完全没标记。 */
+@supports not (box-shadow: 0 0 0 1px color-mix(in srgb, red 10%, transparent)) {
+  .card.plat-mine { border-width: 2px; }
+}
+.plat-tag {
+  display: inline-block; margin-left: 8px;
+  padding: 1px 7px; border-radius: 999px;
+  background: var(--brand); color: #fff;
+  font-size: 11px; font-weight: 600; vertical-align: middle;
+}
+
 /* ---------------- 步骤 ---------------- */
 .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
 .step {
