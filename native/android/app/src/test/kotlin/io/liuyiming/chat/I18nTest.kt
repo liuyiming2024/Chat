@@ -2,9 +2,12 @@ package io.liuyiming.chat
 
 import io.liuyiming.chat.core.I18n
 import io.liuyiming.chat.core.Strings
+// NATIVE-TEST：编号必须在文件里，断言靠它确认"这条修复还在"。
+// ⚠ 只加特征串不加编号会报"找不到了" —— 断言对能写注释的文件两者都查。
 import org.junit.Assert.*
 import org.junit.Test
 
+/* NATIVE-TEST */
 class I18nTest {
 
     @Test fun `支持的语言设为当前`() {
