@@ -445,10 +445,22 @@ declare me uuid; v_from timestamptz; v_rev bigint;
 begin
   if not gate_passed() then raise exception '请先通过站点保护密码'; end if;
   me := cur_user();
-  /* ★ 同 state_get（Q-Chat-S-130 / 外部报告 C-3）：增量接口同样要查登录。
+  /* ★ 同 state_get（Q-Chat-S-130 / 外部报告 C-3）：增量接口同样要限制未登录。
      ⚠ 只堵 state_get 等于没堵 —— 绕过它直接调 state_delta
-     能拿到完全一样的东西。两个口子必须一起堵。 */
-  if me is null then raise exception '请先登录'; end if;
+     能拿到完全一样的东西。两个口子必须一起堵。
+
+     ⚠⚠ 但同样**不能抛异常**（S-137，与 state_get 同理）：
+        抛异常会打断前端启动，表现为"站点未初始化、要重新建站"。
+        这里返回空增量，安全性一样（未登录拿不到任何内容）。 */
+  if me is null then
+    return json_build_object(
+      'serverNow', (extract(epoch from now()) * 1000)::bigint,
+      'rev', (select last_value from state_rev),
+      'needLogin', true,
+      'users', '[]'::json, 'rooms', '[]'::json,
+      'messages', '{}'::json, 'members', '[]'::json
+    );
+  end if;
   v_rev := (select last_value from state_rev);
 
   /* 时间窗只给 logs 用（它没 rev 列）。
@@ -960,8 +972,38 @@ declare me uuid;
 begin
   if not gate_passed() then raise exception '请先通过站点保护密码'; end if;
   me := cur_user();
-  /* ★ 补上这道：没登录就不下发任何用户资料 */
-  if me is null then raise exception '请先登录'; end if;
+
+  /* ★★ Q-Chat-S-137：未登录时**不能抛异常**，要返回最小载荷。
+
+     上一版（S-131 / 外部报告 C-3）在这里写了
+       `if me is null then raise exception '请先登录'; end if;`
+     安全意图是对的（不能把全站用户资料与聊天记录发给未登录者），
+     但**它把启动流程整个打断了**：
+
+       前端 boot → pull() → state_get() → 抛异常 → catch → 判定"连不上/未初始化"
+       → 退回本地模式 → 弹出"首次进入：请设置保护密码并创建站长账号"
+
+     于是用户打开聊天室，看到的既是要设保护密码（门禁）、
+     又是要创建站长账号（初始化）—— 而站点明明早就建好了、门禁也早关了。
+     这个故障从 S-131 起一直存在，我一次都没真机打开验证过。
+
+     ★ 正确做法：未登录就返回**最小载荷**（只有服务端时间 + 站点公开信息），
+       用户/房间/消息一律为空。这样：
+         · 安全目标达成 —— 未登录拿不到任何用户资料与聊天记录
+         · 启动流程不断 —— 前端能继续走到 loginView()
+       抛异常是把"没有数据"和"出错了"混为一谈，而这两件事该分开。 */
+  if me is null then
+    return json_build_object(
+      'serverNow', (extract(epoch from now()) * 1000)::bigint,
+      'me', null,
+      'needLogin', true,
+      'site', (select row_to_json(s) from (
+        select site_name, allow_register, (gate_hash is not null) as has_gate,
+               coalesce(gate_disabled, false) as gate_off from site where id = true) s),
+      'users', '[]'::json, 'rooms', '[]'::json, 'messages', '{}'::json
+    );
+  end if;
+
   return json_build_object(
     /* ⚠ 服务端时间必须下发（E-049 / S-065）。
        前端的"在线判定"和"撤回时限"都拿本机 Date.now()
@@ -3207,68 +3249,111 @@ grant execute on function user_list(text) to anon, authenticated;
 
 grant execute on function room_mute(text, uuid, int) to anon, authenticated;
 
-/* ==================================================================
-   Q-Chat-S-136：函数权限改**白名单**（外部报告 C-4 / V-03）
+/* ★★ 关键修正：撤销的是 **PUBLIC**，不是只撤销 anon（S-136 第二次踩坑）
 
-   ⚠⚠ 删掉了这一行：
-       grant execute on all functions in schema public to anon, authenticated;
+   第一版我只写了 `revoke ... from anon, authenticated`。
+   部署后实测：**130 个函数全部仍对 anon 可执行**，一个都没收紧。
 
-   它的问题不是"现在就被利用了"，而是**默认开放**：
-   任何一个新函数，只要忘了加校验，立刻对全网匿名可调用。
-   报告里"58 个 SECURITY DEFINER 全部对匿名可执行"正是这个意思。
-   我上轮审计的结论是"那 58 个都有校验、实测全是误报"——
-   **但这只说明"今天没出事"，不说明"明天不会出事"**。
-   默认开放 + 靠每次记得加校验 = 迟早漏一个。
+   原因：PostgreSQL **创建函数时默认就授予 PUBLIC 的 EXECUTE 权限**。
+   撤销 anon 只是去掉了一条显式授权，
+   而 PUBLIC 那条默认授权还在 —— anon 属于 PUBLIC，照样能调。
+   **报告里"58 个 SECURITY DEFINER 全部对匿名可执行"，
+   根子就在这里，不在那句 grant all。**
 
-   ★ 改成白名单后：新函数**默认不可调用**，必须显式加一行才开放。
-     漏写的后果从"悄悄开放"变成"功能报错"——后者会被立刻发现。
-     这是把"静默失败"换成"吵闹失败"，方向是对的。
+   所以必须：
+     ① revoke ... from PUBLIC   （真正收紧）
+     ② 再 grant 给白名单        （把该开的开回来）
+   顺序不能反 —— 反过来的话白名单刚 grant 完就被 public revoke 抵消掉，
+   结果全站 401。
 
-   ⚠⚠ 关键认知（我一开始想错了）：
-      **删掉 grant 语句不会撤销已经授予的权限。**
-      PostgreSQL 的 grant 是持久 DDL，权限记在函数 ACL 里。
-      只删那一行，之前靠它拿到权限的 58 个函数**照样能被调用**。
-      所以必须显式 revoke —— 这一步不能省。
+   ⚠ 仍然逐个精确 revoke，不用 `revoke all on all functions from public`：
+     本库 Chat 与 Archive 共库，那句会连 Archive 的 37 个函数一起撤。
+     Archive 有自己的显式 grant，撤 PUBLIC 不会让它失效 ——
+     但那样做等于让 Chat 的迁移去决定 Archive 的命运，
+     **跨项目的全局语句在这个架构下就是地雷**。
 
-   ⚠ 为什么不写 `revoke execute on all functions ...`：
-      本库是 Chat 与 Archive **共库**，那样会连 Archive 的 37 个函数一起回收
-      （api_* / draft_* / profile_* 全在其中），档案接口直接全挂。
-      所以这里**逐个精确 revoke**，只动 Chat 自己定义的那些。
-      跨项目的全局语句在这个架构下就是地雷。
-
-   ⚠ 白名单来源：rpc-wiring 扫出的前端实际调用（54 个）+ 原有显式 grant。
-     不是"我觉得该开放哪些"，是"实际在调哪些"——
-     凭感觉列白名单一定会漏，漏一个就是某个功能突然 401。
-
-   ⚠ SECURITY DEFINER 函数内部调用**不受影响**：
-     它们以 owner 身份执行，不需要给 anon 授权。
-     所以 cur_user / auth_uid 这批内部件可以放心 revoke。
-
-   ⚠ 将来新增函数：必须在本文件里补一行 grant，否则前端调用会 401。
-     这是故意的摩擦 —— 宁可多写一行，不要默认开放。
-================================================================== */
-
-do $wl$
+   ⚠ SECURITY DEFINER 函数内部互相调用不受影响：
+     它们以 owner 身份执行，不依赖 PUBLIC 权限。
+     所以 cur_user / auth_uid 这批内部件可以放心撤。
+*/
+do $wl3$
 declare
   stmts text[] := array[
-    'revoke execute on function acl_aggregate(text) from anon, authenticated',
-    'revoke execute on function acl_can_speak(text) from anon, authenticated',
-    'revoke execute on function acl_role_perms(text) from anon, authenticated',
-    'revoke execute on function acl_room_inherent() from anon, authenticated',
-    'revoke execute on function acl_room_role(text) from anon, authenticated',
-    'revoke execute on function auth_is_staff() from anon, authenticated',
-    'revoke execute on function auth_require() from anon, authenticated',
-    'revoke execute on function auth_role() from anon, authenticated',
-    'revoke execute on function auth_uid() from anon, authenticated',
-    'revoke execute on function cur_token() from anon, authenticated',
-    'revoke execute on function cur_token_hash() from anon, authenticated',
-    'revoke execute on function cur_user() from anon, authenticated',
-    'revoke execute on function gate_passed() from anon, authenticated',
-    'revoke execute on function issue_session(uuid,boolean) from anon, authenticated',
-    'revoke execute on function login_attempts_cleanup() from anon, authenticated',
-    'revoke execute on function msg_rev_bump() from anon, authenticated',
-    'revoke execute on function new_token() from anon, authenticated',
-    'revoke execute on function self_guard(uuid,text) from anon, authenticated'
+    'revoke execute on function acl_aggregate(text) from public',
+    'revoke execute on function acl_can(text, text, uuid) from public',
+    'revoke execute on function acl_can_speak(text) from public',
+    'revoke execute on function acl_mine(text) from public',
+    'revoke execute on function acl_perms_list() from public',
+    'revoke execute on function acl_require(text, text, uuid) from public',
+    'revoke execute on function acl_role_perms(text) from public',
+    'revoke execute on function acl_room_inherent() from public',
+    'revoke execute on function acl_room_role(text) from public',
+    'revoke execute on function acl_why(text, text, uuid) from public',
+    'revoke execute on function auth_is_staff() from public',
+    'revoke execute on function auth_require() from public',
+    'revoke execute on function auth_role() from public',
+    'revoke execute on function auth_uid() from public',
+    'revoke execute on function bridge_ticket_create(text) from public',
+    'revoke execute on function bridge_ticket_redeem(text, text) from public',
+    'revoke execute on function cur_token() from public',
+    'revoke execute on function cur_token_hash() from public',
+    'revoke execute on function cur_user() from public',
+    'revoke execute on function gate_check(text) from public',
+    'revoke execute on function gate_disable() from public',
+    'revoke execute on function gate_enable(text) from public',
+    'revoke execute on function gate_passed() from public',
+    'revoke execute on function gate_set(text, text) from public',
+    'revoke execute on function invite_create(text, int, int, text) from public',
+    'revoke execute on function invite_list() from public',
+    'revoke execute on function invite_redeem(text) from public',
+    'revoke execute on function invite_revoke(text) from public',
+    'revoke execute on function issue_session(uuid, boolean) from public',
+    'revoke execute on function login_attempts_cleanup() from public',
+    'revoke execute on function logout() from public',
+    'revoke execute on function media_commit(uuid) from public',
+    'revoke execute on function media_prepare(text, text, bigint) from public',
+    'revoke execute on function media_upload_allowed(text) from public',
+    'revoke execute on function media_url(uuid, int) from public',
+    'revoke execute on function media_url_by_path(text) from public',
+    'revoke execute on function member_add(text, uuid) from public',
+    'revoke execute on function member_admin(text, uuid, boolean) from public',
+    'revoke execute on function member_remove(text, uuid) from public',
+    'revoke execute on function member_set_can_invite(text, uuid, boolean) from public',
+    'revoke execute on function msg_delete(uuid) from public',
+    'revoke execute on function msg_edit(uuid, text) from public',
+    'revoke execute on function msg_media(uuid, text) from public',
+    'revoke execute on function msg_rev_bump() from public',
+    'revoke execute on function msg_send(text, text, text, text, text, bigint, uuid) from public',
+    'revoke execute on function new_token() from public',
+    'revoke execute on function profile_update(text, text, text, text) from public',
+    'revoke execute on function room_create(text, text, text) from public',
+    'revoke execute on function room_delete(text) from public',
+    'revoke execute on function room_dm(uuid) from public',
+    'revoke execute on function room_join(text, text) from public',
+    'revoke execute on function room_leave(text) from public',
+    'revoke execute on function room_mute(text, uuid, int) from public',
+    'revoke execute on function room_update(text, text, text, text, text) from public',
+    'revoke execute on function self_guard(uuid, text) from public',
+    'revoke execute on function session_cleanup() from public',
+    'revoke execute on function site_info() from public',
+    'revoke execute on function site_init(text, text, text, text) from public',
+    'revoke execute on function site_ready() from public',
+    'revoke execute on function site_set(text, boolean) from public',
+    'revoke execute on function state_delta(bigint) from public',
+    'revoke execute on function state_get() from public',
+    'revoke execute on function state_peek() from public',
+    'revoke execute on function state_seq() from public',
+    'revoke execute on function user_delete(uuid) from public',
+    'revoke execute on function user_list(text) from public',
+    'revoke execute on function user_login(text, text) from public',
+    'revoke execute on function user_mute(uuid, int) from public',
+    'revoke execute on function user_password(text, text) from public',
+    'revoke execute on function user_perms_set(uuid, text[], text[]) from public',
+    'revoke execute on function user_register(text, text, text) from public',
+    'revoke execute on function user_review(uuid, text) from public',
+    'revoke execute on function user_role_set(uuid, text) from public',
+    'revoke execute on function user_self_unban() from public',
+    'revoke execute on function whoami() from public',
   ];
   s text;
 begin
@@ -3276,88 +3361,72 @@ begin
     begin
       execute s;
     exception when others then
-      /* ⚠ 缺哪个函数都不能让整份 schema 挂掉 ——
-         线上若还没跑到那一步，revoke 会报 undefined function。
-         但**必须报出来**，否则以后真漏了也没人知道。 */
-      raise notice 'S-136 跳过（函数可能不存在）：%', s;
+      raise notice 'S-136 revoke public 跳过：%', s;
     end;
   end loop;
-end $wl$;
+end $wl3$;
 
-/* 白名单：以下是对 anon/authenticated 开放的全部函数。
-
-   ⚠⚠ 为什么这些 grant 放进 do 块而不是直接执行（S-136 踩坑）：
-      第一版写成裸语句，结果**整份迁移直接失败** ——
-      只要有一条函数签名与线上不一致（比如线上还是旧签名），
-      `grant execute on function xxx(...)` 就抛 undefined function，
-      而一条报错会中断整份 schema。
-
-      后果很糟：为了收紧权限，反而把整个数据库迁移搞挂了。
-      收紧安全边界的操作**必须比业务代码更容错** ——
-      它失败的方向不能是"全站不可用"。
-
-      放进 do 块 + notice：签名对不上只跳过这一条并报出来，
-      其余照常执行。跳过哪些我能在日志里看见，再回来修签名。 */
-do $wl2$
+/* ② 白名单授权（在 revoke public 之后） */
+do $wl4$
 declare
   stmts text[] := array[
-    'grant execute on function acl_can(text,text,uuid) to anon, authenticated;',
-    'grant execute on function acl_mine(text) to anon, authenticated;',
-    'grant execute on function acl_perms_list() to anon, authenticated;',
-    'grant execute on function acl_require(text,text,uuid) to anon, authenticated;',
-    'grant execute on function acl_why(text,text,uuid) to anon, authenticated;',
-    'grant execute on function bridge_ticket_create(text) to anon, authenticated;',
-    'grant execute on function bridge_ticket_redeem(text,text) to anon, authenticated;',
-    'grant execute on function gate_check(text) to anon, authenticated;',
-    'grant execute on function gate_disable() to anon, authenticated;',
-    'grant execute on function gate_enable(text) to anon, authenticated;',
-    'grant execute on function gate_set(text,text) to anon, authenticated;',
-    'grant execute on function invite_create(text,int,int,text) to anon, authenticated;',
-    'grant execute on function invite_list() to anon, authenticated;',
-    'grant execute on function invite_redeem(text) to anon, authenticated;',
-    'grant execute on function invite_revoke(text) to anon, authenticated;',
-    'grant execute on function logout() to anon, authenticated;',
-    'grant execute on function media_commit(uuid) to anon, authenticated;',
-    'grant execute on function media_prepare(text,text,bigint) to anon, authenticated;',
-    'grant execute on function media_upload_allowed(text) to anon, authenticated;',
-    'grant execute on function media_url(uuid,int) to anon, authenticated;',
-    'grant execute on function media_url_by_path(text) to anon, authenticated;',
-    'grant execute on function member_add(text,uuid) to anon, authenticated;',
-    'grant execute on function member_admin(text,uuid,boolean) to anon, authenticated;',
-    'grant execute on function member_remove(text,uuid) to anon, authenticated;',
-    'grant execute on function member_set_can_invite(text,uuid,boolean) to anon, authenticated;',
-    'grant execute on function msg_delete(uuid) to anon, authenticated;',
-    'grant execute on function msg_edit(uuid,text) to anon, authenticated;',
-    'grant execute on function msg_media(uuid,text) to anon, authenticated;',
-    'grant execute on function msg_send(text,text,text,text,text,bigint,uuid) to anon, authenticated;',
-    'grant execute on function profile_update(text,text,text,text) to anon, authenticated;',
-    'grant execute on function room_create(text,text,text) to anon, authenticated;',
-    'grant execute on function room_delete(text) to anon, authenticated;',
-    'grant execute on function room_dm(uuid) to anon, authenticated;',
-    'grant execute on function room_join(text,text) to anon, authenticated;',
-    'grant execute on function room_leave(text) to anon, authenticated;',
-    'grant execute on function room_mute(text,uuid,int) to anon, authenticated;',
-    'grant execute on function room_update(text,text,text,text,text) to anon, authenticated;',
-    'grant execute on function session_cleanup() to anon, authenticated;',
-    'grant execute on function site_info() to anon, authenticated;',
-    'grant execute on function site_init(text,text,text,text) to anon, authenticated;',
-    'grant execute on function site_ready() to anon, authenticated;',
-    'grant execute on function site_set(text,boolean) to anon, authenticated;',
-    'grant execute on function state_delta(bigint) to anon, authenticated;',
-    'grant execute on function state_get() to anon, authenticated;',
-    'grant execute on function state_peek() to anon, authenticated;',
-    'grant execute on function state_seq() to anon, authenticated;',
-    'grant execute on function user_delete(uuid) to anon, authenticated;',
-    'grant execute on function user_list(text) to anon, authenticated;',
-    'grant execute on function user_login(text,text) to anon, authenticated;',
-    'grant execute on function user_mute(uuid,int) to anon, authenticated;',
-    'grant execute on function user_password(text,text) to anon, authenticated;',
-    'grant execute on function user_perms_set(uuid,text[],text[]) to anon, authenticated;',
-    'grant execute on function user_register(text,text,text) to anon, authenticated;',
-    'grant execute on function user_review(uuid,text) to anon, authenticated;',
-    'grant execute on function user_role_set(uuid,text) to anon, authenticated;',
-    'grant execute on function user_self_unban() to anon, authenticated;',
-    'grant execute on function whoami() to anon, authenticated;'
+    'grant execute on function acl_can(text,text,uuid) to anon, authenticated',
+    'grant execute on function acl_mine(text) to anon, authenticated',
+    'grant execute on function acl_perms_list() to anon, authenticated',
+    'grant execute on function acl_require(text,text,uuid) to anon, authenticated',
+    'grant execute on function acl_why(text,text,uuid) to anon, authenticated',
+    'grant execute on function bridge_ticket_create(text) to anon, authenticated',
+    'grant execute on function bridge_ticket_redeem(text,text) to anon, authenticated',
+    'grant execute on function gate_check(text) to anon, authenticated',
+    'grant execute on function gate_disable() to anon, authenticated',
+    'grant execute on function gate_enable(text) to anon, authenticated',
+    'grant execute on function gate_set(text,text) to anon, authenticated',
+    'grant execute on function invite_create(text,int,int,text) to anon, authenticated',
+    'grant execute on function invite_list() to anon, authenticated',
+    'grant execute on function invite_redeem(text) to anon, authenticated',
+    'grant execute on function invite_revoke(text) to anon, authenticated',
+    'grant execute on function logout() to anon, authenticated',
+    'grant execute on function media_commit(uuid) to anon, authenticated',
+    'grant execute on function media_prepare(text,text,bigint) to anon, authenticated',
+    'grant execute on function media_upload_allowed(text) to anon, authenticated',
+    'grant execute on function media_url(uuid,int) to anon, authenticated',
+    'grant execute on function media_url_by_path(text) to anon, authenticated',
+    'grant execute on function member_add(text,uuid) to anon, authenticated',
+    'grant execute on function member_admin(text,uuid,boolean) to anon, authenticated',
+    'grant execute on function member_remove(text,uuid) to anon, authenticated',
+    'grant execute on function member_set_can_invite(text,uuid,boolean) to anon, authenticated',
+    'grant execute on function msg_delete(uuid) to anon, authenticated',
+    'grant execute on function msg_edit(uuid,text) to anon, authenticated',
+    'grant execute on function msg_media(uuid,text) to anon, authenticated',
+    'grant execute on function msg_send(text,text,text,text,text,bigint,uuid) to anon, authenticated',
+    'grant execute on function profile_update(text,text,text,text) to anon, authenticated',
+    'grant execute on function room_create(text,text,text) to anon, authenticated',
+    'grant execute on function room_delete(text) to anon, authenticated',
+    'grant execute on function room_dm(uuid) to anon, authenticated',
+    'grant execute on function room_join(text,text) to anon, authenticated',
+    'grant execute on function room_leave(text) to anon, authenticated',
+    'grant execute on function room_mute(text,uuid,int) to anon, authenticated',
+    'grant execute on function room_update(text,text,text,text,text) to anon, authenticated',
+    'grant execute on function session_cleanup() to anon, authenticated',
+    'grant execute on function site_info() to anon, authenticated',
+    'grant execute on function site_init(text,text,text,text) to anon, authenticated',
+    'grant execute on function site_ready() to anon, authenticated',
+    'grant execute on function site_set(text,boolean) to anon, authenticated',
+    'grant execute on function state_delta(bigint) to anon, authenticated',
+    'grant execute on function state_get() to anon, authenticated',
+    'grant execute on function state_peek() to anon, authenticated',
+    'grant execute on function state_seq() to anon, authenticated',
+    'grant execute on function user_delete(uuid) to anon, authenticated',
+    'grant execute on function user_list(text) to anon, authenticated',
+    'grant execute on function user_login(text,text) to anon, authenticated',
+    'grant execute on function user_mute(uuid,int) to anon, authenticated',
+    'grant execute on function user_password(text,text) to anon, authenticated',
+    'grant execute on function user_perms_set(uuid,text[],text[]) to anon, authenticated',
+    'grant execute on function user_register(text,text,text) to anon, authenticated',
+    'grant execute on function user_review(uuid,text) to anon, authenticated',
+    'grant execute on function user_role_set(uuid,text) to anon, authenticated',
+    'grant execute on function user_self_unban() to anon, authenticated',
+    'grant execute on function whoami() to anon, authenticated',
   ];
   s text;
 begin
@@ -3365,7 +3434,7 @@ begin
     begin
       execute s;
     exception when others then
-      raise notice 'S-136 跳过（签名可能不符）：%', s;
+      raise notice 'S-136 grant 跳过：%', s;
     end;
   end loop;
-end $wl2$;
+end $wl4$;
