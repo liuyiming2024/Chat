@@ -3284,61 +3284,88 @@ begin
   end loop;
 end $wl$;
 
-/* 白名单：以下是对 anon/authenticated 开放的全部函数 */
-grant execute on function acl_can(text,text,uuid) to anon, authenticated;
-grant execute on function acl_mine(text) to anon, authenticated;
-grant execute on function acl_perms_list() to anon, authenticated;
-grant execute on function acl_require(text,text,uuid) to anon, authenticated;
-grant execute on function acl_why(text,text,uuid) to anon, authenticated;
-grant execute on function bridge_ticket_create(text) to anon, authenticated;
-grant execute on function bridge_ticket_redeem(text,text) to anon, authenticated;
-grant execute on function gate_check(text) to anon, authenticated;
-grant execute on function gate_disable() to anon, authenticated;
-grant execute on function gate_enable(text) to anon, authenticated;
-grant execute on function gate_set(text,text) to anon, authenticated;
-grant execute on function invite_create(text,int,int,text) to anon, authenticated;
-grant execute on function invite_list() to anon, authenticated;
-grant execute on function invite_redeem(text) to anon, authenticated;
-grant execute on function invite_revoke(text) to anon, authenticated;
-grant execute on function logout() to anon, authenticated;
-grant execute on function media_commit(uuid) to anon, authenticated;
-grant execute on function media_prepare(text,text,bigint) to anon, authenticated;
-grant execute on function media_upload_allowed(text) to anon, authenticated;
-grant execute on function media_url(uuid,int) to anon, authenticated;
-grant execute on function media_url_by_path(text) to anon, authenticated;
-grant execute on function member_add(text,uuid) to anon, authenticated;
-grant execute on function member_admin(text,uuid,boolean) to anon, authenticated;
-grant execute on function member_remove(text,uuid) to anon, authenticated;
-grant execute on function member_set_can_invite(text,uuid,boolean) to anon, authenticated;
-grant execute on function msg_delete(uuid) to anon, authenticated;
-grant execute on function msg_edit(uuid,text) to anon, authenticated;
-grant execute on function msg_media(uuid,text) to anon, authenticated;
-grant execute on function msg_send(text,text,text,text,text,bigint,uuid) to anon, authenticated;
-grant execute on function profile_update(text,text,text,text) to anon, authenticated;
-grant execute on function room_create(text,text,text) to anon, authenticated;
-grant execute on function room_delete(text) to anon, authenticated;
-grant execute on function room_dm(uuid) to anon, authenticated;
-grant execute on function room_join(text,text) to anon, authenticated;
-grant execute on function room_leave(text) to anon, authenticated;
-grant execute on function room_mute(text,uuid,int) to anon, authenticated;
-grant execute on function room_update(text,text,text,text,text) to anon, authenticated;
-grant execute on function session_cleanup() to anon, authenticated;
-grant execute on function site_info() to anon, authenticated;
-grant execute on function site_init(text,text,text,text) to anon, authenticated;
-grant execute on function site_ready() to anon, authenticated;
-grant execute on function site_set(text,boolean) to anon, authenticated;
-grant execute on function state_delta(bigint) to anon, authenticated;
-grant execute on function state_get() to anon, authenticated;
-grant execute on function state_peek() to anon, authenticated;
-grant execute on function state_seq() to anon, authenticated;
-grant execute on function user_delete(uuid) to anon, authenticated;
-grant execute on function user_list(text) to anon, authenticated;
-grant execute on function user_login(text,text) to anon, authenticated;
-grant execute on function user_mute(uuid,int) to anon, authenticated;
-grant execute on function user_password(text,text) to anon, authenticated;
-grant execute on function user_perms_set(uuid,text[],text[]) to anon, authenticated;
-grant execute on function user_register(text,text,text) to anon, authenticated;
-grant execute on function user_review(uuid,text) to anon, authenticated;
-grant execute on function user_role_set(uuid,text) to anon, authenticated;
-grant execute on function user_self_unban() to anon, authenticated;
-grant execute on function whoami() to anon, authenticated;
+/* 白名单：以下是对 anon/authenticated 开放的全部函数。
+
+   ⚠⚠ 为什么这些 grant 放进 do 块而不是直接执行（S-136 踩坑）：
+      第一版写成裸语句，结果**整份迁移直接失败** ——
+      只要有一条函数签名与线上不一致（比如线上还是旧签名），
+      `grant execute on function xxx(...)` 就抛 undefined function，
+      而一条报错会中断整份 schema。
+
+      后果很糟：为了收紧权限，反而把整个数据库迁移搞挂了。
+      收紧安全边界的操作**必须比业务代码更容错** ——
+      它失败的方向不能是"全站不可用"。
+
+      放进 do 块 + notice：签名对不上只跳过这一条并报出来，
+      其余照常执行。跳过哪些我能在日志里看见，再回来修签名。 */
+do $wl2$
+declare
+  stmts text[] := array[
+    'grant execute on function acl_can(text,text,uuid) to anon, authenticated;',
+    'grant execute on function acl_mine(text) to anon, authenticated;',
+    'grant execute on function acl_perms_list() to anon, authenticated;',
+    'grant execute on function acl_require(text,text,uuid) to anon, authenticated;',
+    'grant execute on function acl_why(text,text,uuid) to anon, authenticated;',
+    'grant execute on function bridge_ticket_create(text) to anon, authenticated;',
+    'grant execute on function bridge_ticket_redeem(text,text) to anon, authenticated;',
+    'grant execute on function gate_check(text) to anon, authenticated;',
+    'grant execute on function gate_disable() to anon, authenticated;',
+    'grant execute on function gate_enable(text) to anon, authenticated;',
+    'grant execute on function gate_set(text,text) to anon, authenticated;',
+    'grant execute on function invite_create(text,int,int,text) to anon, authenticated;',
+    'grant execute on function invite_list() to anon, authenticated;',
+    'grant execute on function invite_redeem(text) to anon, authenticated;',
+    'grant execute on function invite_revoke(text) to anon, authenticated;',
+    'grant execute on function logout() to anon, authenticated;',
+    'grant execute on function media_commit(uuid) to anon, authenticated;',
+    'grant execute on function media_prepare(text,text,bigint) to anon, authenticated;',
+    'grant execute on function media_upload_allowed(text) to anon, authenticated;',
+    'grant execute on function media_url(uuid,int) to anon, authenticated;',
+    'grant execute on function media_url_by_path(text) to anon, authenticated;',
+    'grant execute on function member_add(text,uuid) to anon, authenticated;',
+    'grant execute on function member_admin(text,uuid,boolean) to anon, authenticated;',
+    'grant execute on function member_remove(text,uuid) to anon, authenticated;',
+    'grant execute on function member_set_can_invite(text,uuid,boolean) to anon, authenticated;',
+    'grant execute on function msg_delete(uuid) to anon, authenticated;',
+    'grant execute on function msg_edit(uuid,text) to anon, authenticated;',
+    'grant execute on function msg_media(uuid,text) to anon, authenticated;',
+    'grant execute on function msg_send(text,text,text,text,text,bigint,uuid) to anon, authenticated;',
+    'grant execute on function profile_update(text,text,text,text) to anon, authenticated;',
+    'grant execute on function room_create(text,text,text) to anon, authenticated;',
+    'grant execute on function room_delete(text) to anon, authenticated;',
+    'grant execute on function room_dm(uuid) to anon, authenticated;',
+    'grant execute on function room_join(text,text) to anon, authenticated;',
+    'grant execute on function room_leave(text) to anon, authenticated;',
+    'grant execute on function room_mute(text,uuid,int) to anon, authenticated;',
+    'grant execute on function room_update(text,text,text,text,text) to anon, authenticated;',
+    'grant execute on function session_cleanup() to anon, authenticated;',
+    'grant execute on function site_info() to anon, authenticated;',
+    'grant execute on function site_init(text,text,text,text) to anon, authenticated;',
+    'grant execute on function site_ready() to anon, authenticated;',
+    'grant execute on function site_set(text,boolean) to anon, authenticated;',
+    'grant execute on function state_delta(bigint) to anon, authenticated;',
+    'grant execute on function state_get() to anon, authenticated;',
+    'grant execute on function state_peek() to anon, authenticated;',
+    'grant execute on function state_seq() to anon, authenticated;',
+    'grant execute on function user_delete(uuid) to anon, authenticated;',
+    'grant execute on function user_list(text) to anon, authenticated;',
+    'grant execute on function user_login(text,text) to anon, authenticated;',
+    'grant execute on function user_mute(uuid,int) to anon, authenticated;',
+    'grant execute on function user_password(text,text) to anon, authenticated;',
+    'grant execute on function user_perms_set(uuid,text[],text[]) to anon, authenticated;',
+    'grant execute on function user_register(text,text,text) to anon, authenticated;',
+    'grant execute on function user_review(uuid,text) to anon, authenticated;',
+    'grant execute on function user_role_set(uuid,text) to anon, authenticated;',
+    'grant execute on function user_self_unban() to anon, authenticated;',
+    'grant execute on function whoami() to anon, authenticated;',
+  ];
+  s text;
+begin
+  foreach s in array stmts loop
+    begin
+      execute s;
+    exception when others then
+      raise notice 'S-136 跳过（签名可能不符）：%', s;
+    end;
+  end loop;
+end $wl2$;
