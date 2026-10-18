@@ -3268,7 +3268,7 @@ declare
     'revoke execute on function login_attempts_cleanup() from anon, authenticated',
     'revoke execute on function msg_rev_bump() from anon, authenticated',
     'revoke execute on function new_token() from anon, authenticated',
-    'revoke execute on function self_guard(uuid,text) from anon, authenticated',
+    'revoke execute on function self_guard(uuid,text) from anon, authenticated'
   ];
   s text;
 begin
@@ -3357,7 +3357,7 @@ declare
     'grant execute on function user_review(uuid,text) to anon, authenticated;',
     'grant execute on function user_role_set(uuid,text) to anon, authenticated;',
     'grant execute on function user_self_unban() to anon, authenticated;',
-    'grant execute on function whoami() to anon, authenticated;',
+    'grant execute on function whoami() to anon, authenticated;'
   ];
   s text;
 begin
