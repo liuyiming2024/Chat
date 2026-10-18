@@ -3353,7 +3353,7 @@ declare
     'revoke execute on function user_review(uuid, text) from public',
     'revoke execute on function user_role_set(uuid, text) from public',
     'revoke execute on function user_self_unban() from public',
-    'revoke execute on function whoami() from public',
+    'revoke execute on function whoami() from public'
   ];
   s text;
 begin
@@ -3426,7 +3426,7 @@ declare
     'grant execute on function user_review(uuid,text) to anon, authenticated',
     'grant execute on function user_role_set(uuid,text) to anon, authenticated',
     'grant execute on function user_self_unban() to anon, authenticated',
-    'grant execute on function whoami() to anon, authenticated',
+    'grant execute on function whoami() to anon, authenticated'
   ];
   s text;
 begin
