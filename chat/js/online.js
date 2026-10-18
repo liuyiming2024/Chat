@@ -682,6 +682,48 @@
   function setMute(userId, minutes) {
     return g.SB.rpc('user_mute', { p_user: userId, p_minutes: minutes || 0 });
   }
+  /* ⚠⚠ 私聊（Q-Chat-S-134，同一轮由 rpc-wiring 抓出的第三个缺口）。
+     服务端 room_dm 会 **insert into rooms + room_members**，
+     前端 openDM 却只在本地 S.rooms 里 push 一个对象，**从不调它**。
+
+     后果是**私聊整个功能不可用**：
+     本地看着有个私聊房间，但 rooms 表里根本没有它 ——
+     在这个房间里发消息时，msg_send 校验
+       `exists (select 1 from rooms ... or room_members ...)`
+     直接失败，消息**发不出去**。
+     用户点"私聊"、打字、发送、没反应 —— 只会以为软件坏了。
+
+     ⚠ 房间 id 两边算法一致（'dm:' + 两个 uuid 排序后用 '-' 连），
+       所以本地先建不会串号；但**房间必须先在服务端存在**才能发消息。 */
+  function dmRoom(userId) {
+    return g.SB.rpc('room_dm', { p_other: userId }).then(function (rid) {
+      return (typeof rid === 'string' && rid) ? rid : null;
+    });
+  }
+
+  /* ⚠⚠ 退出群聊 / 解散房间（Q-Chat-S-134，由 rpc-wiring 抓出）。
+     这两个服务端函数（room_leave / room_delete）**早就写好了、权限校验也齐全**，
+     但前端一次都没调过 —— 菜单里那两项**只改本地数组**。
+
+     后果比"没生效"更麻烦：
+       · 退出群聊：服务端 room_members 里你还在。
+         下次 state_get 拉回来，**房间又出现了** —— 用户退了又回来，
+         只会以为软件有毛病。
+       · 解散房间（更糟）：服务端房间**根本没删**，
+         房主这边界面上没了，**其他人还能继续在里面发消息**。
+         房主以为已经解散，实际上那个群还活着。
+
+     ⚠ 这跟 E-074 / E-080 / E-081 是同一类病：只改本地、服务端不知道。
+       界面是给人看的，服务端才是事实。
+     ⚠ 顺序：先调服务端，**成功后**才改本地。
+       反过来的话服务端失败但本地已删，用户以为删了其实还在 —— 那更难发现。 */
+  function leaveRoom(roomId) {
+    return g.SB.rpc('room_leave', { p_room: roomId });
+  }
+  function deleteRoom(roomId) {
+    return g.SB.rpc('room_delete', { p_room: roomId });
+  }
+
   /* ⚠ 群内禁言（S-113）。
      与 setMute（全站）是两个不同的 RPC、两个不同的权限点 ——
      不能互相替代：用 room_mute 传全站语义会让群主越权，
@@ -761,6 +803,7 @@
     setup: setup, gate: gate, login: login, register: register, syncAcl: syncAcl,
     pull: pull, pullDelta: pullDelta, startPoll: startPoll, stopPoll: stopPoll,
     createRoom: createRoom, updateRoom: updateRoom, joinRoom: joinRoom,
+    leaveRoom: leaveRoom, deleteRoom: deleteRoom, dmRoom: dmRoom,
     userReview: userReview, userDelete: userDelete, msgMedia: msgMedia,
     inviteCreate: inviteCreate, inviteRedeem: inviteRedeem,
     inviteRevoke: inviteRevoke, inviteList: inviteList, setCanInvite: setCanInvite,

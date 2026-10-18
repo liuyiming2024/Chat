@@ -210,7 +210,22 @@
   /* ---------------- 状态读写 ---------------- */
   function stateSeq() { return rpc('state_seq', {}); }
   function stateGet() { return rpc('state_get', {}); }
-  function statePut(data) { return rpc('state_put', { p_data: data }); }
+  /* ⚠⚠ 删掉了 statePut（Q-Chat-S-134，由 rpc-wiring 工具抓出）。
+
+     它调用的服务端函数 `state_put` **从来就不存在** —— 一调就是 404。
+     而它又被挂在导出的公开 API 上（SB.statePut），于是看起来是个能用的功能。
+     **"看起来有、实际没有"比直接报错更害人**：
+     报错至少能立刻发现，而这个只在真正被调用的那一刻才炸，
+     且炸的时候调用方只会以为是网络问题。
+
+     为什么服务端不该有它（online.js 里已经写明，这里不丢掉这条理由）：
+     把整包状态写回服务端会**绕过全部权限校验** ——
+     任何人都能把自己的一份 state 塞上去，覆盖全站。
+     所以它不是"还没实现"，是**不该实现**。留着只是误导。
+
+     注：删的是函数和导出，online.js 里那两处解释"为什么不能有 state_put"
+     的注释**保留** —— 那是设计决策的记录，删了将来会有人重新想起做它。 */
+
 
   /* ---------------- 媒体（Storage） ---------------- */
   function dataUrlToBlob(u) {
@@ -274,7 +289,7 @@
     rpc: rpc,
     gateCheck: gateCheck, login: login, register: register, initSite: initSite,
     changePwd: changePwd, setGate: setGate,
-    stateSeq: stateSeq, stateGet: stateGet, statePut: statePut,
+    stateSeq: stateSeq, stateGet: stateGet,
     uploadMedia: uploadMedia, mediaUrl: mediaUrl
   };
 })(window);
