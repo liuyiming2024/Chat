@@ -104,16 +104,37 @@
     });
     if (!hit) return;
 
-    /* 排到最前。用 prepend 而不是重排全部 ——
-       其余卡片的相对顺序不该被这个功能改变。 */
-    grid.insertBefore(hit, grid.firstChild);
-
     hit.classList.add('plat-mine');
     var tag = document.createElement('span');
     tag.className = 'plat-tag';
     tag.textContent = '推荐给你';
     var h = hit.querySelector('h3');
     if (h) h.appendChild(tag);
+
+    /* ★ Q-Chat-S-139：其余平台**折叠**起来（用户要求）。
+       六个平台平铺时，手机用户要一路往下翻才能找到"安卓"——
+       而那张卡往往就在最后几个。
+
+       ⚠ 用原生 <details> 而不是自己写展开按钮：
+         不需要额外的 JS 状态，键盘与读屏天然可用，
+         JS 失效时它默认展开（见下），不会把内容永久藏起来。
+
+       ⚠⚠ 折叠是**由 JS 施加**的，HTML 里所有卡片本来就是平铺可见的。
+          这点是故意的：万一脚本没跑（被拦、报错、老浏览器），
+          用户看到的是完整的六个平台，而不是"只剩一个、其他找不回来"。
+          "自动适配"一旦出错，代价必须是最小的那一种。 */
+    var box = document.createElement('details');
+    box.className = 'plat-more';
+    var sum = document.createElement('summary');
+    var rest = [];
+    Array.prototype.forEach.call(cards, function (c) { if (c !== hit) rest.push(c); });
+    sum.textContent = '其他平台（' + rest.length + '）';
+    box.appendChild(sum);
+    rest.forEach(function (c) { box.appendChild(c); });
+
+    /* 命中那张排在最前，折叠块跟在后面。 */
+    grid.insertBefore(hit, grid.firstChild);
+    grid.appendChild(box);
   }
 
   /* ---------- Supabase 配置（贴吧用） ---------- */

@@ -179,6 +179,25 @@ a:hover { text-decoration: underline; }
   font-size: 11px; font-weight: 600; vertical-align: middle;
 }
 
+/* Q-Chat-S-139：折叠起来的其他平台。
+   grid-column: 1/-1 —— 它要横跨整行，不能挤在命中卡片旁边占一格。 */
+.plat-more { grid-column: 1 / -1; margin-top: 4px; }
+.plat-more > summary {
+  cursor: pointer; list-style: none;
+  padding: 10px 14px; border: 1px dashed var(--border); border-radius: var(--radius);
+  font-size: 13.5px; color: var(--dim); user-select: none;
+  display: flex; align-items: center; gap: 6px;
+}
+.plat-more > summary::-webkit-details-marker { display: none; }
+.plat-more > summary::before {
+  content: '▸'; display: inline-block; transition: transform .15s; font-size: 11px;
+}
+.plat-more[open] > summary::before { transform: rotate(90deg); }
+.plat-more > summary:hover { border-color: var(--brand); color: var(--brand); }
+/* 展开后里面仍是同样的网格 —— 展开前后卡片长得一样，不突兀。 */
+.plat-more[open] > summary { margin-bottom: 12px; }
+.plat-more .card { }
+
 /* ---------------- 步骤 ---------------- */
 .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
 .step {
