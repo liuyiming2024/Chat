@@ -4086,7 +4086,26 @@
       S.rooms.push(r);
       save(true);
     }
+    /* ⚠ 立刻打开本地房间（不等网络，点下去要有反应），
+       然后**必须**通知服务端建房间 —— 否则 rooms 表里没有它，
+       消息一条都发不出去（Q-Chat-S-134）。
+
+       ⚠ 用服务端返回的 rid 校正本地 id：两边算法现在一致，
+       但**以服务端为准**才不会将来一边改了另一边没改而串号。 */
     openRoom(id);
+    if (g.Online && g.Online.dmRoom) {
+      g.Online.dmRoom(u.id).then(function (rid) {
+        if (!rid || rid === id) return;
+        if (findRoom(rid)) return;
+        r.id = rid; save(true); renderAll();
+      }).catch(function (e) {
+        /* 静默失败是最坏的：用户发不出消息却不知道为什么。
+           这里给一条可见提示，说明"可能发不出去"。 */
+        try {
+          g.UI.toast('私聊房间未能在服务端创建，消息可能发不出去', 'warn');
+        } catch (e2) { }
+      });
+    }
   }
 
   function createRoom(name) {
@@ -4218,15 +4237,65 @@
     if (g.ACL.can(me, 'room.pwd', r)) items.push(['群密码', function () { editPwd(r); }]);
     if (g.ACL.can(me, 'room.delete', r)) items.push(['解散/删除', function () {
       g.UI.confirm('确定删除「' + roomTitleOf(r) + '」？', function () {
-        S.rooms = S.rooms.filter(function (x) { return x.id !== r.id; });
-        delete S.messages[r.id]; if (cur === r.id) cur = 'public';
-        log('delroom', r.name, r.id); save(); renderAll();
+        /* ⚠⚠ 必须先通知服务端（Q-Chat-S-134）。
+           原来只删本地 S.rooms —— 服务端房间根本没删，
+           **房主这边界面上没了，其他人还能继续在里面发消息**。
+           房主以为解散了，那个群其实还活着，而且没人告诉他没解散成功。
+
+           顺序：服务端成功 → 才改本地。
+           反过来的话服务端失败而本地已删，用户以为删掉了 —— 比没删更难发现。 */
+        function dropLocal() {
+          S.rooms = S.rooms.filter(function (x) { return x.id !== r.id; });
+          delete S.messages[r.id]; if (cur === r.id) cur = 'public';
+          log('delroom', r.name, r.id); save(); renderAll();
+        }
+        var api = (g.Online && g.Online.deleteRoom) ? g.Online.deleteRoom(r.id)
+                                                    : Promise.reject(new Error('离线'));
+        api.then(dropLocal).catch(function (e) {
+          /* 失败必须说清楚"房间还在"，不能只说"操作失败" ——
+             用户会以为删掉了，于是再也不来看这个群。
+             ⚠ 用 modal 不是 alert：**UI.alert 根本不存在**（导出里只有
+             esc/toast/modal/confirm/prompt）。而它外层还包着 try/catch，
+             于是不存在的调用被静默吞掉 —— 提示一个字都不会出现。
+             这正是本项目反复出现的那类病，我自己刚又犯了一次。 */
+          try {
+            g.UI.modal({
+              title: '解散失败',
+              body: '<div class="form-row">「' + g.UI.esc(roomTitleOf(r)) +
+                    '」仍然存在，其他人还能在里面发消息。</div>' +
+                    (e && e.message ? '<div class="form-row dim">' +
+                     g.UI.esc(String(e.message)) + '</div>' : ''),
+              okText: '我知道了', cancelText: null
+            });
+          } catch (e2) { }
+        });
       });
     }]);
     if (r.type !== 'public' && r.members && r.members.indexOf(me.id) >= 0 && r.owner !== me.id) {
       items.push(['退出群聊', function () {
-        r.members = r.members.filter(function (x) { return x !== me.id; });
-        touch(r); sysMsg(r.id, '「' + me.nick + '」退出了群聊'); save(); renderAll();
+        /* ⚠⚠ 同上（Q-Chat-S-134）：原来只改本地 members 数组，
+           服务端 room_members 里你还在 —— 下次拉增量**房间又回来了**，
+           用户"退了又回来"，只会以为软件有毛病。
+           先通知服务端，成功后才改本地。 */
+        function dropLocal() {
+          r.members = r.members.filter(function (x) { return x !== me.id; });
+          touch(r); sysMsg(r.id, '「' + me.nick + '」退出了群聊'); save(); renderAll();
+        }
+        var api = (g.Online && g.Online.leaveRoom) ? g.Online.leaveRoom(r.id)
+                                                   : Promise.reject(new Error('离线'));
+        api.then(dropLocal).catch(function (e) {
+          /* 同上：UI.alert 不存在，必须走 modal。 */
+          try {
+            g.UI.modal({
+              title: '退出失败',
+              body: '<div class="form-row">你在服务端仍是该群成员，' +
+                    '下次刷新这个群可能还会出现。</div>' +
+                    (e && e.message ? '<div class="form-row dim">' +
+                     g.UI.esc(String(e.message)) + '</div>' : ''),
+              okText: '我知道了', cancelText: null
+            });
+          } catch (e2) { }
+        });
       }]);
     }
     d.innerHTML = '<div class="cmd-list">' + items.map(function (x, i) {
