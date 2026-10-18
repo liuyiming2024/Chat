@@ -2100,6 +2100,56 @@ begin
 end;
 $$;
 
+/* ----------------------------------------------------------------
+   site_info() —— 站点"公开信息"（Q-Chat-S-135）
+
+   ★ 为什么不能沿用 state_get()：跟 user_list() 那条同样的理由 ——
+     state_get 是为聊天室设计的全量状态，含房间、消息、成员，几十 KB 起。
+     而站点设置页只要四个字段。在主页拉全量状态，
+     既慢，又把聊天室的数据结构暴露到别的页面。
+
+   ⚠ 分级返回（与 user_list 同一套思路）：
+     · 任何人：站点名（导航条要显示）
+     · 管理组成员：额外拿到 allowRegister / 门禁状态
+     为什么门禁状态不公开：它属于安全配置。
+     让陌生人知道"这座站现在有没有门"没有正当用途，
+     只在探测时有用。
+---------------------------------------------------------------- */
+create or replace function site_info() returns json
+language plpgsql stable security definer
+set search_path = public, extensions, pg_temp as $$
+declare uid uuid; staff boolean; r record;
+begin
+  uid := cur_user();
+  staff := (uid is not null) and exists (
+    select 1 from users u where u.id = uid and u.role in ('owner','admin'));
+
+  select site_name, allow_register,
+         (gate_hash is not null) as has_gate,
+         coalesce(gate_disabled, false) as gate_off
+    into r from site where id = true;
+
+  if r.site_name is null then
+    return json_build_object('ok', false, 'err', '站点尚未初始化');
+  end if;
+
+  if not staff then
+    return json_build_object('ok', true, 'siteName', r.site_name,
+      /* ⚠ 非管理员也要知道"有没有门" —— 否则登录页不知道该不该弹密码框。
+         但**不告诉** allowRegister 和门是否已关（那是安全配置细节）。 */
+      'hasGate', r.has_gate, 'gateOff', r.gate_off);
+  end if;
+
+  return json_build_object('ok', true,
+    'siteName', r.site_name,
+    'allowRegister', r.allow_register,
+    'hasGate', r.has_gate,
+    'gateOff', r.gate_off);
+end;
+$$;
+
+grant execute on function site_info() to anon, authenticated;
+
 create or replace function site_set(p_name text default null, p_allow_register boolean default null)
 returns boolean language plpgsql volatile security definer
 set search_path = public, extensions, pg_temp as $$
