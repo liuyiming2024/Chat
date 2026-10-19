@@ -26,7 +26,7 @@ object Config {
 
        这个值与 Web 端 chat/js/sb.js 里的 DEFAULT_KEY 同源，
        是同一个项目的 publishable key，性质完全相同。 */
-    const val DEFAULT_KEY = "sb_publishable_jPrK6j5l9NGbnLKcytTegg_di1njO8t"
+    const val DEFAULT_KEY = ""
 
     /**
      * 只允许 publishable key。secret 前缀出现就拒绝启动，不要等数据泄露了才发现。
