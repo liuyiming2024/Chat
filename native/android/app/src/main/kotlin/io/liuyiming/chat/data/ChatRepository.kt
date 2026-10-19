@@ -59,12 +59,31 @@ class ChatRepository(
     suspend fun send(roomId: String, body: String): Result<Unit> = runCatching {
         val localId = UUID.randomUUID().toString()
         db.pending().add(PendingEntity(localId, roomId, "text", body, null, System.currentTimeMillis()))
+        sendRaw(roomId, body)
+        db.pending().remove(localId)
+    }
+
+    /**
+     * 只发、不入队。**补发专用**（Q-Chat-S-144）。
+     *
+     * ⚠ 原来补发走的是 send()，而 send() 会先往队列里插一条新的：
+     *   补发成功 → 新条目被删、旧条目也被删，看着一切正常；
+     *   补发失败 → 新条目留在队列里，旧条目也还在。
+     *
+     *   于是**每失败一次，队列就多一条**。而界面上的"待发 N 条"
+     *   会越滚越大，用户点一次「立即重试」翻一倍。
+     *   等到终于联网，同一条消息会连着发 N 遍 ——
+     *   对方收到一串一模一样的内容，而发送方只知道自己"发了一次"。
+     *
+     *   这类 bug 最阴的地方在于：它只在失败路径上出现，
+     *   联网正常时完全看不出来。
+     */
+    suspend fun sendRaw(roomId: String, body: String) {
         api.rpc("msg_send", JsonObject(mapOf(
             "p_room" to JsonPrimitive(roomId),
             "p_kind" to JsonPrimitive("text"),
             "p_body" to JsonPrimitive(body)
         )))
-        db.pending().remove(localId)
     }
 
     suspend fun messages(roomId: String) = db.messages().list(roomId)

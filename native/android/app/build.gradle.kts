@@ -71,4 +71,9 @@ dependencies {
        现在要补的是**规则被验证过**，不是补 UI 测试。
        真机行为另有验证清单（见 docs/原生端真机验证清单.md）。 */
     testImplementation("junit:junit:4.13.2")
+    /* ⚠ NATIVE-TEST：被测的 Payload 要解析 JsonElement，而主代码里
+       kotlinx-serialization-json 是 implementation，**不会**传递到测试 classpath。
+       不加这一行，PayloadTest 会报 "Unresolved reference: kotlinx"，
+       而且是编译期失败 —— 整个 test 任务挂掉，连 RulesTest 也一起跑不了。 */
+    testImplementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
 }

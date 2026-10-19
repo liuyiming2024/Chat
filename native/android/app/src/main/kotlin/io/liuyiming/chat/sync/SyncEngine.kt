@@ -1,8 +1,11 @@
 package io.liuyiming.chat.sync
 
 import io.liuyiming.chat.api.ApiClient
+import io.liuyiming.chat.core.Payload
 import io.liuyiming.chat.data.db.*
+import io.liuyiming.chat.data.model.*
 import kotlinx.coroutines.*
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.*
 
 /**
@@ -47,7 +50,20 @@ class SyncEngine(
 
     fun stop() { started = false; scope.cancel() }
 
+    /**
+     * ★ Q-Chat-S-144：未登录时**绝不能同步**。
+     *
+     *   原实现在 Application.onCreate 里就 start()，此时还没有会话。
+     *   未登录时 state_get 返回的是空载荷（users/rooms/messages 全空），
+     *   但 tick() 照旧把 rev 推进到了服务端水位。
+     *   等用户登录后再拉增量，since 已经是"刚刚"——
+     *   **历史消息一条都拉不到**，用户看到的是一个空房间，
+     *   而实际上里面有几百条。
+     *   这种"有数据但看不见"比报错更难发现。
+     */
     private suspend fun tick() {
+        if (api.sessionToken.isNullOrBlank()) return
+
         val serverRev = peek() ?: return
         if (serverRev <= rev) return            // 没变化就什么都不做
 
@@ -59,45 +75,42 @@ class SyncEngine(
         db.sync().save(SyncStateEntity(rev = rev))
     }
 
+    /**
+     * 登录后调用：水位归零，下一次 tick 走全量。
+     *
+     * ⚠ 不归零的话，登录前那次空同步已经把 rev 推高了，
+     *   登录后只会拉增量 —— 历史消息永远补不回来。
+     */
+    fun reset() { rev = 0 }
+
     private suspend fun peek(): Long? {
         val r = api.rpc("state_peek", JsonObject(emptyMap()))
-        val o = r as? JsonObject ?: return null
-        // 时间校正：本机时钟不准会让"在线/离线"判断全错（Web 版踩过）
-        o["serverNow"]?.jsonPrimitive?.contentOrNull
-            ?.toLongOrNull()
-            ?.let { Clock.serverOffset = it - System.currentTimeMillis() }
-        return (o["rev"] ?: o["state_rev"])?.jsonPrimitive?.contentOrNull?.toLongOrNull()
+        return Payload.rev(r)
     }
 
     private suspend fun apply(root: JsonElement) {
         val o = root as? JsonObject ?: return
 
-        o["users"]?.jsonArray?.let { arr ->
-            db.users().upsertAll(arr.mapNotNull { u ->
-                val x = u as? JsonObject ?: return@mapNotNull null
-                UserEntity(
-                    id = x.str("id") ?: return@mapNotNull null,
-                    nick = x.str("nick") ?: "",
-                    role = x.str("role") ?: "member",
-                    real = x.str("real"),
-                    active = x["active"]?.jsonPrimitive?.booleanOrNull ?: true,
-                    mutedUntil = x.str("muted_until")?.toLongOrNull(),
-                    createdAt = x.str("created_at")?.toLongOrNull() ?: 0
-                )
+        /* ⚠ 时间校正只能在这里做。
+           原代码在 peek() 里找 serverNow，而 state_peek 返回的是裸数字、
+           根本不含这个字段 —— 于是 Clock.serverOffset 恒为 0，
+           时间校正从来没生效过（Web 版踩过同款坑：本机钟快 5 分钟
+           会让所有人永远显示离线）。 */
+        Payload.serverNow(o)?.let { Clock.serverOffset = it - System.currentTimeMillis() }
+
+        /* ⚠ 一律用 `as? JsonArray` 而不是 `.jsonArray`：
+           后者在类型不符时抛异常。而服务端在部分分支下
+           messages 返回的是对象 `{}` 而不是数组 ——
+           一个类型断言就让整次同步崩掉，太脆。 */
+        (o["users"] as? JsonArray)?.let { arr ->
+            db.users().upsertAll(arr.mapNotNull { e ->
+                (e as? JsonObject)?.let(Payload::user)?.toEntity()
             })
         }
 
-        o["rooms"]?.jsonArray?.let { arr ->
-            db.rooms().upsertAll(arr.mapNotNull { r ->
-                val x = r as? JsonObject ?: return@mapNotNull null
-                RoomEntity(
-                    id = x.str("id") ?: return@mapNotNull null,
-                    name = x.str("name") ?: "",
-                    owner = x.str("owner_id"),
-                    admins = (x["admins"]?.jsonArray ?: JsonArray(emptyList())).toString(),
-                    muted = (x["muted"]?.jsonArray ?: JsonArray(emptyList())).toString(),
-                    createdAt = x.str("created_at")?.toLongOrNull() ?: 0
-                )
+        (o["rooms"] as? JsonArray)?.let { arr ->
+            db.rooms().upsertAll(arr.mapNotNull { e ->
+                (e as? JsonObject)?.let(Payload::room)?.toEntity()
             })
         }
 
@@ -106,24 +119,33 @@ class SyncEngine(
          * 清库的瞬间如果正好有 UI 在读，用户会看到聊天记录整个消失一下再出现；
          * 更糟的是清完插入失败，记录就真没了。用 upsert，主键相同就覆盖。
          */
-        o["messages"]?.jsonArray?.let { arr ->
-            db.messages().upsertAll(arr.mapNotNull { m ->
-                val x = m as? JsonObject ?: return@mapNotNull null
-                MessageEntity(
-                    id = x.str("id") ?: return@mapNotNull null,
-                    room = x.str("room_id") ?: return@mapNotNull null,
-                    from = x.str("from_id") ?: "",
-                    kind = x.str("kind") ?: "text",
-                    body = x.str("body") ?: "",
-                    media = x.str("media"),
-                    at = x.str("created_at")?.toLongOrNull() ?: 0,
-                    editedAt = x.str("edited_at")?.toLongOrNull(),
-                    deleted = x["deleted"]?.jsonPrimitive?.booleanOrNull ?: false,
-                    rev = x["rev"]?.jsonPrimitive?.longOrNull ?: 0
-                )
+        (o["messages"] as? JsonArray)?.let { arr ->
+            db.messages().upsertAll(arr.mapNotNull { e ->
+                (e as? JsonObject)?.let(Payload::message)?.toEntity()
             })
         }
     }
+
+    /* ---------- model → entity ----------
+     * 放在这里而不是 Payload 里：Entity 带 @Entity 注解，
+     * 一旦被 Payload 引用，那些解析函数就再也没法在纯 JVM 上测了。 */
+    private fun User.toEntity() = UserEntity(
+        id = id, nick = nick, role = role, real = real,
+        active = active, mutedUntil = mutedUntil, createdAt = createdAt
+    )
+
+    private fun Room.toEntity() = RoomEntity(
+        id = id, name = name, owner = owner,
+        admins = admins.toJson(), muted = muted.toJson(), createdAt = createdAt
+    )
+
+    private fun Message.toEntity() = MessageEntity(
+        id = id, room = room, from = from, kind = kind, body = body,
+        media = media, at = at, editedAt = editedAt, deleted = deleted, rev = rev
+    )
+
+    private fun List<String>.toJson(): String =
+        Json.Default.encodeToString(ListSerializer(JsonPrimitive.serializer()), map { JsonPrimitive(it) })
 
     /**
      * 补发离线队列。

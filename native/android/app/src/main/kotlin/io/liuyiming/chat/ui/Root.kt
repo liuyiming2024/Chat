@@ -98,7 +98,15 @@ fun Login(app: ChatApp, onOk: () -> Unit) {
                 scope.launch {
                     val r = app.repo.login(nick.trim(), pwd)
                     busy = false
-                    if (r.isSuccess) onOk() else err = r.exceptionOrNull()?.message ?: "登录失败"
+                    if (r.isSuccess) {
+                        /* ★ 登录后必须把同步水位归零（S-144）。
+                           登录前 SyncEngine 已经空转过若干次，
+                           虽然已改为"未登录不同步"，但应用可能在旧水位上
+                           残留过一次空同步；归零可确保这次一定走全量，
+                           否则用户看到的房间会是空的 —— 而里面有几百条历史。 */
+                        app.sync.reset()
+                        onOk()
+                    } else err = r.exceptionOrNull()?.message ?: "登录失败"
                 }
             }
         ) { Text(if (busy) "登录中…" else "登录") }

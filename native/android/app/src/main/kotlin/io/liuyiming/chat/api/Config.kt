@@ -13,10 +13,32 @@ package io.liuyiming.chat.api
  */
 object Config {
     const val DEFAULT_URL = "https://pimryrsxkwyafmponegp.supabase.co"
-    const val DEFAULT_KEY = ""
 
-    /** 只允许 publishable key。secret 前缀出现就拒绝启动，不要等数据泄露了才发现。 */
+    /* ★ Q-Chat-S-144：这里原来是空串。
+       后果不是"某个功能不能用"，而是**每一个请求都失败** ——
+       apikey 为空头，PostgREST 一律拒绝，于是登录、同步、发消息全部静默失败。
+       APP 装上去能打开界面，但里面永远是空的。
+
+       ⚠ 为什么空串没能被 assertSafeKey 拦住：
+         它只查了 sb_secret_ 前缀，空串自然通过。
+         **校验只挡住了"放错类型"，没挡住"压根没放"。**
+         而这种缺失恰恰是更常见的那一种 —— 它不报错，只是什么都不通。
+
+       这个值与 Web 端 chat/js/sb.js 里的 DEFAULT_KEY 同源，
+       是同一个项目的 publishable key，性质完全相同。 */
+    const val DEFAULT_KEY = "sb_publishable_jPrK6j5l9NGbnLKcytTegg_di1njO8t"
+
+    /**
+     * 只允许 publishable key。secret 前缀出现就拒绝启动，不要等数据泄露了才发现。
+     *
+     * ⚠ 同时必须拒绝空串：空 key 会让所有请求失败，
+     *   而失败表现为"界面空白"，没有任何一处提示是"没配 key" ——
+     *   这种错最难查，因为它看起来像服务端挂了。
+     */
     fun assertSafeKey(key: String) {
+        require(key.isNotBlank()) {
+            "缺少 anon key —— 所有请求都会失败，且表现为界面空白而不是报错"
+        }
         require(!key.startsWith("sb_secret_")) {
             "禁止使用 service_role/secret key —— 它会绕过全部服务端鉴权"
         }

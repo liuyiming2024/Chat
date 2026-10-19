@@ -109,7 +109,10 @@ class ChatViewModel(private val app: ChatApp) : ViewModel() {
         viewModelScope.launch {
             _flushing.value = true
             runCatching {
-                app.sync.flushPending { item -> app.repo.send(item.room, item.body).isSuccess }
+                /* ⚠ 必须走 sendRaw 而不是 send（S-144）：
+                   send 会重新入队，失败一次队列就多一条，
+                   重试 N 次后同一条消息会连发 N 遍。 */
+                app.sync.flushPending { item -> runCatching { app.repo.sendRaw(item.room, item.body) }.isSuccess }
             }
             _flushing.value = false
             refreshPending()
