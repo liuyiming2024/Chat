@@ -29,6 +29,11 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
+    /* ⚠ AppDatabase 写了 exportSchema = true，但不给目录就只能在
+       构建时告警 "Schema export directory was not provided"。
+       导出的 schema 是**将来写迁移的依据**：没有它，哪天改表结构
+       只能靠 fallbackToDestructiveMigration —— 那会清掉用户全部本地数据。 */
+    ksp { arg("room.schemaLocation", "$projectDir/schemas") }
     buildFeatures { compose = true }
     /* ⚠ 删掉了 composeOptions { kotlinCompilerExtensionVersion = "1.5.15" }。
        那是 Kotlin **1.x** 时代的写法；2.0 起由 compose 插件自动管理编译器版本，

@@ -11,6 +11,10 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.util.UUID
 
+/* ⚠ flatMapLatest 需要显式 opt-in。
+   CI 上它只是 warning，但挂着不管的话，将来真出现新告警时
+   会混在这一堆旧的里面没人看 —— 告警一多就等于没有告警。 */
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class ChatViewModel(private val app: ChatApp) : ViewModel() {
 
     private val _roomId = MutableStateFlow<String?>(null)
