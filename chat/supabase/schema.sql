@@ -3547,17 +3547,24 @@ end $wl4$;
    但 PostgreSQL 建函数时**默认授予 PUBLIC 的 EXECUTE**，
    于是**今后每新建一个函数，都自动对 anon 开放一次**。
    这是个会不断复发的口子 —— 每次加功能都可能顺带开一个，
-   而且没人会注意到（它不会报错，功能也照常工作）。
+   而且它不报错、功能照常工作，没人会注意到。
 
-   ⚠ 我差点判错这一条：
-     第一次用 `information_schema.role_routine_grants` 查 anon=0，
-     以为"新函数不会自动开放"。但那个视图**只显示直接授予**，
-     不显示通过 PUBLIC 继承的 —— anon=0 不代表 anon 执行不了。
-     真正切到 `set role anon` 去执行一次，立刻返回了 42。
-     **用"没被点名"证明"没有权限"，是错的。**
+   ⚠ 我在这条上连着判错两次，过程值得记下来：
+     ① 先用 `information_schema.role_routine_grants` 查 anon=0，
+        以为"新函数不会自动开放"。但那个视图只显示**直接授予**，
+        不显示通过 PUBLIC 继承的 —— anon=0 不代表执行不了。
+     ② 改成 `alter default privileges ... revoke from public`，
+        查 pg_default_acl 确实有了记录，以为修好了。
+        结果切到 `set role anon` 执行，照样返回 42。
+        因为 PostgreSQL 对函数的**系统默认**就是 PUBLIC 可执行的，
+        ALTER DEFAULT PRIVILEGES 只能增删"已显式设置过的"默认项，
+        取消不掉那个系统默认 —— 新函数的 proacl 仍是 NULL（即走默认）。
 
-   ★ 修法：改默认权限，让 postgres 今后建的函数不再自动给 PUBLIC。
-     这条只影响**今后**，不动现有的，所以零破坏风险。
+     两次都是"用了看起来对的间接指标，没做最终那一次真实执行"。
+     唯一可信的验证就是 `set role anon` 真的跑一遍。
+
+   ★ 真正管用的办法：用**事件触发器**，每次建函数后立刻收回 PUBLIC。
+     这是唯一能在 Supabase 上自动堵住"系统默认"的机制。
 
    ⚠⚠ 代价必须说清：
      今后新建的对外函数**必须显式加进上面的 $wl4$ 白名单**，
@@ -3565,12 +3572,37 @@ end $wl4$;
      这与 S-136 当时选的取舍相反 —— 那时选的是
      "漏收一个只是没收紧，不会破坏功能"。
      但那个选择意味着这个口子**永远堵不上**：
-     只要默认是开放的，每加一个函数就开一次口子，
+     只要默认开放，每加一个函数就开一次口子。
      而"忘了加白名单"会以 401 的形式立刻暴露，
-     "忘了收紧"则永远静默。
+     "忘了收紧"则永远静默 ——
      **两种疏漏里，宁可选那个会报错的。**
 
-   ⚠ FOR ROLE 必须写 postgres：迁移脚本用它执行（已实测 current_user），
-     写错角色这条语句完全不生效，而且不报错。 */
-alter default privileges for role postgres in schema public
-  revoke execute on functions from public;
+   ⚠ 顺序问题：触发器建在文件末尾，所以它只影响**今后**建的函数；
+     本文件里已经存在的函数仍靠 $wl3$/$wl4$ 处理。
+     而每次 migrate 都会重跑整个文件，白名单 grant 在末尾，
+     所以"建函数 → 收 PUBLIC → 白名单开回来"这个顺序是成立的。 */
+create or replace function _revoke_public_on_new_function()
+returns event_trigger language plpgsql as $et$
+declare obj record;
+begin
+  for obj in
+    select object_identity, object_type
+      from pg_event_trigger_ddl_commands()
+     where object_type = 'function'
+  loop
+    begin
+      /* ⚠ 用 format %s 直接拼 object_identity（它自带完整签名），
+         不能自己拼参数类型 —— 拼错会在每次建函数时抛异常，
+         进而让整份迁移失败。收紧权限不该反过来搞挂部署。 */
+      execute format('revoke execute on function %s from public', obj.object_identity);
+    exception when others then
+      raise notice 'S-142 revoke public 跳过：%', obj.object_identity;
+    end;
+  end loop;
+end $et$;
+
+drop event trigger if exists trg_revoke_public_on_new_function;
+create event trigger trg_revoke_public_on_new_function
+  on ddl_command_end
+  when tag in ('CREATE FUNCTION')
+  execute function _revoke_public_on_new_function();
