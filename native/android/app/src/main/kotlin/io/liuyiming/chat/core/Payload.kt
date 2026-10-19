@@ -94,7 +94,7 @@ object Payload {
         val id = o.str("id") ?: return null
         /* ⚠ 这两个缺一个就必须丢弃：room 用来归组，
            拿不到 room 的消息插进库里会永远显示在错误的房间里。 */
-        val room = o.str("room_id") ?: return null
+        val room = o.str("room") ?: return null
         return Message(
             id = id,
             room = room,
