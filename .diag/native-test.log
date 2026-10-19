@@ -1,0 +1,84 @@
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:generateDebugResValues
+> Task :app:checkDebugAarMetadata
+> Task :app:mapDebugSourceSetPaths
+> Task :app:generateDebugResources
+> Task :app:packageDebugResources
+> Task :app:createDebugCompatibleScreenManifests
+> Task :app:extractDeepLinksDebug
+> Task :app:parseDebugLocalResources
+> Task :app:mergeDebugResources
+> Task :app:processDebugMainManifest
+> Task :app:processDebugManifest
+> Task :app:preDebugUnitTestBuild UP-TO-DATE
+> Task :app:javaPreCompileDebugUnitTest
+> Task :app:javaPreCompileDebug
+> Task :app:processDebugManifestForPackage
+> Task :app:processDebugResources
+> Task :app:kspDebugKotlin
+> Task :app:compileDebugKotlin
+> Task :app:compileDebugJavaWithJavac
+> Task :app:processDebugJavaRes
+> Task :app:bundleDebugClassesToCompileJar
+> Task :app:bundleDebugClassesToRuntimeJar
+> Task :app:kspDebugUnitTestKotlin
+> Task :app:compileDebugUnitTestKotlin
+> Task :app:compileDebugUnitTestJavaWithJavac NO-SOURCE
+> Task :app:processDebugUnitTestJavaRes
+> Task :app:testDebugUnitTest
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/unittest-1792399989205.json
+
+BUILD SUCCESSFUL in 25s
+25 actionable tasks: 25 executed
+io.liuyiming.chat.ConfigTest: tests=6 failures=0 errors=0
+   [ok] 纯空白 key 也必须被拒绝
+   [ok] 内置默认 key 不能为空
+   [ok] publishable key 放行
+   [ok] 内置默认地址不能为空
+   [ok] secret key 必须被拒绝
+   [ok] 空 key 必须被拒绝
+io.liuyiming.chat.I18nTest: tests=8 failures=0 errors=0
+   [ok] 支持的语言设为当前
+   [ok] 语言标签与 Web 版一致
+   [ok] 切换语言立刻生效
+   [ok] 两种语言下每个词条都取得到非空值
+   [ok] 超长限制文案含具体数字
+   [ok] 缺 key 不返回 key 本身
+   [ok] 英文下取到英文
+   [ok] 不支持的语言回退默认
+io.liuyiming.chat.LoginParseTest: tests=7 failures=0 errors=0
+   [ok] ok 为 true 却没有 token 时必须报错
+   [ok] 成功时返回 token
+   [ok] ok 为 false 但 err 为空时不能返回空提示
+   [ok] 凭证失败时原样透传服务端原因
+   [ok] 被限流必须说明是被限流而不是密码错
+   [ok] 待审核与已封禁必须各自保留自身措辞
+   [ok] ok 缺失但 token 存在时按成功处理
+io.liuyiming.chat.PayloadTest: tests=11 failures=0 errors=0
+   [ok] 消息按服务端驼峰字段解析
+   [ok] serverNow 只在对象载荷里取
+   [ok] 字段全为 null 时不能抛异常
+   [ok] 水位也兼容对象形态
+   [ok] status 为 active 才算激活
+   [ok] 水位解析不出来时返回 null 而不是 0
+   [ok] 消息缺 room 时必须丢弃
+   [ok] state_peek 返回的是裸数字而不是对象
+   [ok] 房间的 owner 与 roomMuted 要正确映射
+   [ok] 缺 rev 字段时不能把整条消息丢掉
+   [ok] 用户的 realName 与 status 要正确映射
+io.liuyiming.chat.RulesTest: tests=11 failures=0 errors=0
+   [ok] 过一毫秒就撤不掉
+   [ok] 前后空白不计入长度
+   [ok] 刚发出的能撤
+   [ok] 超过一个字就算超长
+   [ok] 超时后剩余为负
+   [ok] 临界点仍可撤
+   [ok] 刚好到上限不算超长
+   [ok] 空消息不算超长
+   [ok] 上限必须等于服务端的 8000
+   [ok] 撤回时限必须是 6 分钟
+   [ok] 未来时间的消息不会因负数溢出而变成可撤
+用例合计 43
+--- 摘要结束 ---
