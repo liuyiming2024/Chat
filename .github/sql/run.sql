@@ -1,28 +1,45 @@
-/* V-03 实测：新建一个函数，anon 会不会自动获得执行权？
-   这才是"grant execute on all functions"那条语句真正的危害所在 ——
-   不是旧函数，而是**今后每一个新建的函数**。 */
+/* V-03 严格复验。
+   ⚠ 上一轮我查 information_schema.role_routine_grants 得 anon=0，
+     差点据此下结论"新函数不会自动开放"。但那个视图**只显示直接授予**，
+     不显示通过 PUBLIC 继承的权限 —— anon=0 不代表 anon 执行不了。
+     用视图判断权限，等于用"没被点名"证明"没有权限"，是错的。
+
+   ★ 唯一可信的验证：真的切到 anon 角色去执行一次。 */
 create or replace function _v03_probe() returns int
-language sql stable as $$ select 42 $$;
+language sql stable security invoker as $$ select 42 $$;
 
-select count(*) as anon能否执行新函数 from (
-  select 1 from information_schema.role_routine_grants
-   where routine_name='_v03_probe'
-     and grantee='anon' and privilege_type='EXECUTE') t;
+do $$
+declare ok boolean := false; msg text;
+begin
+  set role anon;
+  begin
+    perform _v03_probe();
+    ok := true;
+  exception when others then
+    msg := SQLERRM;
+  end;
+  reset role;
+  if ok then
+    raise notice '❌ anon 能执行新建函数 —— 新函数仍会自动对匿名开放（V-03 未修）';
+  else
+    raise notice '✅ anon 执行被拒：% —— 新函数不会自动开放', coalesce(msg,'(无信息)');
+  end;
+end $$;
 
-select count(*) as public能否执行 from (
-  select 1 from information_schema.role_routine_grants
-   where routine_name='_v03_probe'
-     and grantee='PUBLIC' and privilege_type='EXECUTE') t;
-
-/* 对照：一个已存在的对外函数，应当仍对 anon 开放（白名单生效） */
-select count(*) as 白名单函数whoami_anon可执行 from (
-  select 1 from information_schema.role_routine_grants
-   where routine_name='whoami' and grantee='anon') t;
-
-/* 统计当前 anon 能执行多少个函数 */
-select count(distinct routine_name) as anon可执行函数总数
-  from information_schema.role_routine_grants
- where grantee='anon' and privilege_type='EXECUTE'
-   and routine_schema='public';
+/* 对照：白名单里的函数，anon 应当能执行（否则白名单失效） */
+do $$
+declare ok boolean := false; msg text;
+begin
+  set role anon;
+  begin
+    perform site_ready();
+    ok := true;
+  exception when others then msg := SQLERRM;
+  end;
+  reset role;
+  if ok then raise notice '✅ 对照组：白名单函数 site_ready anon 可执行';
+  else raise notice '❌ 白名单失效：site_ready 也被拒 —— %', coalesce(msg,'');
+  end if;
+end $$;
 
 drop function _v03_probe();
