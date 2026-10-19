@@ -395,6 +395,29 @@
     /* Q-Chat-S-120：无门状态由服务端说了算，本地不缓存。
        不写进持久化状态也是有意的 —— 服务端哪天重新开了门，
        本地若拿着旧的 "无门" 结论，就会跳过密码框直接放行。 */
+
+    /* ★★ Q-Chat-S-143：上面这四行读的是**顶层驼峰**字段
+       （inS.gateOff / inS.allowRegister / inS.siteName），
+       而服务端 state_get 返回的是**嵌套的 site 对象 + 下划线命名**：
+         "site": { "site_name":..., "allow_register":..., "gate_off":... }
+       两侧对不上，于是这三个字段**永远是 undefined**。
+
+       后果不是"显示不好看"：
+         gateOff 拿不到 → boot 里的无门分支 `if (inS.gateOff)` 恒为 false
+         → 走进 enterGate() → 弹出"请输入保护密码"。
+         而服务端**早已取消保护密码**（gate_disabled=true）：
+         用户面对的是一个根本不存在的密码框，输入任何东西都是错的，
+         他会以为自己记错了，反复重试，始终进不去。
+
+       服务端不该为了迁就前端再复制一份顶层字段 ——
+       同一份信息两个来源，迟早不一致。所以在这里做一次扁平化。 */
+    var _sd = inS.site || null;
+    if (_sd) {
+      if (typeof _sd.gate_off === 'boolean') S.gateOff = _sd.gate_off;
+      if (typeof _sd.allow_register === 'boolean') S.allowRegister = _sd.allow_register;
+      if (_sd.site_name) S.siteName = _sd.site_name;
+    }
+    /* 兼容旧契约：万一哪天服务端直接给顶层驼峰，也不能丢 */
     if (typeof inS.gateOff === 'boolean') S.gateOff = inS.gateOff;
     if (typeof inS.allowRegister === 'boolean') S.allowRegister = inS.allowRegister;
     if (inS.siteName) S.siteName = inS.siteName;
@@ -6420,7 +6443,11 @@
              用户会以为自己记错了，反复重试、始终进不去。
              正确做法是向服务端要一个只读会话（gate 传空即可），
              拿到会话后再走 afterGate()，由账号登录这道门接着把关。 */
-          if (inS && inS.gateOff) {
+          /* ★ 用 gateOff() 而不是 inS.gateOff（S-143）：
+             inS 是服务端原始载荷，站点信息在 inS.site 里；
+             mergeState 上面已经把它扁平化进 S 了，
+             这里再读 inS.gateOff 会永远为 undefined。 */
+          if (gateOff()) {
             return g.Online.gate('').then(function () {
               setGateOk();
               return g.Online.pull();
