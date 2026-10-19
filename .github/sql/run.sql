@@ -1,48 +1,28 @@
-/* S-142 补验：R4-04 必须用**真实 owner 会话**才验得到长度检查。
-   上一轮报"请先登录"说明没验到 —— 那时 db-run 用的是 postgres 角色，
-   压根没走到 length 那一行。断言报绿但验的是别的东西，等于没验。
+/* V-03 实测：新建一个函数，anon 会不会自动获得执行权？
+   这才是"grant execute on all functions"那条语句真正的危害所在 ——
+   不是旧函数，而是**今后每一个新建的函数**。 */
+create or replace function _v03_probe() returns int
+language sql stable as $$ select 42 $$;
 
-   做法：签一个站长会话 → 用 set_config 伪造 request.headers 里的 x-session
-   （cur_token() 就是读这个）→ 再调 gate_enable。 */
-begin;
-update site set gate_disabled=true where id=true;
-update users set status='active' where role='owner';
+select count(*) as anon能否执行新函数 from (
+  select 1 from information_schema.role_routine_grants
+   where routine_name='_v03_probe'
+     and grantee='anon' and privilege_type='EXECUTE') t;
 
-do $$
-declare tk text; msg text;
-begin
-  tk := issue_session((select id from users where role='owner' limit 1), false);
-  perform set_config('request.headers',
-                     json_build_object('x-session', tk)::text, true);
+select count(*) as public能否执行 from (
+  select 1 from information_schema.role_routine_grants
+   where routine_name='_v03_probe'
+     and grantee='PUBLIC' and privilege_type='EXECUTE') t;
 
-  /* ① 4 位 → 应被拒（提示"至少 8 位"） */
-  begin
-    perform gate_enable('1234');
-    raise notice '❌ 4 位被接受 —— 服务端没守住';
-  exception when others then
-    raise notice '① 4 位：%', SQLERRM;
-  end;
+/* 对照：一个已存在的对外函数，应当仍对 anon 开放（白名单生效） */
+select count(*) as 白名单函数whoami_anon可执行 from (
+  select 1 from information_schema.role_routine_grants
+   where routine_name='whoami' and grantee='anon') t;
 
-  /* ② 7 位 → 应被拒 */
-  begin
-    perform gate_enable('1234567');
-    raise notice '❌ 7 位被接受';
-  exception when others then
-    raise notice '② 7 位：%', SQLERRM;
-  end;
+/* 统计当前 anon 能执行多少个函数 */
+select count(distinct routine_name) as anon可执行函数总数
+  from information_schema.role_routine_grants
+ where grantee='anon' and privilege_type='EXECUTE'
+   and routine_schema='public';
 
-  /* ③ 8 位 → 应接受（阈值判断准确，不是永远拒绝） */
-  begin
-    perform gate_enable('12345678');
-    raise notice '③ 8 位：✅ 已接受';
-  exception when others then
-    raise notice '❌ 8 位也被拒：% —— 闸门过严', SQLERRM;
-  end;
-end $$;
-rollback;
-
-/* R4-05：确认 user_login 的全局计数加了 kind 过滤 */
-select count(*) as 含kind过滤的语句数 from (
-  select 1 from pg_proc p
-   where p.proname='user_login'
-     and pg_get_functiondef(p.oid) like '%kind = ''login''%') t;
+drop function _v03_probe();
