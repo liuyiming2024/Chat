@@ -728,17 +728,35 @@ begin
         那两处走的是各自的封装，契约变更需要单独核对 ——
         ⚠ 不要在这里写"已全部改完"，说清哪些没动。） */
 
-  /* 频率闸门：15 分钟内门禁失败 ≥ 20 次即拒绝。
-     门禁密码全站唯一，比单个账号密码更值得保护，
-     但阈值不能太低 —— 站长自己也可能记错、连着试好几次。
-     20 次/15 分钟：正常试错碰不到，脚本爆破则被压到
-     一天最多约 1900 次尝试，对任何像样的密码都太慢。 */
-  select count(*) into v_gate_fail from login_attempts
-   where kind = 'gate' and ok = false
-     and created_at > now() - interval '15 minutes';
-  if v_gate_fail >= 20 then
-    return json_build_object('ok', false, 'err', '保护密码尝试过于频繁，请 15 分钟后再试');
-  end if;
+  /* ★ 先校验密码，再谈限流 —— 顺序不能反（Q-Chat-S-142 / 外部报告 R4-01）。
+
+     ⚠⚠ S-141 我把限流检查放在了密码校验**之前**，这是个错误：
+       计数一满，**连正确的密码也被拒**。
+       而 gate_check 必须对匿名开放（文件头注释明写），触发不需要任何身份 ——
+       于是匿名发 20 次错密码，就能把全站所有人（含站长）挡在门外 15 分钟。
+       每 15 分钟重发 20 次 ≈ 80 请求/小时即可永久拒绝服务。
+
+       这比"没有限流"更糟：不限流只是可能被爆破，
+       而**会锁死正确密码的限流，等于把防爆破的补丁做成了 DoS 开关**。
+
+     ⚠ 更要命的是：我在 user_login 的注释里**已经写过**这个副作用
+       （"它挡的是爆破，但副作用是攻击者可以拿它当拒绝服务用"），
+       转头给门禁加限流时又原样复制了一遍。
+       **知道一个模式有害，并不等于不会在新代码里复制它。**
+
+     ★ 正确的语义：限流只该约束**失败**的尝试。
+       密码正确 → 无条件放行，并清掉失败计数；
+       密码错误 → 记账，超阈值才拒。
+       这样"限流"退化成它本来该是的东西：**压低爆破速率**，
+       而不是一把连自己人一起锁住的锁。
+
+     ⚠ 关于"按 IP / 按会话分桶"：红队建议这么做，这里说明为什么不做。
+       · IP：请求头里的 x-forwarded-for 客户端自己能改，等于没有维度
+       · 会话：gate_check 是**签发会话的地方**，调用时还没有会话可用
+       所以这个入口做不到分桶，只能全局计数。
+       而一旦移到了失败路径上，全局计数的副作用就只剩
+       "攻击者能让别人的失败尝试也被拒"——正确密码不受影响，
+       不构成拒绝服务。这个代价可以接受。 */
 
   ok_new := exists (select 1 from site where id = true and gate_hash = crypt(p, gate_hash));
   ok_old := false;
@@ -749,13 +767,28 @@ begin
 
   if not ok_new and not ok_old then
     /* ⚠ 这里是 return 不是 raise —— 换成 raise 的话，
-       上面这行 insert 会被回滚，限流立刻失效（S-141）。 */
+       上面这行 insert 会被回滚，限流立刻失效（S-141）。
+
+       ★ 顺序：先记账，再判阈值。
+         先判阈值再记账的话，达到阈值的那一次不会被记进去，
+         计数器卡在 19 永远到不了 20 —— 限流成了摆设。 */
     insert into login_attempts (nick, kind, ok) values ('__gate__', 'gate', false);
+
+    select count(*) into v_gate_fail from login_attempts
+     where kind = 'gate' and ok = false
+       and created_at > now() - interval '15 minutes';
+    if v_gate_fail >= 20 then
+      return json_build_object('ok', false, 'err', '保护密码尝试过于频繁，请 15 分钟后再试');
+    end if;
+
     /* 失败不推进全局序号（同 user_login，避免被当成放大免费放大器） */
     return json_build_object('ok', false, 'err', '保护密码错误');
   end if;
 
-  /* 通过：清掉门禁自己的失败计数，好让下一次从 0 开始。
+  /* ★ 密码正确：无条件放行。
+     不再有任何限流检查能挡住走到这里的人 —— 这正是修复的核心。
+
+     清掉门禁自己的失败计数，好让下一次从 0 开始。
      ⚠ 只清 kind='gate'，不动账号登录的记录 ——
         否则站长一次输错门禁密码，会把全站正在被爆破的账号记录一起抹掉。 */
   delete from login_attempts where kind = 'gate' and ok = false;
@@ -952,8 +985,14 @@ begin
        光是跑一轮限流用例就必然失败 130 次以上，
        100 会把后面的正常登录一起挡掉 ——
        **挡得太狠，先被挡住的是自己人。** */
+  /* ★ Q-Chat-S-142（外部报告 R4-05）：加 kind = 'login' 过滤。
+     S-141 给 login_attempts 加了 kind 列后，这张表混装两类记录；
+     这里不过滤就把门禁失败（kind='gate'）也算进登录预算 ——
+     于是刷门禁会顺带把全站的登录额度耗光，形成跨通道干扰。
+     攻击者在一个入口制造压力，却让另一个入口失效。 */
   select count(*) into v_fail from login_attempts
-   where ok = false and created_at > now() - interval '15 minutes';
+   where ok = false and kind = 'login'
+     and created_at > now() - interval '15 minutes';
   if v_fail >= 300 then
     return json_build_object('ok', false, 'err', '登录尝试过于频繁，请稍后再试');
   end if;
@@ -3159,7 +3198,13 @@ begin
   if not exists (select 1 from users where id = uid and role = 'owner') then
     raise exception '仅站长可设置保护密码';
   end if;
-  if coalesce(length(p), 0) < 4 then raise exception '保护密码至少 4 位'; end if;
+  /* ★ Q-Chat-S-142（外部报告 R4-04）：原来只要求 4 位，前端要求 8 位。
+     绕过前端直接调 RPC 就能把全站保护密码设成 4 位 ——
+     配合限流（约 1900 次/天），纯数字 4 位（10⁴）约 5 天可破。
+
+     ⚠ 前端的限制只是提示，绕过它零成本，所以**服务端必须自己守**。
+       两端不一致时，能真正生效的永远是服务端那一端。 */
+  if coalesce(length(p), 0) < 8 then raise exception '保护密码至少 8 位'; end if;
 
   update site set
     gate_hash = crypt(p, gen_salt('bf', 10)),
