@@ -1,24 +1,18 @@
-/* 验证 default privileges：新建函数应不再对 anon 开放 */
-create or replace function _v03_probe2() returns int
+create or replace function _v03_probe3() returns int
 language sql stable security invoker as $$ select 42 $$;
 
-\echo '--- ① anon 执行新建函数（期望：permission denied）---'
-set role anon;
-select _v03_probe2() as 结果;
-reset role;
+/* has_function_privilege 会考虑所有继承路径，是唯一可信的判断 */
+select has_function_privilege('anon','_v03_probe3()','EXECUTE') as anon是否有权,
+       has_function_privilege('public','_v03_probe3()','EXECUTE') as public是否有权;
 
-\echo '--- ② postgres 自己执行（期望：正常，别把自己也锁外面）---'
-select _v03_probe2() as postgres执行;
+/* anon 属于哪些角色（继承路径） */
+select r.rolname as 成员, g.rolname as 属于
+  from pg_auth_members m
+  join pg_roles r on r.oid=m.member
+  join pg_roles g on g.oid=m.roleid
+ where r.rolname='anon';
 
-\echo '--- ③ 白名单函数仍应对 anon 可用（对照）---'
-set role anon;
-select site_info() is not null as site_info可执行;
-reset role;
+/* 这条新函数的 ACL 具体是什么 */
+select proname, proacl from pg_proc where proname='_v03_probe3';
 
-drop function _v03_probe2();
-
-\echo '--- ④ default privileges 已记录 ---'
-select coalesce(array_to_string(defaclacl,','),'(空)') as postgres默认函数权限
-  from pg_default_acl
- where defaclnamespace='public'::regnamespace
-   and defaclrole='postgres'::regrole and defaclobjtype='f';
+drop function _v03_probe3();
