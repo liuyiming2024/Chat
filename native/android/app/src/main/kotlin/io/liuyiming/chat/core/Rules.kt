@@ -50,4 +50,27 @@ object Rules {
      * 凭空消失的话用户只会以为功能坏了，而不是"我来晚了"。
      */
     fun revokeLeftMs(at: Long, now: Long): Long = REVOKE_WINDOW_MS - (now - at)
+
+    /**
+     * 登录响应解析（Q-Chat-S-143）。
+     *
+     * ★ 放在这里而不是留在 ChatRepository 里，理由和上面几条一样：
+     *   ChatRepository 依赖 ApiClient 和 Room，JVM 上实例化不了，
+     *   于是"登录失败到底提示什么"这条规则就没法被自动化验证。
+     *   而它恰恰是最需要测的 —— 提示错了，用户会按错误的方向自救。
+     *
+     * ★ 为什么必须先判 ok 字段：
+     *   服务端凭证失败【返回 {ok:false, err}】而不是抛异常
+     *   （plpgsql 里 raise 会回滚写入，失败计数记不上，限流会失效）。
+     *   只看 token 在不在的话，四种完全不同的原因
+     *   （密码错 / 待审核 / 已封禁 / 被限流）会显示成同一句话。
+     *   被限流那条尤其糟：用户以为自己记错密码，继续试，越试越被挡。
+     *
+     * @return Pair(是否成功, token 或错误信息)
+     */
+    fun parseLogin(ok: Boolean?, err: String?, token: String?): Pair<Boolean, String> {
+        if (ok == false) return false to (err?.takeIf { it.isNotBlank() } ?: "登录失败")
+        if (token.isNullOrBlank()) return false to "已登录但服务端未返回会话令牌"
+        return true to token
+    }
 }
