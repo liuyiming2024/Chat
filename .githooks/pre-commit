@@ -1,0 +1,37 @@
+#!/bin/sh
+# 本地 pre-commit：提交前把源码同步到 www/
+# ------------------------------------------------------------------
+# 云端有 .github/workflows/sync-www-auto.yml 兜底，但那是事后补救 ——
+# 它会让 CI 上出现一个"chore: 自动同步 www/"的额外提交，
+# 而且你本地那份 www/ 仍然是旧的。
+#
+# 本地装了钩子，提交时源码和 www/ 就是同一份，不需要补救提交。
+#
+# 启用（每个克隆只需一次）：
+#     git config core.hooksPath .githooks
+#
+# 跳过（确实只想提交源码、www 稍后统一同步时）：
+#     git commit --no-verify
+# ------------------------------------------------------------------
+set -e
+
+# 没有 node 就不拦人 —— 云端 workflow 会兜底
+command -v node >/dev/null 2>&1 || { echo "pre-commit: 未找到 node，跳过 www 同步"; exit 0; }
+
+# 本次提交根本没碰这些目录，不用同步
+staged=$(git diff --cached --name-only)
+case "$staged" in
+  *chat/*|*docs/*|*tieba/*|*api/*|*assets/*) ;;
+  *) exit 0 ;;
+esac
+
+echo "pre-commit: 同步源码到 www/"
+node scripts/sync-www.js
+
+# 同步脚本可能改了 www/ 下的文件，把它们并进本次提交
+changed=$(git status --porcelain -- www)
+if [ -n "$changed" ]; then
+  echo "pre-commit: 以下 www/ 文件已一并暂存"
+  echo "$changed" | sed 's/^/    /'
+  git add -- www
+fi

@@ -1,0 +1,81 @@
+name: 自动同步 www 副本
+
+# 这个 workflow 的存在理由，是 2026-10-21 那次真实的红：
+#   改了根 tieba/index.html，www/tieba/index.html 没跟上，
+#   「影子副本一致性」立刻变红。
+# 根因不是脚本写得不好，是【同步这件事根本没有人做】——
+# 只能靠改代码的人记得手动跑一遍 node scripts/sync-www.js。
+# 靠人记住的事，迟早会忘。所以交给机器。
+#
+# 做法：源码目录一变，就在 runner 上跑 sync-www.js（不带 --check，
+# 真同步），有 diff 就自动提交 www/。
+#
+# 为什么不会无限循环触发自己：
+#   本文件的 on.push.paths 只列源码目录，不含 www/**。
+#   它自己产生的提交只改 www/，所以不会再触发本 workflow。
+#   而那次提交会触发「影子副本一致性」（它监听 www/**），
+#   那时两边已经一致 → 绿。职责刚好接上。
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'chat/**'
+      - 'docs/**'
+      - 'tieba/**'
+      - 'api/**'
+      - 'assets/**'
+      - 'scripts/sync-www.js'
+      - 'capacitor.config.json'
+      - 'package.json'
+  workflow_dispatch:
+
+# 默认 GITHUB_TOKEN 对 contents 是只读，必须显式要写权限
+permissions:
+  contents: write
+
+# 同一分支上排队跑，避免两个提交并发同步互相覆盖
+concurrency:
+  group: sync-www-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      # 不带 --check：这里就是要它真同步
+      - name: 同步源码到 www/
+        run: node scripts/sync-www.js
+
+      - name: 有差异就自动提交
+        run: |
+          set -e
+          # 只看 www/：源码目录不是本 workflow 该动的
+          if [ -z "$(git status --porcelain -- www)" ]; then
+            echo "www/ 与源码已一致，无需提交"
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- www
+          git commit -m "chore: 自动同步 www/ 打包副本
+
+          源码目录变更，由 scripts/sync-www.js 生成。
+          触发提交: ${GITHUB_SHA}
+          详见 .github/workflows/sync-www-auto.yml"
+          git push origin main
+          echo "已同步并提交 www/"
+
+      # 兜底：万一上面同步完还不一致（脚本写坏了），必须红，
+      # 不能默默推一个半同步状态上去
+      - name: 复核一致性
+        run: node scripts/sync-www.js --check
