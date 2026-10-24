@@ -32,6 +32,26 @@ const ROOT = path.resolve(__dirname, '..');
 const DIRS = ['chat', 'docs', 'tieba', 'api', 'assets'];
 const FILES = ['LICENSE', 'README.md'];
 
+/* 打包目录里不该出现的后端/开发文件（相对对应源码目录）。
+   理由：www/ 会被 package.json 的 build.files（www/**）整体打进
+   桌面/安卓安装包，而这些文件是【服务端图纸】，运行时前端并不加载：
+     · supabase/*.sql  —— 建库脚本，含全部表结构与权限逻辑（约 200KB）。
+                         泄露不构成安全事故，但等于把服务端权限设计图纸
+                         发给每个用户，纯属打包卫生问题（S-013 已指摘）。
+     · server.py       —— 本地开发用的静态服务，APP 里不跑。
+     · native/accel.cpp —— 原生加速源码，桌面版通过 native 通道另行打包，
+                          不该以源码形式塞进 www。
+   所以同步与校验时都要跳过它们。 */
+const SKIP_SUFFIX = [
+  'supabase/',   // 命中目录则整棵子树跳过（路径段形式，匹配任意层级）
+  'server.py',
+  'native/'
+];
+function shouldSkip(relPath) {
+  const p = relPath.split(path.sep).join('/');
+  return SKIP_SUFFIX.some(s => p.indexOf(s) >= 0);
+}
+
 /* www/ 下不该存在 electron/ —— package.json 的 build.files 同时列了
    www/** 和 electron/**，所以 electron 会被打进去两次，
    而 www/electron 这份是冗余的：
@@ -78,7 +98,7 @@ function walk(dir) {
         ③ 只动真正变的文件，副作用小。 */
 function copyDir(src, dst) {
   fs.mkdirSync(dst, { recursive: true });
-  const rel = walk(src).map(f => path.relative(src, f));
+  const rel = walk(src).map(f => path.relative(src, f)).filter(f => !shouldSkip(f));
   let copied = 0;
   for (const f of rel) {
     const a = path.join(src, f), b = path.join(dst, f);
@@ -123,7 +143,19 @@ function main() {
     const dst = path.join(ROOT, 'www', d);
     if (!fs.existsSync(src)) continue;
 
-    if (!checkOnly) copyDir(src, dst);
+    if (!checkOnly) {
+      copyDir(src, dst);
+      /* copyDir 只覆盖、不删除：被 shouldSkip 排除的文件，若以前
+         同步进过 www/（如 supabase/、server.py），不会自动消失。
+         这里在同步模式下把它们从 dst 里清掉，保证打包目录真不含这些文件。 */
+      const dropRel = walk(dst).map(f => path.relative(dst, f)).filter(f => shouldSkip(f));
+      for (const f of dropRel) {
+        try { fs.unlinkSync(path.join(dst, f)); } catch (e) { }
+        /* 顺带清掉可能因此变空的父目录（不深挖，尽力即可） */
+        const parent = path.dirname(path.join(dst, f));
+        try { if (walk(parent).length === 0) fs.rmdirSync(parent); } catch (e) { }
+      }
+    }
 
     if (!fs.existsSync(dst)) {
       console.error('✗ www/%s 不存在 —— 该目录根本没进打包目录', d);
@@ -132,8 +164,8 @@ function main() {
     }
 
     const sa = walk(src), sb = walk(dst);
-    const relA = sa.map(f => path.relative(src, f));
-    const relB = sb.map(f => path.relative(dst, f));
+    const relA = sa.map(f => path.relative(src, f)).filter(f => !shouldSkip(f));
+    const relB = sb.map(f => path.relative(dst, f)).filter(f => !shouldSkip(f));
     const setB = new Set(relB);
     const missing = relA.filter(f => !setB.has(f));
     const extra = relB.filter(f => !new Set(relA).has(f));

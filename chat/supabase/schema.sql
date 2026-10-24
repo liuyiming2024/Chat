@@ -441,7 +441,7 @@ $$;
 create or replace function state_delta(p_since bigint default 0)
 returns json language plpgsql stable security definer
 set search_path = public, extensions, pg_temp as $$
-declare me uuid; v_from timestamptz; v_rev bigint;
+declare me uuid; v_rev bigint;
 begin
   if not gate_passed() then raise exception '请先通过站点保护密码'; end if;
   me := cur_user();
@@ -462,17 +462,6 @@ begin
     );
   end if;
   v_rev := (select last_value from state_rev);
-
-  /* 时间窗只给 logs 用（它没 rev 列）。
-     ⚠ messages 曾经也用这个窗拉增量，那是错的：
-       rev 差 × 2 秒只是估算，站点冷清时 rev 差小、窗窄，
-       离线期间的消息会落在窗外 —— 前端按 id merge，缺了就永远缺了。
-     messages 现在直接比 rev（见下方 where m.rev > p_since），精确且可索引。 */
-  if coalesce(p_since, 0) <= 0 then
-    v_from := now() - interval '30 days';
-  else
-    v_from := now() - make_interval(secs => greatest(0, v_rev - p_since) * 2 + 30);
-  end if;
 
   return json_build_object(
     'rev', v_rev,
@@ -2144,7 +2133,7 @@ begin
   code := encode(gen_random_bytes(24), 'hex');
   insert into bridge_ticket (code_hash, user_id, origin, expires_at)
   values (encode(digest(code || '|br-v1', 'sha256'), 'hex'), uid,
-          left(coalesce(p_origin, ''), 200), now() + interval '5 minutes');
+          left(coalesce(p_origin, ''), 200), now() + interval '60 seconds');
   return code;
 end;
 $$;
@@ -2161,7 +2150,7 @@ drop function if exists bridge_ticket_redeem(text);
 -- 门禁在前面已经过过了。且换到的只是账号身份，所有数据接口仍各自校验门禁。
 --
 -- 这条豁免的代价要记着：它给了"绕过门禁直接拿账号会话"一条路径，
--- 所以票据必须是短时（5 分钟）、单次、且只能由已登录客户端申领。
+-- 所以票据必须是短时（60 秒）、单次、且只能由已登录客户端申领。
 -- p_origin 必须与申领时一致（都为空也算一致，供无来源的场景使用）。
 -- 这一层校验的意义：票据即使用 curl 从本机 127.0.0.1 拿到，
 -- 搬到另一台机器上兑换也会因为来源不符被拒。
