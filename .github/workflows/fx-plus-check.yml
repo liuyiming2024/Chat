@@ -1,0 +1,44 @@
+name: fx-plus 与权威源一致
+
+# 集群约定（2026-11）：Cloud 仓库的 css/fx-plus.css 与 js/fx-plus.js
+# 是视觉效果层的权威源。主页 liuyiming2024.github.io 用
+# scripts/inline-assets.py --check-upstream 比对，Code 与本仓库各带一份
+# 逐字节相同的副本。四份里手改任意一份都会静默分叉 —— 这里挡住它。
+#
+# Cloud 升级效果层后本仓库会红：正确做法是同步副本，不是改这个 workflow。
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'assets/fx-plus.css'
+      - 'assets/fx-plus.js'
+
+      - '.github/workflows/fx-plus-check.yml'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: 比对 Cloud 权威源
+        run: |
+          set -euo pipefail
+          BASE=https://raw.githubusercontent.com/liuyiming2024/Cloud/main
+          check() {
+            local local_f="$1" remote_f="$2"
+            curl -fsSL --max-time 30 "$BASE/$remote_f" -o /tmp/fx.remote
+            if ! diff -u "$local_f" /tmp/fx.remote; then
+              echo "::error::$local_f 与 Cloud/$remote_f 不一致，请同步副本"
+              exit 1
+            fi
+            echo "✓ $local_f 与权威源一致"
+          }
+          check assets/fx-plus.css css/fx-plus.css
+          check assets/fx-plus.js js/fx-plus.js

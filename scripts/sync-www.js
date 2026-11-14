@@ -79,7 +79,10 @@ function walk(dir) {
     for (const e of ents) {
       const p = path.join(d, e.name);
       if (e.isDirectory()) stack.push(p);
-      else if (e.isFile()) out.push(path.relative(ROOT, p));
+      /* 返回绝对路径：下面各处都拿 path.relative(src|dst, f) 算相对名，
+         若这里返回相对 ROOT 的路径，只有当进程 cwd 恰好是仓库根时才
+         巧合正确 —— 从别处 `node /path/to/scripts/sync-www.js` 会全错。 */
+      else if (e.isFile()) out.push(p);
     }
   }
   return out.sort();
@@ -145,16 +148,34 @@ function main() {
 
     if (!checkOnly) {
       copyDir(src, dst);
-      /* copyDir 只覆盖、不删除：被 shouldSkip 排除的文件，若以前
-         同步进过 www/（如 supabase/、server.py），不会自动消失。
-         这里在同步模式下把它们从 dst 里清掉，保证打包目录真不含这些文件。 */
-      const dropRel = walk(dst).map(f => path.relative(dst, f)).filter(f => shouldSkip(f));
+      /* copyDir 只覆盖、不删除。dst 里凡是「源码不该有」的都得清掉：
+           · shouldSkip 命中的（supabase/、server.py、native/）—— 以前
+             同步进过 www/ 的残留；
+           · 源码里已经删掉的文件 —— 2026-11 发现的真实缺口：原来只清
+             shouldSkip，删了 chat/js/foo.js 后 www/chat/js/foo.js 会一直
+             留在打包目录，紧接着的 --check 报「多 1」，而本 workflow
+             因为 www/ 没有 diff 不会提交修复，于是持续红且无法自愈。
+         统一按「源码文件集合」算差集，一次清干净。 */
+      const keep = new Set(walk(src)
+        .map(f => path.relative(src, f))
+        .filter(f => !shouldSkip(f)));
+      const dropRel = walk(dst)
+        .map(f => path.relative(dst, f))
+        .filter(f => !keep.has(f));
       for (const f of dropRel) {
-        try { fs.unlinkSync(path.join(dst, f)); } catch (e) { }
-        /* 顺带清掉可能因此变空的父目录（不深挖，尽力即可） */
-        const parent = path.dirname(path.join(dst, f));
-        try { if (walk(parent).length === 0) fs.rmdirSync(parent); } catch (e) { }
+        const abs = path.join(dst, f);
+        try { fs.unlinkSync(abs); } catch (e) { }
+        /* 清掉因此变空的父目录，一路向上直到 dst 本身（原来只清一层） */
+        let parent = path.dirname(abs);
+        while (parent !== dst && parent.startsWith(dst)) {
+          try {
+            if (fs.readdirSync(parent).length === 0) fs.rmdirSync(parent);
+            else break;
+          } catch (e) { break; }
+          parent = path.dirname(parent);
+        }
       }
+      if (dropRel.length) console.log('  清理 www/%s/ 残留 %d 个文件', d, dropRel.length);
     }
 
     if (!fs.existsSync(dst)) {
