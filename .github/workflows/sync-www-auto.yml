@@ -28,6 +28,11 @@ on:
       - 'scripts/sync-www.js'
       - 'capacitor.config.json'
       - 'package.json'
+      # sync-www.js 的 FILES 还会同步 LICENSE 与 README.md，
+      # 但原来这两个文件不在触发列表里：改了根 README 不会触发同步，
+      # shadow-check 又只监听 www/**，于是副本静默过期。
+      - 'LICENSE'
+      - 'README.md'
   workflow_dispatch:
 
 # 默认 GITHUB_TOKEN 对 contents 是只读，必须显式要写权限
