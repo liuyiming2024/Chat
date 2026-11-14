@@ -56,19 +56,60 @@ jobs:
           set -uo pipefail
           DB_URL="$(printf '%s' "$DB_URL" | tr -d '\r\n')"
           export DB_URL
-          # 脚本在私有库 Tool 维护；这里从 Tool 仓库拉取执行
-          curl -sL -o /tmp/reset.sql \
-            "https://raw.githubusercontent.com/liuyiming2024/Tool/main/supabase/reset.sql"
-          # 若拉不到（例如仓库改名），退回内置等价操作
-          if [ ! -s /tmp/reset.sql ]; then
-            echo "::warning::拉不到 reset.sql，使用内置脚本"
-            cat > /tmp/reset.sql <<'SQL'
+          # ⚠ 这里曾经 curl raw.githubusercontent.com/.../Tool/main/supabase/reset.sql。
+          #    Tool 是**私有仓库**，匿名 raw 请求一律 404 —— 也就是说这个下载
+          #    从来没成功过，清库一直在走下面那段 4 行的"回退脚本"。
+          #    回退版缺 grant create 与 3 条 alter default privileges，
+          #    重跑 schema.sql 后新建对象会没权限，且没有任何报错。
+          #    W0 不可逆操作不该依赖一个必然失败的下载，改成整份内嵌。
+          #
+          #    权威源仍是 Tool/ops/reset.sql。改那份时同步改这里：
+          #      python3 Tool/tools/verify/reset-sql-sync.py
+          cat > /tmp/reset.sql <<'SQL'
+          -- ==================================================================
+          -- 清库脚本（危险！不可撤销）
+          --
+          -- 用途：当数据库状态失控、表结构错乱、或想彻底回到「刚建项目」的状态时使用。
+          -- 效果：删除 public schema 下的【全部】表、函数、数据，然后重建空 schema。
+          --
+          -- ⚠ 会丢失：所有账号、消息、帖子、会话、站点设置。
+          -- ⚠ 不会动：auth schema（Supabase 自带的认证表）、storage、项目本身。
+          --
+          -- 执行后要恢复服务，请再跑一次：
+          --   Actions → 数据库迁移 → 选 all
+          -- 然后回到网页重新设置站点保护密码（因为 site 表也清空了）。
+          --
+          -- 执行方式（推荐，带确认）：
+          --   Actions → 数据库清库 → 输入 RESET → Run workflow
+          -- 或手动：
+          --   psql "$SUPABASE_DB_URL" -f reset.sql
+          -- ==================================================================
+
+          -- 删掉整个 public schema 及其内部所有对象
           drop schema if exists public cascade;
+
+          -- 重建空 schema
           create schema public;
-          grant usage on schema public to postgres, anon, authenticated, service_role;
-          grant all on schema public to postgres, service_role;
+
+          -- 恢复 Supabase 需要的默认授权
+          grant usage  on schema public to postgres, anon, authenticated, service_role;
+          grant all    on schema public to postgres, service_role;
+          grant create on schema public to postgres;
+
+          -- 让未来新建的对象默认就有权限（否则重跑 schema.sql 后还要再授权）
+          alter default privileges in schema public grant all on tables to postgres, service_role;
+          alter default privileges in schema public grant all on sequences to postgres, service_role;
+          alter default privileges in schema public grant all on functions to postgres, service_role;
+
+          -- 清理后确认
+          \echo '===== 清库后状态 ====='
+          select coalesce(string_agg(table_name, ', ' order by table_name), '（空）') as 剩余表
+          from information_schema.tables where table_schema='public';
+
+          select count(*) as 剩余函数
+          from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+          where n.nspname = 'public';
           SQL
-          fi
           psql "$DB_URL" -v ON_ERROR_STOP=1 -f /tmp/reset.sql 2>&1 | tee -a report.txt
 
       - name: 结果写回 diag 分支
