@@ -387,6 +387,12 @@
         }
         else if (x.deleted && !o.deleted) { map[x.id] = x; }
       }
+      /* S-088：服务端按 m.rev 排序，前端这里按 ts 排序。
+         同毫秒连发时 ts 相等 —— 靠 Array.prototype.sort 的**稳定排序**
+         （ES2019 起规范保证）保持上游的 rev 顺序，两边不会分叉。
+         不要把这里换成「先按 ts 再按别的」或改成不稳定实现，
+         也不要删掉服务端的 order by m.rev：稳定排序只保证相对次序，
+         不负责从服务端把顺序带回来。 */
       S.messages[rid] = Object.keys(map).map(function (k) { return map[k]; })
         .sort(function (p, q) { return p.ts - q.ts; });
     });

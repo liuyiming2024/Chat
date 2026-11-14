@@ -742,6 +742,24 @@ body.dark .typing-bar::before { background: #6ab0ff; }
   border-radius: 0 4px 4px 0;
 }
 .form-note { margin-top: 12px; font-size: 11px; color: #999; line-height: 1.6; }
+/* S-104：doEdit() 里 elc('textarea','ta') 用了这个类，但样式表一直没定义 ——
+   弹窗里的编辑框会落到浏览器默认样式，深色模式下是刺眼的白底黑字。
+   复用 .field 的视觉；颜色走 :root / body.dark 的变量，两套主题自动跟随。 */
+.ta {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 9px 10px;
+  outline: none;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text);
+  background: var(--bg-panel);
+  resize: vertical;
+}
+.ta:focus { border-color: var(--wx-green); }
 .field-label { display: block; font-size: 12px; color: #666; margin: 10px 0 4px; }
 .field {
   width: 100%;
