@@ -38,7 +38,15 @@ name: 影子副本一致性
 #   www/ 变更     → 本文件             负责复核两边确实一致
 #   手工改了 www/ 而没同步源码 → 本文件立刻红，这是真问题
 #
-# 顺序上是 同步 → 提交 → 触发本文件 → 绿。一环扣一环，不打架。
+# ⚠ 2026-11-15 复核：上面「提交 → 触发本文件」这句是错的。
+#   sync-www-auto 用 GITHUB_TOKEN 推的 www/ 提交**不会触发任何 workflow**
+#   （GitHub 防递归机制），所以本文件收不到那次提交。
+#   真实顺序是：同步 → 本 workflow 内 --check 自验 → 提交。
+#   本文件负责的是「人工改 www/」+ 下面的定时兜底。
+#
+#   为什么还要定时：若某次自动同步失败（push 冲突、job 被取消、脚本异常），
+#   main 上源码已变而 www/ 停留在旧版，之后也不会再有 workflow 来发现它 ——
+#   直到下一次源码变更。每天跑一次几秒的 --check，把这个盲区压到 24 小时内。
 # ------------------------------------------------------------------
 
 on:
@@ -53,6 +61,9 @@ on:
       - 'package.json'
   pull_request:
     branches: [main]
+  schedule:
+    # 每天 UTC 03:10（北京时间 11:10），错开数据库保活的 03:00
+    - cron: '10 3 * * *'
   workflow_dispatch:
 
 jobs:
@@ -68,3 +79,6 @@ jobs:
       # --check 只比对不改文件；不一致就退出码 1
       - name: 比对源码目录与 www 副本
         run: node scripts/sync-www.js --check
+
+      - name: HTML 相对链接目标存在
+        run: python3 scripts/check-html-links.py

@@ -298,9 +298,13 @@
     <div class="sp-sec">
       <div class="sec-title"><span>政策</span></div>
       <div class="policy-links">
-        <a href="docs/privacy.html" target="_blank" rel="noopener">隐私声明</a>
-        <a href="docs/terms.html" target="_blank" rel="noopener">使用须知</a>
-        <a href="docs/index.html" target="_blank" rel="noopener">使用手册</a>
+        <!-- 政策链接在站点根的 docs/ 下，而本页在 chat/ 子目录。
+             写 "docs/..." 会解析成 /Chat/chat/docs/ → 404；
+             用 ../docs/ 后，主站（/Chat/chat/）与打包副本
+             （/Chat/www/chat/，其 ../ 落到 www/docs/）两边都能打开。 -->
+        <a href="../docs/privacy.html" target="_blank" rel="noopener">隐私声明</a>
+        <a href="../docs/terms.html" target="_blank" rel="noopener">使用须知</a>
+        <a href="../docs/index.html" target="_blank" rel="noopener">使用手册</a>
       </div>
     </div>
   </aside>
